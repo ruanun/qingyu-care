@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiModelConfigRepository;
 import jakarta.annotation.PostConstruct;
@@ -45,7 +46,7 @@ public class ModelRouterService {
         if (repository.count() == 0) {
             log.info("Initializing default AI model config...");
             
-            // 创建默认模型配置
+            // 创建默认模型配置（平台共享模型）
             repository.save(AiModelConfig.builder()
                     .name("默认模型")
                     .provider("openai")
@@ -55,7 +56,8 @@ public class ModelRouterService {
                     .scenario("default")
                     .priority(1)
                     .enabled(true)
-                    .remark("从 application.yml 初始化的默认模型")
+                    .scope(OwnerScope.PLATFORM)
+                    .remark("从 application.yml 初始化的平台共享默认模型")
                     .build());
             
             log.info("Default AI model config created");
@@ -95,16 +97,48 @@ public class ModelRouterService {
         log.info("Deleted AI model config: {}", id);
     }
 
+    /** 列出全部平台共享模型 */
+    public List<AiModelConfig> getSharedModels() {
+        return repository.findAllSharedModels();
+    }
+
+    /** 保存平台共享模型（强制平台归属，避免被 TenantEntityListener 填充租户） */
+    @Transactional
+    public AiModelConfig saveSharedModel(AiModelConfig config) {
+        config.setScope(OwnerScope.PLATFORM);
+        config.setTenantId(null);
+        config.setAppId(null);
+        return repository.save(config);
+    }
+
     /**
-     * 获取指定场景的模型列表（按优先级排序）
+     * 获取指定场景的可用模型：租户自有 ∪ 平台共享，租户自有优先，
+     * 按 (provider, modelId, endpoint) 去重；为空则降级到 default 场景。
      */
     public List<AiModelConfig> getModelsForScenario(String scenario) {
-        List<AiModelConfig> models = repository.findByScenarioAndEnabledTrueOrderByPriorityAsc(scenario);
-        if (models.isEmpty()) {
-            // 降级到 default 场景
-            models = repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default");
+        List<AiModelConfig> merged = mergeTenantAndShared(scenario);
+        if (merged.isEmpty() && !"default".equals(scenario)) {
+            merged = mergeTenantAndShared("default");
         }
-        return models;
+        return merged;
+    }
+
+    private List<AiModelConfig> mergeTenantAndShared(String scenario) {
+        List<AiModelConfig> own = repository.findByScenarioAndEnabledTrueOrderByPriorityAsc(scenario);
+        List<AiModelConfig> shared = repository.findSharedModelsByScenario(scenario);
+        java.util.LinkedHashMap<String, AiModelConfig> byKey = new java.util.LinkedHashMap<>();
+        for (AiModelConfig m : own) byKey.putIfAbsent(keyOf(m), m);
+        for (AiModelConfig m : shared) byKey.putIfAbsent(keyOf(m), m);
+        return new java.util.ArrayList<>(byKey.values());
+    }
+
+    private String keyOf(AiModelConfig m) {
+        // endpoint 为空时归一化为该 provider 的默认端点，避免运行时同一模型被当成两条
+        String endpoint = m.getEndpoint();
+        if (endpoint == null || endpoint.isBlank()) {
+            endpoint = getDefaultEndpoint(m.getProvider());
+        }
+        return m.getProvider() + "|" + m.getModelId() + "|" + endpoint;
     }
 
     /**

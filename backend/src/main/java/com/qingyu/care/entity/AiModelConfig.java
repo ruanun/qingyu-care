@@ -1,5 +1,6 @@
 package com.qingyu.care.entity;
 
+import com.qingyu.care.enums.OwnerScope;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -84,6 +85,14 @@ public class AiModelConfig extends BaseTenantEntity {
      */
     @Column(length = 500)
     private String remark;
+
+    /**
+     * 归属范围：TENANT=租户/应用自有；PLATFORM=平台共享模型
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private OwnerScope scope = OwnerScope.TENANT;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

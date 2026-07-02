@@ -12,6 +12,7 @@ export interface AiModelConfig {
     priority: number;
     enabled: boolean;
     remark: string | null;
+    scope?: 'PLATFORM' | 'TENANT';
     createdAt: string;
     updatedAt: string;
 }

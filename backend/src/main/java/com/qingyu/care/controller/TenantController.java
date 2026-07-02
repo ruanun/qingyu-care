@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.enums.TenantStatus;
@@ -47,6 +48,7 @@ public class TenantController {
     /**
      * 创建租户
      */
+    @AuditLog(action = "TENANT_CREATE", targetType = "Tenant")
     @PostMapping
     public ApiResponse<Tenant> create(@RequestBody Tenant tenant) {
         checkPlatformAdmin();
@@ -60,6 +62,7 @@ public class TenantController {
     /**
      * 更新租户
      */
+    @AuditLog(action = "TENANT_UPDATE", targetType = "Tenant")
     @PutMapping("/{id}")
     public ApiResponse<Tenant> update(@PathVariable Long id, @RequestBody Tenant tenant) {
         checkPlatformAdmin();
@@ -80,6 +83,7 @@ public class TenantController {
     /**
      * 删除租户
      */
+    @AuditLog(action = "TENANT_DELETE", targetType = "Tenant")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         checkPlatformAdmin();
@@ -90,6 +94,7 @@ public class TenantController {
     /**
      * 冻结/解冻租户
      */
+    @AuditLog(action = "TENANT_TOGGLE_STATUS", targetType = "Tenant")
     @PostMapping("/{id}/toggle-status")
     public ApiResponse<Tenant> toggleStatus(@PathVariable Long id) {
         checkPlatformAdmin();

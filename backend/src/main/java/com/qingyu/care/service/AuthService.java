@@ -8,13 +8,17 @@ import com.qingyu.care.dto.LoginResponse;
 import com.qingyu.care.dto.RegisterRequest;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
+import com.qingyu.care.entity.SysAuditLog;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
+import com.qingyu.care.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +38,8 @@ public class AuthService {
     
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final ConfigService configService;
+    private final AuditLogService auditLogService;
     
     /**
      * 初始化平台管理员
@@ -89,9 +95,20 @@ public class AuthService {
         // 更新最后登录时间
         user.setLastLoginTime(LocalDateTime.now());
         userRepository.save(user);
-        
+
         log.info("User {} logged in successfully", user.getUsername());
-        
+
+        // 异步记录登录审计日志
+        auditLogService.saveAsync(SysAuditLog.builder()
+                .userId(user.getId())
+                .username(user.getUsername())
+                .tenantId(user.getTenant() != null ? user.getTenant().getId() : null)
+                .action("LOGIN")
+                .targetType("User")
+                .targetId(user.getId().toString())
+                .detail("用户登录成功")
+                .build());
+
         return LoginResponse.builder()
                 .token(StpUtil.getTokenValue())
                 .userId(user.getId())
@@ -109,6 +126,11 @@ public class AuthService {
      */
     @Transactional
     public LoginResponse register(RegisterRequest request) {
+        // 平台级"开放注册"开关：默认开启
+        if (!configService.getBoolean(OwnerScope.PLATFORM, null,
+                "platform.registration.enabled", true)) {
+            throw new BusinessException(403, "平台已关闭自助注册，请联系管理员");
+        }
         if (userRepository.existsByUsername(request.getUsername())) {
             throw new InvalidOperationException("用户名已存在");
         }
@@ -125,7 +147,7 @@ public class AuthService {
                     .name(request.getTenantName() != null ? request.getTenantName() : request.getUsername() + "的企业")
                     .code(tenantCode)
                     .status(TenantStatus.ACTIVE)
-                    .plan(TenantPlan.FREE)
+                    .plan(resolveDefaultPlan())
                     .contactName(request.getNickname())
                     .contactEmail(request.getEmail())
                     .contactPhone(request.getPhone())
@@ -154,6 +176,20 @@ public class AuthService {
         loginRequest.setUsername(request.getUsername());
         loginRequest.setPassword(request.getPassword());
         return login(loginRequest);
+    }
+
+    /**
+     * 解析平台配置的「新租户默认套餐」，未配置或取值非法时回落 FREE
+     */
+    private TenantPlan resolveDefaultPlan() {
+        String planName = configService.get(OwnerScope.PLATFORM, null,
+                "platform.default.plan", TenantPlan.FREE.name());
+        try {
+            return TenantPlan.valueOf(planName.trim().toUpperCase());
+        } catch (Exception e) {
+            log.warn("平台配置 platform.default.plan 取值非法: {}, 回落为 FREE", planName);
+            return TenantPlan.FREE;
+        }
     }
     
     /**

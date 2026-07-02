@@ -2,6 +2,7 @@ package com.qingyu.care.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.secure.BCrypt;
+import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.Tenant;
@@ -60,6 +61,7 @@ public class UserController {
     /**
      * 创建/邀请新用户（租户管理员）
      */
+    @AuditLog(action = "USER_CREATE", targetType = "User")
     @PostMapping
     public ApiResponse<User> createUser(@RequestBody Map<String, Object> request) {
         Long tenantId = TenantContext.getTenantId();
@@ -131,6 +133,7 @@ public class UserController {
     /**
      * 更新用户信息
      */
+    @AuditLog(action = "USER_UPDATE", targetType = "User")
     @PutMapping("/{id}")
     public ApiResponse<User> updateUser(@PathVariable Long id, @RequestBody Map<String, Object> request) {
         return userRepository.findById(id)
@@ -174,6 +177,7 @@ public class UserController {
     /**
      * 删除用户
      */
+    @AuditLog(action = "USER_DELETE", targetType = "User")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> deleteUser(@PathVariable Long id) {
         return userRepository.findById(id)

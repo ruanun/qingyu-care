@@ -1,0 +1,92 @@
+package com.qingyu.care.service;
+
+import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.repository.AiModelConfigRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class ModelRouterServiceMergeTest {
+
+    @Mock AiModelConfigRepository repository;
+    @InjectMocks ModelRouterService service;
+
+    private AiModelConfig model(String name, String provider, String modelId, int priority, OwnerScope scope) {
+        return AiModelConfig.builder()
+                .name(name).provider(provider).modelId(modelId)
+                .endpoint("http://x").scenario("default").priority(priority)
+                .enabled(true).scope(scope).build();
+    }
+
+    private AiModelConfig modelWithEndpoint(String name, String provider, String modelId,
+                                            String endpoint, OwnerScope scope) {
+        return AiModelConfig.builder()
+                .name(name).provider(provider).modelId(modelId)
+                .endpoint(endpoint).scenario("default").priority(1)
+                .enabled(true).scope(scope).build();
+    }
+
+    @Test
+    void mergesTenantOwnBeforeShared() {
+        when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default"))
+                .thenReturn(List.of(model("own", "openai", "gpt-a", 1, OwnerScope.TENANT)));
+        when(repository.findSharedModelsByScenario("default"))
+                .thenReturn(List.of(model("shared", "dashscope", "qwen", 1, OwnerScope.PLATFORM)));
+
+        List<AiModelConfig> result = service.getModelsForScenario("default");
+
+        assertThat(result).extracting(AiModelConfig::getName).containsExactly("own", "shared");
+    }
+
+    @Test
+    void dedupsByProviderModelEndpoint_keepingTenantOwn() {
+        when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default"))
+                .thenReturn(List.of(model("own", "openai", "gpt-a", 1, OwnerScope.TENANT)));
+        when(repository.findSharedModelsByScenario("default"))
+                .thenReturn(List.of(model("shared-dup", "openai", "gpt-a", 1, OwnerScope.PLATFORM)));
+
+        List<AiModelConfig> result = service.getModelsForScenario("default");
+
+        assertThat(result).extracting(AiModelConfig::getName).containsExactly("own");
+    }
+
+    @Test
+    void fallsBackToDefaultScenario_whenScenarioEmpty() {
+        when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("complaint"))
+                .thenReturn(List.of());
+        when(repository.findSharedModelsByScenario("complaint"))
+                .thenReturn(List.of());
+        when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default"))
+                .thenReturn(List.of());
+        when(repository.findSharedModelsByScenario("default"))
+                .thenReturn(List.of(model("shared-default", "dashscope", "qwen", 1, OwnerScope.PLATFORM)));
+
+        List<AiModelConfig> result = service.getModelsForScenario("complaint");
+
+        assertThat(result).extracting(AiModelConfig::getName).containsExactly("shared-default");
+    }
+
+    @Test
+    void dedupsWhenTenantEndpointNull_matchesSharedDefaultEndpoint() {
+        // 租户模型 endpoint 为 null，运行时会走 openai 的默认端点 https://api.openai.com；
+        // 共享模型显式配置为该默认端点。归一化后二者 key 相同，应只保留租户那条。
+        when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default"))
+                .thenReturn(List.of(modelWithEndpoint("own", "openai", "gpt-a", null, OwnerScope.TENANT)));
+        when(repository.findSharedModelsByScenario("default"))
+                .thenReturn(List.of(modelWithEndpoint("shared-dup", "openai", "gpt-a",
+                        "https://api.openai.com", OwnerScope.PLATFORM)));
+
+        List<AiModelConfig> result = service.getModelsForScenario("default");
+
+        assertThat(result).extracting(AiModelConfig::getName).containsExactly("own");
+    }
+}

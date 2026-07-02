@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.service.ModelRouterService;
@@ -37,6 +38,7 @@ public class AiModelController {
     /**
      * 创建模型配置
      */
+    @AuditLog(action = "MODEL_CREATE", targetType = "AiModelConfig")
     @PostMapping
     public ApiResponse<AiModelConfig> createModel(@RequestBody AiModelConfig config) {
         config.setId(null); // 确保是新建
@@ -47,6 +49,7 @@ public class AiModelController {
     /**
      * 更新模型配置
      */
+    @AuditLog(action = "MODEL_UPDATE", targetType = "AiModelConfig")
     @PutMapping("/{id}")
     public ApiResponse<AiModelConfig> updateModel(@PathVariable Long id, @RequestBody AiModelConfig config) {
         AiModelConfig existing = modelRouterService.getById(id);
@@ -69,6 +72,7 @@ public class AiModelController {
     /**
      * 删除模型配置
      */
+    @AuditLog(action = "MODEL_DELETE", targetType = "AiModelConfig")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> deleteModel(@PathVariable Long id) {
         modelRouterService.deleteModel(id);

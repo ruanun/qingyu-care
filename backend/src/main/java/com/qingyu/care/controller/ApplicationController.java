@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.Application;
@@ -62,6 +63,7 @@ public class ApplicationController {
      * - 平台管理员: 需在 application.tenant.id 中指定租户
      * - 租户用户: 自动绑定当前租户
      */
+    @AuditLog(action = "APP_CREATE", targetType = "Application")
     @PostMapping
     public ApiResponse<Application> create(@RequestBody Application application) {
         Tenant tenant;
@@ -92,6 +94,7 @@ public class ApplicationController {
     /**
      * 更新应用
      */
+    @AuditLog(action = "APP_UPDATE", targetType = "Application")
     @PutMapping("/{id}")
     public ApiResponse<Application> update(@PathVariable Long id, @RequestBody Application application) {
         Application existing = applicationRepository.findById(id)
@@ -111,6 +114,7 @@ public class ApplicationController {
     /**
      * 删除应用
      */
+    @AuditLog(action = "APP_DELETE", targetType = "Application")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         Application app = applicationRepository.findById(id)
@@ -123,6 +127,7 @@ public class ApplicationController {
     /**
      * 重新生成应用密钥
      */
+    @AuditLog(action = "APP_REGENERATE_SECRET", targetType = "Application")
     @PostMapping("/{id}/regenerate-secret")
     public ApiResponse<Application> regenerateSecret(@PathVariable Long id) {
         Application app = applicationRepository.findById(id)

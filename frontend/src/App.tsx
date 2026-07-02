@@ -13,6 +13,11 @@ import LoginPage from './pages/LoginPage';
 import UserListPage from './pages/UserListPage';
 import ApplicationListPage from './pages/ApplicationListPage';
 import TenantListPage from './pages/TenantListPage';
+import PlatformOverviewPage from './pages/PlatformOverviewPage';
+import SharedModelPage from './pages/SharedModelPage';
+import PlatformConfigPage from './pages/PlatformConfigPage';
+import TenantConfigPage from './pages/TenantConfigPage';
+import AuditLogPage from './pages/AuditLogPage';
 import RequireApp from './components/RequireApp';
 import { Toaster } from './components/ui/toaster';
 import { useAuthStore } from './stores/authStore';
@@ -57,6 +62,11 @@ function App() {
           <Route path="users" element={<UserListPage />} />
           <Route path="applications" element={<ApplicationListPage />} />
           <Route path="tenants" element={<TenantListPage />} />
+          <Route path="platform/overview" element={<PlatformOverviewPage />} />
+          <Route path="platform/models" element={<SharedModelPage />} />
+          <Route path="platform/config" element={<PlatformConfigPage />} />
+          <Route path="tenant/config" element={<TenantConfigPage />} />
+          <Route path="audit-logs" element={<AuditLogPage />} />
         </Route>
       </Routes>
       <Toaster />
