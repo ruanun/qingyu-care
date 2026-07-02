@@ -20,9 +20,9 @@ public class OpenApiConfig {
     public OpenAPI customOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("轻语客服 API")
+                        .title("轻语 API")
                         .version("1.0.0")
-                        .description("轻语客服（QingYu Care）- AI智能客服系统 RESTful API 文档")
+                        .description("轻语（QingYu Care）- AI智能客服系统 RESTful API 文档")
                         .contact(new Contact()
                                 .name("QingYu Team")
                                 .email("support@qingyu.com"))

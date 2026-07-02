@@ -88,7 +88,7 @@ const MainLayout: React.FC = () => {
             <aside className="w-64 border-r bg-muted/30 flex flex-col">
                 <div className="p-6 border-b">
                     <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                        轻语客服 - QingYu
+                        轻语 - QingYu
                     </h1>
                 </div>
 

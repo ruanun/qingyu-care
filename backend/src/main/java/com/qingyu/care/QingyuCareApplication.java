@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * 轻语客服 - AI智能客服系统启动类
+ * 轻语 - AI智能客服系统启动类
  * 
  * @author QingYu Team
  * @version 1.0.0

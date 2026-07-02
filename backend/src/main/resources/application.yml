@@ -72,7 +72,7 @@ sa-token:
   # 是否输出日志
   is-log: true
 
-# 轻语客服自定义配置
+# 轻语自定义配置
 qingyu:
   care:
     # 知识库配置
@@ -96,7 +96,7 @@ qingyu:
     prompt:
       # 系统提示词
       system-template: |
-        你是轻语客服，一个专业、友好的AI智能客服助手。
+        你是轻语，一个专业、友好的AI智能客服助手。
         请根据以下知识库内容回答用户问题：
         
         {context}

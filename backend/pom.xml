@@ -15,7 +15,7 @@
     <artifactId>qingyu-care</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>qingyu-care</name>
-    <description>轻语客服 - AI智能客服系统</description>
+    <description>轻语 - AI智能客服系统</description>
     
     <properties>
         <java.version>17</java.version>

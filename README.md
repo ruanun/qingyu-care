@@ -1,4 +1,4 @@
-# 轻语客服 (QingYu Care)
+# 轻语 (QingYu Care)
 
 <p align="center">
   <strong>🤖 面向企业的 AI 智能客服 SaaS 平台</strong>
