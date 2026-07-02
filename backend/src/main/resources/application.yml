@@ -1,0 +1,150 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: qingyu-care
+  
+  # 数据库配置
+  datasource:
+    url: jdbc:postgresql://localhost:5432/qingyu_care
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+  
+  # JPA 配置
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 200MB
+  
+  # Spring AI 配置 (使用 OpenAI 兼容模式)
+  ai:
+    openai:
+      # 通义千问 DashScope OpenAI 兼容端点
+      api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}
+      base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      chat:
+        options:
+          model: ${AI_CHAT_MODEL:qwen-plus}  # 可选: qwen-turbo, qwen-plus, qwen-max
+          temperature: 0.7
+      embedding:
+        options:
+          model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+    
+    # PgVector 向量存储配置
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024  # text-embedding-v3 默认维度
+
+# Sa-Token 配置
+sa-token:
+  # token 名称
+  token-name: satoken
+  # token 有效期 (单位秒，默认 30 天)
+  timeout: 2592000
+  # token 临时有效期 (指定时间内无操作就视为过期，单位秒，-1 代表永不过期)
+  active-timeout: -1
+  # 是否允许同一账号并发登录
+  is-concurrent: true
+  # 在多人登录同一账号时，是否共用一个 token
+  is-share: true
+  # token 风格
+  token-style: uuid
+  # 是否输出日志
+  is-log: true
+
+# 轻语客服自定义配置
+qingyu:
+  care:
+    # 知识库配置
+    knowledge:
+      # 文档切分配置
+      chunking:
+        default-chunk-size: 1000
+        default-overlap: 200
+      # 注意: top-k 和 similarity-threshold 已移至数据库动态配置 (ChatStrategy)
+    
+    # 会话配置
+    session:
+      # 会话超时时间（分钟）
+      timeout-minutes: 30
+      # 最大历史消息数
+      max-history-messages: 20
+      # Token 裁剪阈值
+      token-limit: 4000
+    
+    # Prompt 配置 (仅用于初始化默认模板，运行时从数据库读取)
+    prompt:
+      # 系统提示词
+      system-template: |
+        你是轻语客服，一个专业、友好的AI智能客服助手。
+        请根据以下知识库内容回答用户问题：
+        
+        {context}
+        
+        回答要求：
+        1. 基于知识库内容回答，不要编造信息
+        2. 如果知识库中没有相关信息，请诚实说明并建议转接人工客服
+        3. 保持专业、友好的语气
+        4. 回答要简洁明了
+
+# X File Storage 配置 (S3 兼容存储 - RustFS)
+dromara:
+  x-file-storage:
+    default-platform: rustfs
+    amazon-s3:
+      - platform: rustfs
+        enable-storage: true
+        access-key: ${STORAGE_ACCESS_KEY:rustfsadmin}
+        secret-key: ${STORAGE_SECRET_KEY:rustfsadmin123}
+        region: us-east-1
+        end-point: ${STORAGE_ENDPOINT:http://localhost:9000}
+        bucket-name: ${STORAGE_BUCKET:qingyu-care}
+        domain: ""  # 留空使用 end-point + bucket-name 拼接
+        base-path: knowledge/
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.qingyu.care: DEBUG
+    org.springframework.ai: DEBUG
+ 
+
+# Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# API 文档配置
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha

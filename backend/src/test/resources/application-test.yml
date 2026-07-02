@@ -1,0 +1,14 @@
+# 测试环境配置
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/qingyu_care_test
+    username: postgres
+    password: postgres
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  
+  ai:
+    openai:
+      api-key: test-key

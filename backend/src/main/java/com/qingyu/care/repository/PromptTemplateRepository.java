@@ -1,0 +1,37 @@
+package com.qingyu.care.repository;
+
+import com.qingyu.care.entity.PromptTemplate;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, Long> {
+    
+    /**
+     * 获取当前激活的模板
+     */
+    Optional<PromptTemplate> findByIsActiveTrue();
+    
+    /**
+     * 获取所有版本，按版本号降序
+     */
+    List<PromptTemplate> findAllByOrderByVersionDesc();
+    
+    /**
+     * 获取最新版本号
+     */
+    @Query("SELECT COALESCE(MAX(p.version), 0) FROM PromptTemplate p")
+    Integer findMaxVersion();
+    
+    /**
+     * 将所有模板设为非激活
+     */
+    @Modifying
+    @Query("UPDATE PromptTemplate p SET p.isActive = false")
+    void deactivateAll();
+}
