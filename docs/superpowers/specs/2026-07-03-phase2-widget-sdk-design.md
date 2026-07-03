@@ -68,9 +68,18 @@ Phase 2 第二子项：一行 `<script>` 即可嵌入任意网站的浏览器聊
 
 ### 4.4 静态托管
 
-- widget 项目 `vite build` 输出单文件到 `backend/src/main/resources/static/widget.js`（IIFE、无 hash 文件名）。
-- 对外嵌入：`<script src="http(s)://<host>/api/widget.js?appKey=app_xxx"></script>`。
-- 该文件为构建产物；`.gitignore` 忽略之，部署/开发时由 widget 构建生成（README 记录构建命令）。
+- widget 项目 `vite build` 输出单文件到 `backend/src/main/resources/static/widget.js`（IIFE、无 hash 文件名——嵌入片段 URL 固定，入口文件名不能带 hash）。
+- 对外嵌入：`<script src="http(s)://<host>/api/widget.js?appKey=app_xxx&v=<版本>"></script>`。
+- **构建产物提交进仓库**（不 gitignore）：本项目自托管、无独立 CDN，部署即 `mvn package` 后端，产物入库可保证 `/api/widget.js` 永远存在、部署零额外步骤、无 404 风险。这是自托管嵌入式 SDK 的常见务实做法（对齐 Intercom/Crisp 靠自有 CDN 分发的目的，只是我们用后端 static 承担该角色）。
+  - 配套约定：改动 widget 源码的提交必须**同时重新构建并提交产物**；README 记录构建命令；CI 增一步校验「产物与源码一致」（`vite build` 后 `git diff --exit-code .../static/widget.js`）防止产物过期。
+  - Maven 集成 widget 构建（frontend-maven-plugin，打包时自动产出、产物不入库）列为后续工程优化——首版为避免给后端构建引入 Node 依赖，先用产物入库。
+- **缓存与版本**：widget.js 为稳定入口，响应给较短 `Cache-Control`；嵌入片段用 `?v=<版本>` 做 cache-bust，发版 bump 版本即让浏览器取新产物，无需用户清缓存（业界共识：稳定入口短 TTL、版本化 URL 长缓存）。
+
+### 4.5 会话失效约定（Widget 兜底依赖）
+
+- `/completions` 收到**未知/已过期 sessionId** 时，返回约定错误（建议 `OpenApiException(404, "会话不存在或已过期")`，带可识别 code），**不隐式新建会话**（避免上下文错乱、用户以为在续聊实则已断）。
+- Widget 捕获该错误 → 清除本地 sessionId → 以新会话重发本次消息（见 §5.2），用户无感。
+- 实现阶段先读现有 `/completions` 对传入 sessionId 的处理：若当前是「查不到就静默当新会话」，则改为按上述约定显式报错。
 
 ## 5. Widget 前端项目（新建 `widget/`）
 
@@ -95,10 +104,14 @@ widget/
 
 - **加载**：`main.ts` 读 `document.currentScript`（或按 `src*="widget.js"` 兜底查找）src 的 `?appKey=`；apiBase = script src 的 origin + `/api`。缺 appKey → console 报错、不渲染。
 - **初始化**：拉 `GET /open/v1/widget/config` 得品牌信息 → 渲染气泡（themeColor）。
-- **交互**：点击气泡展开面板（首次显示 welcomeMessage + avatar）；输入发送 → `POST /open/v1/chat/completions`，展示"输入中…"后渲染助手回复。首条请求不带 sessionId，服务端在响应 `{sessionId, reply}` 里回传新 sessionId，Widget 存入 localStorage（`qingyu_widget_session_<appKey>`），后续请求带上以维持多轮上下文。
+- **交互**：点击气泡展开面板（首次显示 welcomeMessage + avatar）；输入发送 → `POST /open/v1/chat/completions`，展示"输入中…"后渲染助手回复。首条请求不带 sessionId，服务端在响应 `{sessionId, reply}` 里回传新 sessionId，Widget 存入 localStorage（`qingyu_widget_session_<appKey>`，值为 `{sessionId, createdAt}`），后续请求带上以维持多轮上下文。
+- **会话过期与失效处理**（业界标准模式：本地存 sessionId+时间戳、按龄清理、服务端失效兜底、fail silently）：
+  - **本地过期**：加载时读 `createdAt`，超过 24h（与服务端会话保留策略对齐）则清除本地会话、当作新会话开始。
+  - **服务端失效兜底**：请求带的 sessionId 在服务端已不存在/过期时，服务端返回约定错误（§4.5），Widget 捕获后清除本地 sessionId、**自动以新会话重发本次消息**，用户无感、不卡在死会话里。
+  - **容错**：localStorage 读写用 try/catch，数据损坏或被禁用（隐私模式）时按「无本地会话」降级，绝不抛错影响宿主页面。
 - **样式隔离**：整个 UI 挂在 `attachShadow({mode:'open'})` 的容器内，CSS 注入到 shadow root，不受宿主页面影响、也不外泄。
 - **移动端**：视口宽度 < 480px 时面板全屏。
-- **可选转人工**：面板头部一个"转人工"按钮 → `POST /open/v1/sessions/{id}/handover`。
+- **转人工（v1 纳入）**：轻语是 AI 智能客服，转人工是客服核心能力，且后端 `/handover` 端点已就绪、前端成本低。面板头部「转人工」按钮 → `POST /open/v1/sessions/{id}/handover`；仅在已有 sessionId 时可用，成功后提示「已为你转接人工」。
 
 ### 5.3 认证与安全
 
@@ -123,24 +136,33 @@ widget/
 
 ## 9. 安全考量
 
-- **无密钥暴露**：Widget 只用公开 appKey；密钥仅服务端到服务端使用。
-- **来源白名单**：Origin 由浏览器强制、不可被页面脚本伪造，服务端精确匹配 allowedOrigins。
-- **限流仍生效**：Widget 调用经同一拦截器按 appKey 限流，防滥用。
+**威胁模型（明确边界，避免误判 Origin 白名单为强安全边界）**：公开 appKey + Origin 白名单是**匿名嵌入式 widget 的业界标准姿势**（对齐 Intercom「trusted domains」、Crisp 域名白名单）。
+
+- Origin 头由**浏览器**强制、页面脚本不可伪造——白名单能有效防「其他网站盗用你的 widget/appKey 在他们站点上跑」。
+- 但 Origin 头对**非浏览器客户端可任意伪造**（curl/后端拿公开 appKey + 伪造 Origin 即可调接口）。故白名单**不是**抗滥用的强边界；**真正的滥用主防线是按 appKey 限流**（已就绪）。这是所有公开 widget 的固有权衡，业界一致。
+- **登录用户身份校验**（防冒充具体终端用户）业界靠类 Intercom Identity Verification 的 **HMAC user_hash**（服务端用 appSecret 对 userId 签名）；v1 是匿名访客聊天、无此需求，列为**后续增强**（当 widget 需绑定宿主站已登录用户时再引入）。
+
+**其它**：
+
+- **无密钥暴露**：Widget 只用公开 appKey；appSecret 仅服务端到服务端使用。
+- **来源白名单**：服务端精确匹配 allowedOrigins；未配置则一律拒绝（安全默认）。
+- **限流仍生效**：Widget 调用经同一拦截器按 appKey 限流（滥用主防线）。
+- **fail silently**：widget 任何异常只 `console.warn`，绝不抛错干扰宿主页面（业界共识：出错时用户会怪宿主站而非 widget）。
 - 残留：allowedOrigins 精确匹配不含通配子域（如 `*.a.com`），首版不支持通配（YAGNI），需要时再加。
 
 ## 10. 风险与非目标
 
-- **非目标**：Webhook、富媒体/多语言、通配子域、Widget 深度主题定制、appSecret 加密。
+- **非目标**：Webhook、富媒体/多语言、通配子域、Widget 深度主题定制、appSecret 加密、HMAC 登录用户身份校验（后续增强）。
 - **风险**：
   - **流式为后续增强**：`/stream` 只返回文本块、不回传服务端 sessionId，无法可靠维持多轮会话；v1 用 `/completions` 规避。后续做流式需让 stream 端点通过响应头 `X-Session-Id` 回传会话 id 再逐字渲染。
-  - widget.js 为构建产物：需在部署流程中执行 widget 构建，否则 `/api/widget.js` 404（README 记录）。
+  - **产物与源码一致性**：widget.js 构建产物入库后，改源码若忘记 rebuild 提交会导致线上产物过期；由 README 约定 + CI 一致性校验（`git diff --exit-code`）兜底。
 
 ## 11. 交付物清单
 
-**后端**：`Application` 加 `allowedOrigins`；`OpenApiAuthService.authenticateByOrigin`；`OpenApiAuthInterceptor` 分流；`OpenWidgetController` + `OpenWidgetConfigResponse`（`/open/v1/widget/config`）；`ApplicationController.update` 透传 allowedOrigins；`OpenApiAuthServiceTest` 增补。
+**后端**：`Application` 加 `allowedOrigins`；`OpenApiAuthService.authenticateByOrigin`；`OpenApiAuthInterceptor` 分流；`OpenWidgetController` + `OpenWidgetConfigResponse`（`/open/v1/widget/config`）；`ApplicationController.update` 透传 allowedOrigins；`/completions` 对未知/失效 sessionId 的约定错误响应（§4.5）；`OpenApiAuthServiceTest` 增补。
 
-**Widget 项目**：新建 `widget/`（vite 配置 + main/config/api/session/ui/styles + vitest 单测）；构建输出 `backend/.../static/widget.js`。
+**Widget 项目**：新建 `widget/`（vite 配置 + main/config/api/session/ui/styles + vitest 单测）；会话本地过期(24h) + 服务端失效自动重开 + localStorage 容错；转人工按钮；构建输出并**提交** `backend/.../static/widget.js`。
 
 **管理后台**：`IntegrationPage` 加 allowedOrigins 编辑 + 真实嵌入片段。
 
-**其它**：`.gitignore` 忽略 `backend/src/main/resources/static/widget.js`；README 记录 widget 构建命令。
+**其它**：widget.js 构建产物**提交入库**（不 gitignore）+ README 记录构建命令 + CI 校验产物与源码一致；嵌入片段带 `?v=<版本>` 缓存控制。
