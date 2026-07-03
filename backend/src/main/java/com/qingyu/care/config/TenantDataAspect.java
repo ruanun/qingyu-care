@@ -31,24 +31,37 @@ public class TenantDataAspect {
         Long tenantId = TenantContext.getTenantId();
         Long appId = TenantContext.getAppId();
 
-        // 平台管理员且未指定租户上下文：可查看全部数据，不启用过滤
-        // （若平台管理员正在操作某个特定租户，Context 中会有 tenantId，走下方过滤逻辑）
-        if (isPlatformAdmin() && tenantId == null) {
-            return;
-        }
-
-        Session session = entityManager.unwrap(Session.class);
-
+        // 有明确租户上下文（管理端已登录并选定租户，或开放 API 鉴权后注入）：按上下文过滤
         if (tenantId != null) {
+            Session session = entityManager.unwrap(Session.class);
             session.enableFilter("tenantFilter").setParameter("tenantId", tenantId);
-
             if (appId != null) {
                 session.enableFilter("appFilter").setParameter("appId", appId);
             }
-        } else {
-            // 非平台管理员却缺少租户上下文：属于异常状态，
-            // 强制以不可能匹配的租户 ID 过滤，避免越权看到全部数据（安全默认拒绝）
-            session.enableFilter("tenantFilter").setParameter("tenantId", -1L);
+            return;
+        }
+
+        // 无租户上下文时：
+        // 1) 平台管理员：可查看全部数据，不过滤；
+        // 2) 未登录：登录/注册/开放 API 鉴权等均发生在“未登录”态，需按唯一键
+        //    （findByUsername / findByAppKey）跨租户查找。若在此施加过滤，会把待认证的
+        //    用户/应用挡在门外——历史 bug：平台管理员 tenant_id=NULL 被 -1 过滤掉而无法登录。
+        if (isPlatformAdmin() || !isLoggedIn()) {
+            return;
+        }
+
+        // 3) 已登录的非管理员却缺少租户上下文：属于异常状态，
+        //    强制以不可能匹配的租户 ID 过滤，避免越权看到全部数据（安全默认拒绝）。
+        entityManager.unwrap(Session.class)
+                .enableFilter("tenantFilter").setParameter("tenantId", -1L);
+    }
+
+    /** Sa-Token 是否已登录；未初始化上下文等异常一律按未登录处理。 */
+    private boolean isLoggedIn() {
+        try {
+            return StpUtil.isLogin();
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.cors.CorsUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
@@ -36,6 +37,11 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
+        // 浏览器 Widget 跨域调用会先发 CORS 预检（OPTIONS，不带 X-App-Id/凭据），
+        // 必须放行让 CORS 处理器回 2xx，否则预检 401 → 浏览器拦截所有开放 API 请求。
+        if (CorsUtils.isPreFlightRequest(request)) {
+            return true;
+        }
         try {
             String appId = request.getHeader("X-App-Id");
             String apiKey = request.getHeader("X-Api-Key");

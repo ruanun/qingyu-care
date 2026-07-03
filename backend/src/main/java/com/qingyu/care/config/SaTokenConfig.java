@@ -27,7 +27,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
                             "/swagger-ui/**",
                             "/swagger-ui.html",
                             "/actuator/**",
-                            "/open/v1/**"
+                            "/open/v1/**",
+                            "/widget.js"   // 公开嵌入的挂件脚本，外部 <script> 无登录态，必须放行
                     )
                     .check(r -> StpUtil.checkLogin());
         })).addPathPatterns("/**");

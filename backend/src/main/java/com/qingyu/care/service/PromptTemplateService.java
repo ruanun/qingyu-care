@@ -46,7 +46,10 @@ public class PromptTemplateService {
      * 获取当前激活的模板
      */
     public PromptTemplate getActiveTemplate() {
+        // 先取当前租户/应用范围内的激活模板；缺失时回退到平台级默认模板
+        // （@PostConstruct 建的默认模板 tenant_id 为空，会被租户过滤挡住，故需显式回退）。
         return repository.findByIsActiveTrue()
+                .or(repository::findPlatformDefaultActive)
                 .orElseThrow(() -> new ResourceNotFoundException("没有激活的 Prompt 模板"));
     }
 

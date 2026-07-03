@@ -16,6 +16,14 @@ public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, 
      * 获取当前激活的模板
      */
     Optional<PromptTemplate> findByIsActiveTrue();
+
+    /**
+     * 平台级默认激活模板（tenant_id 为空）。
+     * 用原生查询绕过 Hibernate 租户过滤，供某租户/应用未配置自己的激活模板时回退。
+     */
+    @Query(value = "SELECT * FROM prompt_templates WHERE is_active = true AND tenant_id IS NULL ORDER BY id LIMIT 1",
+            nativeQuery = true)
+    Optional<PromptTemplate> findPlatformDefaultActive();
     
     /**
      * 获取所有版本，按版本号降序

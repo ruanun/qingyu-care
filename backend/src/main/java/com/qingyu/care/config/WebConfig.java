@@ -2,9 +2,16 @@ package com.qingyu.care.config;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.resource.PathResourceResolver;
+
+import java.time.Duration;
 
 /**
  * Web 配置 (CORS + 拦截器)
@@ -39,10 +46,22 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     @Override
-    public void addResourceHandlers(org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry registry) {
-        // Widget 入口文件名固定、不带 hash，给较短缓存；嵌入片段用 ?v=<版本> 做 cache-bust
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // Widget 入口文件名固定、不带 hash，给较短缓存；嵌入片段用 ?v=<版本> 做 cache-bust。
+        // 位置给目录（供解析器被调用），解析器固定返回文件名正确的 widget.js：
+        // 直接把 location 当资源会因“文件当目录”而 Content-Type 退化为 octet-stream，
+        // 返回明确的 ClassPathResource("static/widget.js") 才能识别为 JavaScript。
         registry.addResourceHandler("/widget.js")
-                .addResourceLocations("classpath:/static/widget.js")
-                .setCacheControl(org.springframework.http.CacheControl.maxAge(java.time.Duration.ofMinutes(5)));
+                .addResourceLocations("classpath:/static/")
+                .setCacheControl(CacheControl.maxAge(Duration.ofMinutes(5)))
+                .resourceChain(false)
+                .addResolver(new PathResourceResolver() {
+                    private final Resource widgetJs = new ClassPathResource("static/widget.js");
+
+                    @Override
+                    protected Resource getResource(String resourcePath, Resource location) {
+                        return widgetJs.exists() && widgetJs.isReadable() ? widgetJs : null;
+                    }
+                });
     }
 }

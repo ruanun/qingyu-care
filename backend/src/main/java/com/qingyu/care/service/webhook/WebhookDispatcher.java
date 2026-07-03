@@ -9,6 +9,8 @@ import com.qingyu.care.repository.WebhookDeliveryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -32,6 +34,9 @@ public class WebhookDispatcher {
     private final WebhookPayloadBuilder payloadBuilder;
     private final WebhookSender sender;
 
+    // AFTER_COMMIT 阶段原事务已提交，此处的落库必须开启独立新事务（REQUIRES_NEW），
+    // 否则会并入已完成的事务而不再提交——PENDING 行拿不到 id、也不落库，异步投递认领不到（历史 bug）。
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onDomainEvent(WebhookDomainEvent event) {
         if (event.getAppId() == null) {
