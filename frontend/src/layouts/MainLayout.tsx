@@ -4,7 +4,7 @@ import {
     MessageSquare, Database, UserPen, LayoutDashboard,
     History, FileText, Layers, Settings, Bot,
     LogOut, User as UserIcon, Shield, Users, Smartphone, Building,
-    Activity, Boxes, SlidersHorizontal, ScrollText, Building2
+    Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -51,6 +51,7 @@ const sections: NavSection[] = [
             { label: '问答策略', path: '/strategies', icon: Layers },
             { label: 'AI 模型', path: '/ai-models', icon: Bot },
             { label: '转人工规则', path: '/handover-rules', icon: Settings },
+            { label: '接入配置', path: '/integration', icon: Plug },
         ],
     },
     {

@@ -18,6 +18,7 @@ import SharedModelPage from './pages/SharedModelPage';
 import PlatformConfigPage from './pages/PlatformConfigPage';
 import TenantConfigPage from './pages/TenantConfigPage';
 import AuditLogPage from './pages/AuditLogPage';
+import IntegrationPage from './pages/IntegrationPage';
 import RequireApp from './components/RequireApp';
 import { Toaster } from './components/ui/toaster';
 import { useAuthStore } from './stores/authStore';
@@ -57,6 +58,7 @@ function App() {
           <Route path="strategies" element={<RequireApp><StrategyConfigPage /></RequireApp>} />
           <Route path="ai-models" element={<RequireApp><ModelConfigPage /></RequireApp>} />
           <Route path="handover-rules" element={<RequireApp><HandoverRulePage /></RequireApp>} />
+          <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
           {/* 管理 */}
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="users" element={<UserListPage />} />
