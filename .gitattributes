@@ -1,0 +1,3 @@
+# Widget 构建产物固定 LF：保证跨平台（Windows autocrlf）下
+# CI 产物一致性校验 `git diff --exit-code` 稳定，不被换行差异误报。
+backend/src/main/resources/static/widget.js text eol=lf
