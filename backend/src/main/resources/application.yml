@@ -150,6 +150,11 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  health:
+    # 关闭 Redis 健康检查：限流用独立 Lettuce 客户端且 fail-open，Redis 可选，
+    # 不应因 Redis 不可用而让 /actuator/health 整体 DOWN
+    redis:
+      enabled: false
 
 # API 文档配置
 springdoc:

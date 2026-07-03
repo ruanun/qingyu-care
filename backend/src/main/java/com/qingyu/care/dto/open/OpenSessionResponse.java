@@ -23,7 +23,7 @@ public class OpenSessionResponse {
     private String sessionId;
 
     /**
-     * 会话状态（枚举名称字符串，如 AI_PROCESSING / HUMAN_SERVICE / CLOSED）
+     * 会话状态（枚举名称字符串，如 AI_PROCESSING / WAITING_AGENT / AGENT_PROCESSING / ENDED / TIMEOUT）
      */
     private String status;
 
@@ -39,7 +39,7 @@ public class OpenSessionResponse {
     @Builder
     public static class Msg {
         /**
-         * 消息角色（枚举名称字符串，如 USER / AI / AGENT）
+         * 消息角色（枚举名称字符串，如 USER / ASSISTANT / SYSTEM / AGENT）
          */
         private String role;
 
