@@ -26,7 +26,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
                             "/v3/api-docs/**",
                             "/swagger-ui/**",
                             "/swagger-ui.html",
-                            "/actuator/**"
+                            "/actuator/**",
+                            "/open/v1/**"
                     )
                     .check(r -> StpUtil.checkLogin());
         })).addPathPatterns("/**");

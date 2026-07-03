@@ -18,6 +18,12 @@ spring:
       minimum-idle: 5
       connection-timeout: 30000
   
+  # Redis 配置
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
   # JPA 配置
   jpa:
     hibernate:
@@ -83,6 +89,11 @@ qingyu:
         default-overlap: 200
       # 注意: top-k 和 similarity-threshold 已移至数据库动态配置 (ChatStrategy)
     
+    # 开放 API 配置
+    openapi:
+      # 单个应用默认每分钟请求上限（应用可覆盖）
+      default-rate-limit-per-minute: 60
+
     # 会话配置
     session:
       # 会话超时时间（分钟）

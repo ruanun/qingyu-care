@@ -22,6 +22,7 @@
         <spring-ai.version>1.0.0-M4</spring-ai.version>
         <tika.version>2.9.1</tika.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
+        <bucket4j.version>8.14.0</bucket4j.version>
     </properties>
     
     <dependencyManagement>
@@ -139,6 +140,28 @@
             <optional>true</optional>
         </dependency>
         
+        <!-- Redis (Lettuce) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!-- Bucket4j 分布式限流 (Lettuce) -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-redis-common</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-lettuce</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -200,6 +223,15 @@
             <id>aliyun</id>
             <name>Aliyun Maven</name>
             <url>https://maven.aliyun.com/repository/public</url>
+        </repository>
+        <!-- Bucket4j jdk17 系列在阿里云镜像中缺失，直连 Maven Central 补充 -->
+        <repository>
+            <id>maven-central-direct</id>
+            <name>Maven Central Direct</name>
+            <url>https://repo1.maven.org/maven2</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
         </repository>
     </repositories>
 </project>
