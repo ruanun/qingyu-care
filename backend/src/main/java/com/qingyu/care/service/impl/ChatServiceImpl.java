@@ -180,6 +180,11 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
+    public boolean sessionExists(String sessionId) {
+        return sessionId != null && sessionRepository.findBySessionId(sessionId).isPresent();
+    }
+
+    @Override
     @Transactional
     public void endSession(String sessionId) {
         ChatSession session = getSession(sessionId);

@@ -5,6 +5,7 @@ import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.open.OpenChatRequest;
 import com.qingyu.care.dto.open.OpenChatResponse;
+import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.service.ApiUsageService;
 import com.qingyu.care.service.ChatService;
 import jakarta.validation.Valid;
@@ -37,6 +38,11 @@ public class OpenChatController {
      */
     @PostMapping("/completions")
     public OpenChatResponse completions(@Valid @RequestBody OpenChatRequest req) {
+        // 传了 sessionId 但服务端已不存在/过期 → 显式 404，供 Widget 清本地会话后自动重开
+        if (req.getSessionId() != null && !req.getSessionId().isBlank()
+                && !chatService.sessionExists(req.getSessionId())) {
+            throw new OpenApiException(404, "会话不存在或已过期");
+        }
         ChatResponse resp = chatService.chat(toInternal(req, false));
         long tokens = resp.getTokenUsage() != null ? resp.getTokenUsage() : 0L;
         apiUsageService.record(

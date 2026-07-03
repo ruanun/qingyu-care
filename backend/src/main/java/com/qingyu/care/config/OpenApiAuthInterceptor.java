@@ -37,8 +37,16 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
         try {
-            Application app = openApiAuthService.authenticate(
-                    request.getHeader("X-App-Id"), request.getHeader("X-Api-Key"));
+            String appId = request.getHeader("X-App-Id");
+            String apiKey = request.getHeader("X-Api-Key");
+            Application app;
+            if (apiKey != null && !apiKey.isBlank()) {
+                // 服务端到服务端：appKey + secret
+                app = openApiAuthService.authenticate(appId, apiKey);
+            } else {
+                // 浏览器 Widget：appKey + Origin 白名单（浏览器强制带 Origin，不可被页面脚本伪造）
+                app = openApiAuthService.authenticateByOrigin(appId, resolveOrigin(request));
+            }
             TenantContext.setTenantId(app.getTenant().getId());
             TenantContext.setAppId(app.getId());
             request.setAttribute(ATTR_APP, app);
@@ -70,6 +78,30 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
         TenantContext.clear();
+    }
+
+    /** 取 Origin 头；缺失时从 Referer 解析出 scheme://host[:port]。 */
+    private String resolveOrigin(HttpServletRequest request) {
+        String origin = request.getHeader("Origin");
+        if (origin != null && !origin.isBlank()) {
+            return origin;
+        }
+        String referer = request.getHeader("Referer");
+        if (referer != null && !referer.isBlank()) {
+            try {
+                java.net.URI u = java.net.URI.create(referer);
+                if (u.getScheme() != null && u.getHost() != null) {
+                    String o = u.getScheme() + "://" + u.getHost();
+                    if (u.getPort() != -1) {
+                        o += ":" + u.getPort();
+                    }
+                    return o;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Referer 非法 URI，忽略，回退 null → 认证按未授权处理
+            }
+        }
+        return null;
     }
 
     private void writeError(HttpServletResponse response, int status, String message) throws Exception {

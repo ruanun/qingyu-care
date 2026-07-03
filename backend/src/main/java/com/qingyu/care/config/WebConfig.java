@@ -37,4 +37,12 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(openApiAuthInterceptor)
                 .addPathPatterns("/open/v1/**");
     }
+
+    @Override
+    public void addResourceHandlers(org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry registry) {
+        // Widget 入口文件名固定、不带 hash，给较短缓存；嵌入片段用 ?v=<版本> 做 cache-bust
+        registry.addResourceHandler("/widget.js")
+                .addResourceLocations("classpath:/static/widget.js")
+                .setCacheControl(org.springframework.http.CacheControl.maxAge(java.time.Duration.ofMinutes(5)));
+    }
 }

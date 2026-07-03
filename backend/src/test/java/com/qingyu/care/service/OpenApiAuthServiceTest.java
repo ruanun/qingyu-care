@@ -78,4 +78,78 @@ class OpenApiAuthServiceTest {
                 .isInstanceOf(OpenApiException.class)
                 .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
     }
+
+    private Application appWithOrigins(String origins, boolean enabled) {
+        return Application.builder()
+                .id(1L).name("测试应用").appKey("app_x").appSecret("sec").enabled(enabled)
+                .allowedOrigins(origins)
+                .tenant(Tenant.builder().id(9L).build())
+                .build();
+    }
+
+    @Test
+    void authenticateByOrigin_returnsApp_whenOriginWhitelisted() {
+        when(applicationRepository.findByAppKey("app_x"))
+                .thenReturn(Optional.of(appWithOrigins("https://a.com, https://www.a.com", true)));
+
+        Application result = service.authenticateByOrigin("app_x", "https://www.a.com");
+
+        assertThat(result.getId()).isEqualTo(1L);
+    }
+
+    @Test
+    void authenticateByOrigin_401_whenAppIdMissing() {
+        assertThatThrownBy(() -> service.authenticateByOrigin(null, "https://a.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(401));
+    }
+
+    @Test
+    void authenticateByOrigin_401_whenAppKeyNotFound() {
+        when(applicationRepository.findByAppKey("nope")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("nope", "https://a.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(401));
+    }
+
+    @Test
+    void authenticateByOrigin_403_whenAppDisabled() {
+        when(applicationRepository.findByAppKey("app_x"))
+                .thenReturn(Optional.of(appWithOrigins("https://a.com", false)));
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("app_x", "https://a.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+
+    @Test
+    void authenticateByOrigin_403_whenOriginsEmpty() {
+        when(applicationRepository.findByAppKey("app_x"))
+                .thenReturn(Optional.of(appWithOrigins("  ", true)));
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("app_x", "https://a.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+
+    @Test
+    void authenticateByOrigin_403_whenOriginNotWhitelisted() {
+        when(applicationRepository.findByAppKey("app_x"))
+                .thenReturn(Optional.of(appWithOrigins("https://a.com", true)));
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("app_x", "https://evil.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+
+    @Test
+    void authenticateByOrigin_403_whenOriginNull() {
+        when(applicationRepository.findByAppKey("app_x"))
+                .thenReturn(Optional.of(appWithOrigins("https://a.com", true)));
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("app_x", null))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
 }

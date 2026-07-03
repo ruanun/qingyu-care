@@ -31,6 +31,11 @@ public interface ChatService {
      * 获取会话信息
      */
     ChatSession getSession(String sessionId);
+
+    /**
+     * 判断会话是否存在（按当前上下文可见）。开放 API 用于对失效 sessionId 显式报错。
+     */
+    boolean sessionExists(String sessionId);
     
     /**
      * 结束会话

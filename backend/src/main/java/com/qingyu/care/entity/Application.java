@@ -86,6 +86,13 @@ public class Application {
     @Column(name = "rate_limit_per_minute")
     private Integer rateLimitPerMinute;
 
+    /**
+     * Widget 允许的来源域名白名单（逗号分隔，如 https://a.com,https://www.a.com）。
+     * 为空表示未开放 Widget 接入。
+     */
+    @Column(name = "allowed_origins", columnDefinition = "TEXT")
+    private String allowedOrigins;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 
