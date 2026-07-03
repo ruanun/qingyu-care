@@ -13,4 +13,8 @@ export const integrationService = {
     // 更新限流额度（透传应用更新接口）
     updateRateLimit: (id: number, rateLimitPerMinute: number | null): Promise<ApiResponse<Application>> =>
         api.put(`/applications/${id}`, { rateLimitPerMinute }),
+
+    // 更新 Widget 允许来源域名（透传应用更新接口，逗号分隔）
+    updateAllowedOrigins: (id: number, allowedOrigins: string): Promise<ApiResponse<Application>> =>
+        api.put(`/applications/${id}`, { allowedOrigins }),
 };

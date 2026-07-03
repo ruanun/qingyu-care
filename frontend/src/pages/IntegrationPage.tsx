@@ -12,6 +12,7 @@ const IntegrationPage: React.FC = () => {
     const [appSecret, setAppSecret] = useState('');
     const [showSecret, setShowSecret] = useState(false);
     const [rateLimit, setRateLimit] = useState<string>('');
+    const [allowedOrigins, setAllowedOrigins] = useState('');
 
     const load = async () => {
         if (!currentApp) return;
@@ -21,6 +22,7 @@ const IntegrationPage: React.FC = () => {
             setAppKey(r.data.appKey ?? '');
             setAppSecret(r.data.appSecret ?? '');
             setRateLimit(r.data.rateLimitPerMinute != null ? String(r.data.rateLimitPerMinute) : '');
+            setAllowedOrigins(r.data.allowedOrigins ?? '');
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ title: '加载失败', description: msg, variant: 'destructive' });
@@ -71,6 +73,18 @@ const IntegrationPage: React.FC = () => {
         }
     };
 
+    const saveAllowedOrigins = async () => {
+        if (!currentApp) return;
+        try {
+            const r = await integrationService.updateAllowedOrigins(currentApp.id, allowedOrigins.trim());
+            if (r.code !== 200) throw new Error(r.message);
+            toast({ title: '已保存' });
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '未知错误';
+            toast({ title: '保存失败', description: msg, variant: 'destructive' });
+        }
+    };
+
     if (!currentApp) return <div className="p-6 text-muted-foreground">请先在上方选择应用</div>;
 
     const maskedSecret = appSecret ? appSecret.slice(0, 6) + '••••••••' + appSecret.slice(-4) : '';
@@ -79,6 +93,8 @@ const IntegrationPage: React.FC = () => {
   -H "X-Api-Key: ${showSecret ? appSecret : maskedSecret}" \\
   -H "Content-Type: application/json" \\
   -d '{"message":"你好"}'`;
+
+    const embed = `<script src="${window.location.origin}/api/widget.js?appKey=${appKey}&v=1"></script>`;
 
     return (
         <div className="p-6 space-y-6 max-w-2xl overflow-y-auto h-full">
@@ -116,8 +132,21 @@ const IntegrationPage: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-                <label className="text-sm font-medium">Widget 嵌入代码</label>
-                <p className="text-xs text-muted-foreground">Widget 子项完成后在此生成一行嵌入代码（暂未生效）。</p>
+                <label className="text-sm font-medium">Widget 允许来源域名（每行一个，如 https://www.a.com）</label>
+                <textarea
+                    className="w-full min-h-[80px] text-sm rounded-md border p-2 bg-background"
+                    value={allowedOrigins}
+                    onChange={(e) => setAllowedOrigins(e.target.value.split('\n').map((s) => s.trim()).filter(Boolean).join(','))}
+                    placeholder={'https://www.a.com\nhttps://a.com'}
+                />
+                <p className="text-xs text-muted-foreground">留空表示未开放 Widget。仅这些域名的页面可加载挂件。</p>
+                <Button onClick={saveAllowedOrigins}>保存来源</Button>
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium">Widget 嵌入代码（粘贴到目标网站 &lt;/body&gt; 前）</label>
+                <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap">{embed}</pre>
+                <Button variant="outline" onClick={() => copy(embed)}>复制嵌入代码</Button>
             </div>
         </div>
     );

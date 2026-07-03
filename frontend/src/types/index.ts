@@ -117,6 +117,7 @@ export interface Application {
     themeColor: string;
     enabled: boolean;
     rateLimitPerMinute?: number | null;
+    allowedOrigins?: string | null;
     createdAt: string;
 }
 
