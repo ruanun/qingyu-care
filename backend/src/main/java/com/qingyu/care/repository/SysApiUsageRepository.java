@@ -1,0 +1,29 @@
+package com.qingyu.care.repository;
+
+import com.qingyu.care.entity.SysApiUsage;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDate;
+
+/**
+ * 开放 API 用量仓库：原子累加 + 查询。
+ *
+ * @author ruan
+ */
+@Repository
+public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> {
+
+    /**
+     * 原子累加当天用量，返回受影响行数（0 表示当天尚无记录，需 insert）。
+     */
+    @Modifying
+    @Query(value = "UPDATE sys_api_usage SET call_count = call_count + 1, " +
+            "message_count = message_count + :messages, token_count = token_count + :tokens, " +
+            "updated_at = CURRENT_TIMESTAMP WHERE app_id = :appId AND usage_date = :date", nativeQuery = true)
+    int incrementUsage(@Param("appId") Long appId, @Param("date") LocalDate date,
+                       @Param("messages") long messages, @Param("tokens") long tokens);
+}

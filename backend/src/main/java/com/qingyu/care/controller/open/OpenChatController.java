@@ -1,9 +1,11 @@
 package com.qingyu.care.controller.open;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.open.OpenChatRequest;
 import com.qingyu.care.dto.open.OpenChatResponse;
+import com.qingyu.care.service.ApiUsageService;
 import com.qingyu.care.service.ChatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +18,7 @@ import reactor.core.publisher.Flux;
 
 /**
  * 开放对话 API（认证/限流由 OpenApiAuthInterceptor 处理；租户上下文已注入）。
- * 注：用量计量将在 Task 11 接入，本版本不含计量逻辑。
+ * completions 端点在对话成功后异步记录用量；stream 端点暂不计量。
  *
  * @author ruan
  */
@@ -26,23 +28,31 @@ import reactor.core.publisher.Flux;
 public class OpenChatController {
 
     private final ChatService chatService;
+    private final ApiUsageService apiUsageService;
 
     /**
-     * 普通对话（同步）
+     * 普通对话（同步）。
+     * 对话成功后异步累加 call_count/message_count/token_count。
      * POST /open/v1/chat/completions
      */
     @PostMapping("/completions")
     public OpenChatResponse completions(@Valid @RequestBody OpenChatRequest req) {
         ChatResponse resp = chatService.chat(toInternal(req, false));
+        long tokens = resp.getTokenUsage() != null ? resp.getTokenUsage() : 0L;
+        apiUsageService.record(
+                TenantContext.getTenantId(),
+                TenantContext.getAppId(),
+                1L, tokens);
         return OpenChatResponse.from(resp);
     }
 
     /**
-     * 流式对话（SSE）
+     * 流式对话（SSE）。流式端点暂不计量（token 无法同步获取）。
      * POST /open/v1/chat/stream
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody OpenChatRequest req) {
+        // TODO: 流式结束后经 onComplete 回调异步计量
         return chatService.streamChat(toInternal(req, true));
     }
 
