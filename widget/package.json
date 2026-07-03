@@ -1,0 +1,17 @@
+{
+  "name": "qingyu-widget",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^2.1.9"
+  }
+}
