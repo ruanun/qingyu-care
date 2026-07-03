@@ -12,8 +12,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 @RequiredArgsConstructor
 public class WebConfig implements WebMvcConfigurer {
-    
+
     private final TenantInterceptor tenantInterceptor;
+    private final OpenApiAuthInterceptor openApiAuthInterceptor;
     
     @Override
     public void addCorsMappings(CorsRegistry registry) {
@@ -32,5 +33,8 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(tenantInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/auth/**", "/v3/api-docs/**", "/swagger-ui/**");
+        // 注册开放 API 拦截器（仅 /open/v1/**）
+        registry.addInterceptor(openApiAuthInterceptor)
+                .addPathPatterns("/open/v1/**");
     }
 }
