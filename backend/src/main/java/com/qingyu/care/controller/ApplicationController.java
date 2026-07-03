@@ -107,7 +107,8 @@ public class ApplicationController {
         if (application.getWelcomeMessage() != null) existing.setWelcomeMessage(application.getWelcomeMessage());
         if (application.getThemeColor() != null) existing.setThemeColor(application.getThemeColor());
         if (application.getEnabled() != null) existing.setEnabled(application.getEnabled());
-        
+        if (application.getRateLimitPerMinute() != null) existing.setRateLimitPerMinute(application.getRateLimitPerMinute());
+
         return ApiResponse.success("应用已更新", applicationRepository.save(existing));
     }
 

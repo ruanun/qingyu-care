@@ -80,6 +80,12 @@ public class Application {
     @Builder.Default
     private Boolean enabled = true;
 
+    /**
+     * 开放 API 每分钟请求上限（为空则用平台默认）
+     */
+    @Column(name = "rate_limit_per_minute")
+    private Integer rateLimitPerMinute;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 
