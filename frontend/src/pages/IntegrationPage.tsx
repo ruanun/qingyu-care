@@ -13,6 +13,9 @@ const IntegrationPage: React.FC = () => {
     const [showSecret, setShowSecret] = useState(false);
     const [rateLimit, setRateLimit] = useState<string>('');
     const [allowedOrigins, setAllowedOrigins] = useState('');
+    const [webhookUrl, setWebhookUrl] = useState('');
+    const [webhookSecret, setWebhookSecret] = useState('');
+    const [webhookEvents, setWebhookEvents] = useState('');
 
     const load = async () => {
         if (!currentApp) return;
@@ -23,6 +26,9 @@ const IntegrationPage: React.FC = () => {
             setAppSecret(r.data.appSecret ?? '');
             setRateLimit(r.data.rateLimitPerMinute != null ? String(r.data.rateLimitPerMinute) : '');
             setAllowedOrigins(r.data.allowedOrigins ?? '');
+            setWebhookUrl(r.data.webhookUrl ?? '');
+            setWebhookSecret(r.data.webhookSecret ?? '');
+            setWebhookEvents(r.data.webhookEvents ?? '');
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ title: '加载失败', description: msg, variant: 'destructive' });
@@ -82,6 +88,59 @@ const IntegrationPage: React.FC = () => {
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ title: '保存失败', description: msg, variant: 'destructive' });
+        }
+    };
+
+    const WEBHOOK_EVENTS = [
+        { value: 'session.handover_requested', label: '转人工请求' },
+        { value: 'session.ended', label: '会话结束' },
+    ];
+
+    const toggleWebhookEvent = (value: string) => {
+        const set = new Set(webhookEvents.split(',').map((s) => s.trim()).filter(Boolean));
+        if (set.has(value)) set.delete(value); else set.add(value);
+        setWebhookEvents(Array.from(set).join(','));
+    };
+
+    const saveWebhook = async () => {
+        if (!currentApp) return;
+        try {
+            const r = await integrationService.updateWebhook(currentApp.id, { webhookUrl: webhookUrl.trim(), webhookEvents });
+            if (r.code !== 200) throw new Error(r.message);
+            toast({ title: '已保存' });
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '未知错误';
+            toast({ title: '保存失败', description: msg, variant: 'destructive' });
+        }
+    };
+
+    const resetWebhookSecret = async () => {
+        if (!currentApp) return;
+        if (!confirm('确认重置 Webhook 密钥？重置后旧密钥立即失效，接收方需更新。')) return;
+        try {
+            const r = await integrationService.regenerateWebhookSecret(currentApp.id);
+            if (r.code !== 200) throw new Error(r.message);
+            setWebhookSecret(r.data.webhookSecret ?? '');
+            toast({ title: 'Webhook 密钥已重置' });
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '未知错误';
+            toast({ title: '重置失败', description: msg, variant: 'destructive' });
+        }
+    };
+
+    const testWebhook = async () => {
+        if (!currentApp) return;
+        try {
+            const r = await integrationService.sendWebhookTest(currentApp.id);
+            if (r.code !== 200) throw new Error(r.message);
+            if (r.data.delivered) {
+                toast({ title: '测试事件已送达', description: `HTTP ${r.data.responseStatus}` });
+            } else {
+                toast({ title: '测试事件投递失败', description: r.data.error ?? `HTTP ${r.data.responseStatus}`, variant: 'destructive' });
+            }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '未知错误';
+            toast({ title: '测试失败', description: msg, variant: 'destructive' });
         }
     };
 
@@ -147,6 +206,46 @@ const IntegrationPage: React.FC = () => {
                 <label className="text-sm font-medium">Widget 嵌入代码（粘贴到目标网站 &lt;/body&gt; 前）</label>
                 <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap">{embed}</pre>
                 <Button variant="outline" onClick={() => copy(embed)}>复制嵌入代码</Button>
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium">Webhook 回调 URL</label>
+                <Input
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://your-system.com/webhooks/qingyu"
+                />
+                <p className="text-xs text-muted-foreground">留空表示未启用 Webhook。事件发生时向此地址 POST 带签名的 JSON。</p>
+
+                <label className="text-sm font-medium">订阅事件</label>
+                <div className="flex flex-col gap-1">
+                    {WEBHOOK_EVENTS.map((ev) => (
+                        <label key={ev.value} className="flex items-center gap-2 text-sm">
+                            <input
+                                type="checkbox"
+                                checked={webhookEvents.split(',').map((s) => s.trim()).includes(ev.value)}
+                                onChange={() => toggleWebhookEvent(ev.value)}
+                            />
+                            {ev.label}（{ev.value}）
+                        </label>
+                    ))}
+                </div>
+
+                <div className="flex gap-2">
+                    <Button onClick={saveWebhook}>保存 Webhook</Button>
+                    <Button variant="outline" onClick={testWebhook}>发送测试事件</Button>
+                </div>
+
+                <label className="text-sm font-medium">Webhook 签名密钥</label>
+                <div className="flex items-center gap-2">
+                    <code className="text-xs bg-muted px-2 py-1 rounded">
+                        {webhookSecret ? webhookSecret.slice(0, 6) + '••••••••' + webhookSecret.slice(-4) : '（重置后生成）'}
+                    </code>
+                    <Button variant="outline" onClick={resetWebhookSecret}>重置密钥</Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    接收方用此密钥校验请求头 <code>X-Qingyu-Signature</code>（<code>sha256=HMAC-SHA256(secret, 请求体)</code>），并按 <code>X-Qingyu-Delivery-Id</code> 幂等去重。
+                </p>
             </div>
         </div>
     );

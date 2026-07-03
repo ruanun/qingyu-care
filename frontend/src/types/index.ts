@@ -118,6 +118,9 @@ export interface Application {
     enabled: boolean;
     rateLimitPerMinute?: number | null;
     allowedOrigins?: string | null;
+    webhookUrl?: string | null;
+    webhookSecret?: string | null;
+    webhookEvents?: string | null;
     createdAt: string;
 }
 
