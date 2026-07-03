@@ -93,6 +93,24 @@ public class Application {
     @Column(name = "allowed_origins", columnDefinition = "TEXT")
     private String allowedOrigins;
 
+    /**
+     * Webhook 回调 URL。为空表示未启用 Webhook 事件推送。
+     */
+    @Column(name = "webhook_url", columnDefinition = "TEXT")
+    private String webhookUrl;
+
+    /**
+     * Webhook 签名密钥（HMAC-SHA256）。启用/重置时生成。
+     */
+    @Column(name = "webhook_secret", length = 128)
+    private String webhookSecret;
+
+    /**
+     * 订阅的事件类型（逗号分隔，如 session.handover_requested,session.ended）。
+     */
+    @Column(name = "webhook_events", columnDefinition = "TEXT")
+    private String webhookEvents;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

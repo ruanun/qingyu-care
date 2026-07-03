@@ -94,6 +94,17 @@ qingyu:
       # 单个应用默认每分钟请求上限（应用可覆盖）
       default-rate-limit-per-minute: 60
 
+    # Webhook 事件推送配置
+    webhook:
+      # 最大投递尝试次数（含首次）
+      max-attempts: 5
+      # HTTP 连接/读取超时（毫秒）
+      timeout-ms: 5000
+      # 重试扫描间隔（毫秒）
+      retry-scan-interval-ms: 30000
+      # 各次失败后的退避分钟数
+      backoff-minutes: [1, 5, 15, 30, 60]
+
     # 会话配置
     session:
       # 会话超时时间（分钟）

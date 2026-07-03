@@ -27,9 +27,11 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
+import com.qingyu.care.event.WebhookDomainEvent;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -49,6 +51,7 @@ public class ChatServiceImpl implements ChatService {
     private final HandoverRuleService handoverRuleService;
     private final ModelRouterService modelRouterService;
     private final ChatStrategyService chatStrategyService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -81,7 +84,11 @@ public class ChatServiceImpl implements ChatService {
             session.setStatus(SessionStatus.WAITING_AGENT);
             sessionRepository.save(session);
             log.info("关键词触发转人工: sessionId={}", session.getSessionId());
-            
+
+            eventPublisher.publishEvent(new WebhookDomainEvent(
+                    "session.handover_requested", session.getAppId(), session.getTenantId(),
+                    session.getSessionId(), "keyword", LocalDateTime.now()));
+
             // 保存用户消息
             ChatMessage userMsg = ChatMessage.builder()
                     .session(session)
@@ -192,7 +199,11 @@ public class ChatServiceImpl implements ChatService {
         session.setEndedAt(LocalDateTime.now());
         sessionRepository.save(session);
         log.info("Session {} ended", sessionId);
-        
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.ended", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+
         // 异步生成摘要
         generateSummaryAsync(session);
     }
@@ -241,6 +252,10 @@ public class ChatServiceImpl implements ChatService {
         session.setStatus(SessionStatus.WAITING_AGENT);
         sessionRepository.save(session);
         log.info("Session {} is now waiting for agent handover", sessionId);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.handover_requested", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), "user_request", LocalDateTime.now()));
     }
     
     private ChatSession getOrCreateSession(ChatRequest request) {
