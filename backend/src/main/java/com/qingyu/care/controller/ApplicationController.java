@@ -10,10 +10,16 @@ import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.ApplicationRepository;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.service.AuthService;
+import com.qingyu.care.dto.WebhookTestResult;
+import com.qingyu.care.service.webhook.WebhookPayloadBuilder;
+import com.qingyu.care.service.webhook.WebhookSender;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -27,6 +33,8 @@ public class ApplicationController {
     private final ApplicationRepository applicationRepository;
     private final TenantRepository tenantRepository;
     private final AuthService authService;
+    private final WebhookSender webhookSender;
+    private final WebhookPayloadBuilder webhookPayloadBuilder;
 
     /**
      * 获取应用列表
@@ -109,6 +117,8 @@ public class ApplicationController {
         if (application.getEnabled() != null) existing.setEnabled(application.getEnabled());
         if (application.getRateLimitPerMinute() != null) existing.setRateLimitPerMinute(application.getRateLimitPerMinute());
         if (application.getAllowedOrigins() != null) existing.setAllowedOrigins(application.getAllowedOrigins());
+        if (application.getWebhookUrl() != null) existing.setWebhookUrl(application.getWebhookUrl());
+        if (application.getWebhookEvents() != null) existing.setWebhookEvents(application.getWebhookEvents());
 
         return ApiResponse.success("应用已更新", applicationRepository.save(existing));
     }
@@ -138,6 +148,48 @@ public class ApplicationController {
         
         app.setAppSecret(UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
         return ApiResponse.success("密钥已重新生成", applicationRepository.save(app));
+    }
+
+    /**
+     * 重新生成 Webhook 签名密钥
+     */
+    @AuditLog(action = "APP_REGENERATE_WEBHOOK_SECRET", targetType = "Application")
+    @PostMapping("/{id}/regenerate-webhook-secret")
+    public ApiResponse<Application> regenerateWebhookSecret(@PathVariable Long id) {
+        Application app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("应用", id.toString()));
+        checkAppAccess(app);
+
+        app.setWebhookSecret(UUID.randomUUID().toString().replace("-", "")
+                + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+        return ApiResponse.success("Webhook 密钥已重新生成", applicationRepository.save(app));
+    }
+
+    /**
+     * 发送一条测试事件，同步投递并返回结果（仅验连通性，不落投递表、不受订阅过滤）。
+     */
+    @PostMapping("/{id}/webhook/test")
+    public ApiResponse<WebhookTestResult> testWebhook(@PathVariable Long id) {
+        Application app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("应用", id.toString()));
+        checkAppAccess(app);
+        if (app.getWebhookUrl() == null || app.getWebhookUrl().isBlank()) {
+            throw new InvalidOperationException("请先配置 Webhook 回调 URL");
+        }
+
+        String deliveryId = UUID.randomUUID().toString();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("appId", app.getId());
+        data.put("message", "测试事件");
+        String payload = webhookPayloadBuilder.build(deliveryId, "webhook.test", LocalDateTime.now(), data);
+        try {
+            int status = webhookSender.send(app.getWebhookUrl(), app.getWebhookSecret(),
+                    "webhook.test", deliveryId, payload);
+            boolean ok = status >= 200 && status < 300;
+            return ApiResponse.success(new WebhookTestResult(ok, status, ok ? null : "HTTP " + status));
+        } catch (Exception e) {
+            return ApiResponse.success(new WebhookTestResult(false, null, e.getMessage()));
+        }
     }
 
     private Long getCurrentTenantId() {
