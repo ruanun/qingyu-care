@@ -49,35 +49,38 @@
 
 ---
 
-## Phase 2: 接入能力
+## Phase 2: 接入能力 ✅
 
-### 2.1 REST API 接入
-- [ ] 标准化 API 设计（OpenAPI 规范）
-- [ ] 认证方式：`X-App-Id` + `X-Api-Key`
-- [ ] 核心接口：
-  - `POST /v1/chat/completions` - 发起对话
-  - `POST /v1/chat/stream` - 流式对话
-  - `GET /v1/sessions/{id}` - 获取会话
-  - `POST /v1/sessions/{id}/handover` - 请求转人工
-- [ ] 接口限流与计量
+> 2026-07-03 完成并合入 master：开放 REST API、JS Widget、Webhook 三个子项均已实现（含单元测试）。Widget 与 Webhook 的手工端到端联调待补。
 
-### 2.2 JS Widget 嵌入
-- [ ] 独立的 Widget SDK 项目
-- [ ] 一行代码嵌入：`<script src="https://xxx/widget.js?app=xxx"></script>`
-- [ ] 可配置样式（主题色、位置、尺寸）
-- [ ] 支持自定义欢迎语、头像
-- [ ] 移动端适配
+### 2.1 REST API 接入 ✅
+- [x] 标准化开放 API（统一前缀 `/open/v1/**`）
+- [x] 双路径鉴权：服务端 `X-App-Id` + `X-Api-Key`；浏览器 Widget `X-App-Id` + Origin 白名单
+- [x] 核心接口：
+  - `POST /open/v1/chat/completions` - 发起对话
+  - `POST /open/v1/chat/stream` - 流式对话（SSE）
+  - `GET /open/v1/sessions/{id}` - 获取会话
+  - `POST /open/v1/sessions/{id}/handover` - 请求转人工
+  - `GET /open/v1/widget/config` - Widget 配置
+- [x] 接口限流（Bucket4j + Redis，应用级可配，故障 fail-open）与用量计量（按应用 + 日期异步聚合）
 
-### 2.3 Webhook 事件推送
-- [ ] 事件类型：session_created, message_received, handover_requested, session_closed
-- [ ] Webhook 配置管理
-- [ ] 重试与日志
+### 2.2 JS Widget 嵌入 ✅
+- [x] 独立的 Widget SDK 项目（`widget/`，Vite + TS，产物 `widget.js` 提交进后端静态资源）
+- [x] 一行代码嵌入：`<script src="https://xxx/api/widget.js?appKey=xxx"></script>`
+- [x] 可配置样式（主题色、位置等），Shadow DOM 样式隔离
+- [x] 支持自定义欢迎语、头像
+- [x] 移动端适配
+
+### 2.3 Webhook 事件推送 ✅
+- [x] 事件类型：`session.handover_requested`、`session.ended`（点号命名，可扩展）
+- [x] Webhook 配置管理（接入页配置 URL / 订阅事件 / 密钥 / 测试事件端点）
+- [x] 事务后落库 + `@Async` 投递 + HMAC-SHA256 签名（头 `X-Qingyu-Signature`）+ 退避重试与定时重投
 
 ---
 
 ## Phase 3: 管理后台重构 (接近完成)
 
-> 2026-07-02 更新：平台配置 / 租户配置 / 共享模型池 / 系统监控（审计日志+健康概览）四项已完成并接入菜单路由。剩「用量统计与账单」（延后）与「接入配置」（依赖 Phase 2）未做。详见 `docs/superpowers/specs/2026-07-02-phase3-admin-capabilities-design.md`。
+> 2026-07-03 更新：平台配置 / 租户配置 / 共享模型池 / 系统监控（审计日志+健康概览）四项已完成并接入菜单路由；「接入配置」已随 Phase 2 完成（接入页 IntegrationPage：API Key / Widget 片段 / Webhook 配置）。仅剩「用量统计与账单」（延后）未做。详见 `docs/superpowers/specs/2026-07-02-phase3-admin-capabilities-design.md`。
 
 ### 3.1 平台级管理（超级管理员）
 - [x] 租户列表与管理
@@ -97,7 +100,7 @@
 - [x] 问答策略
 - [x] 转人工规则
 - [x] 模型配置（继承或覆盖）
-- [ ] 接入配置（API Key、Widget 代码生成）
+- [x] 接入配置（API Key / Widget 代码生成 / Webhook 配置，接入页 IntegrationPage）
 - [x] 会话记录
 
 ### 3.4 菜单分组优化
@@ -169,8 +172,8 @@
 | 前端框架 | React + TypeScript + Vite |
 | UI 组件 | Shadcn UI + Tailwind CSS |
 | 状态管理 | Zustand |
-| Widget SDK | 待开发 (独立 Vite + TypeScript 项目) |
-| 限流 | Bucket4j / Redis (待实现) |
+| Widget SDK | 独立 Vite + TypeScript 项目（`widget/`，Shadow DOM 隔离） |
+| 限流 | Bucket4j + Lettuce Redis（应用级可配，故障 fail-open） |
 | 消息队列 | RabbitMQ / Redis Stream (待实现) |
 | 文件存储 | RustFS (S3 兼容) |
 
@@ -179,9 +182,9 @@
 ## 实施优先级
 
 1. **Phase 1** (多租户基础) → ✅ 已完成
-2. **Phase 2** (接入能力) → 📌 下一步重点
-3. **Phase 3** (管理后台) → 🔄 接近完成 (平台/租户配置、共享模型池、审计+概览已完成；仅剩用量账单延后、接入配置随 Phase 2)
-4. **Phase 4** (高级功能) → 待规划
+2. **Phase 2** (接入能力) → ✅ 已完成（开放 API + Widget + Webhook）
+3. **Phase 3** (管理后台) → 🔄 接近完成（平台/租户配置、共享模型池、审计+概览、接入配置均已完成；仅剩用量统计与账单，已延后）
+4. **Phase 4** (高级功能) → 📌 下一步重点（计费 / 多渠道 / 高级 RAG）
 
 ---
 
@@ -202,10 +205,18 @@
 - ✅ 转人工规则
 - ✅ 会话管理
 
+**Phase 2 已完成的对外接入能力（2026-07-03）：**
+- ✅ 开放 REST API（`/open/v1/**`，双路径鉴权：服务端 Api-Key / 浏览器 Origin 白名单）
+- ✅ 接口限流（Bucket4j + Redis，fail-open）与用量计量（按应用 + 日期异步聚合）
+- ✅ JS Widget 独立子项目（`widget/`，Shadow DOM 隔离，一行 script 嵌入，产物 `widget.js` 入库）
+- ✅ Webhook 事件推送（事务后落库 → 异步投递 → HMAC-SHA256 签名 → 退避重试与定时重投）
+- ⬜ Widget / Webhook 手工端到端联调（待补）
+
 **Phase 3 已完成的管理能力（2026-07-02）：**
 - ✅ 统一配置中心（`sys_config`，平台配置 + 租户配置一套机制）
 - ✅ 共享模型池（平台级共享模型，租户可继承；顺带修复"平台默认模型被租户过滤挡住"的隐患）
 - ✅ 操作审计日志（`@AuditLog` + AOP 异步落库、脱敏，超管全量/租户限本租户）
 - ✅ 系统健康概览（Actuator 健康 + 关键计数）
 - ✅ 菜单按角色显隐并接入新页面路由
-- ⬜ 用量统计与账单（延后）、接入配置（随 Phase 2）
+- ✅ 接入配置（接入页 IntegrationPage：API Key / Widget 片段 / Webhook）
+- ⬜ 用量统计与账单（延后）

@@ -26,9 +26,9 @@
 - ✅ **共享模型池** - 平台级共享模型，租户可继承或自建覆盖
 - ✅ **操作审计日志** - 关键写操作自动记录（`@AuditLog` + AOP 异步落库、敏感字段脱敏）
 - ✅ **系统概览** - 系统健康状态与租户/应用/用户/会话关键指标
+- ✅ **对外接入** - 开放 REST API（`/open/v1/**`，服务端 `X-Api-Key` / 浏览器 Origin 白名单双路径鉴权，限流 + 用量计量）、JS Widget 一行嵌入（Shadow DOM 隔离）、Webhook 事件推送（HMAC-SHA256 签名 + 退避重试）
 
 ### 规划中
-- 🚀 对外接入能力：开放 REST API（`X-App-Id` + `X-Api-Key`）、JS Widget 嵌入、Webhook 事件推送
 - 🚀 用量统计与计费、套餐管理
 - 🏢 多渠道接入（微信公众号 / 企业微信 / 钉钉 / 飞书）
 - 🏢 高级 RAG（多库联合检索、混合检索、文档权限）
@@ -49,7 +49,7 @@
 | Sa-Token | 1.38.0 | 认证与权限 |
 | Apache Tika | 2.9.1 | 文档解析 |
 | X File Storage | 2.3.0 | S3 兼容对象存储（对接 RustFS） |
-| MapStruct / Lombok | - | 对象映射 / 样板代码简化 |
+| Lombok | - | 样板代码简化（DTO 转换为手写静态工厂，未启用 MapStruct） |
 
 ### 前端
 | 技术 | 版本 | 说明 |
@@ -70,22 +70,26 @@ PostgreSQL 17 (pgvector) · RustFS（S3 兼容对象存储） · Redis 7（缓�
 qingyu-care/
 ├── backend/                          # 后端服务 (Spring Boot)
 │   ├── src/main/java/com/qingyu/care/
-│   │   ├── config/                  # 配置类（含多租户 TenantContext/Aspect/Filter）
-│   │   ├── controller/              # REST 控制器
-│   │   ├── dto/                     # 数据传输对象
+│   │   ├── annotation/              # 自定义注解（如 @AuditLog）
+│   │   ├── config/                  # 配置类（含多租户 TenantContext/Aspect/Filter、AOP 切面）
+│   │   ├── controller/              # REST 控制器（含 open/ 对外开放 API）
+│   │   ├── dto/                     # 数据传输对象（含 open/ 开放 API DTO）
 │   │   ├── entity/                  # JPA 实体
 │   │   ├── enums/                   # 枚举类
+│   │   ├── event/                   # 领域事件（Webhook 事件发布）
 │   │   ├── exception/               # 异常处理
 │   │   ├── repository/              # 数据访问层
 │   │   ├── scheduler/               # 定时任务（会话超时等）
-│   │   └── service/                 # 业务逻辑层
+│   │   └── service/                 # 业务逻辑层（含 webhook/ 投递、impl/ 实现）
 │   ├── src/main/resources/
 │   │   ├── application.yml          # 主配置
 │   │   ├── application-dev.yml      # 开发环境配置
-│   │   └── schema.sql               # 表结构参考文档（实际建表由 JPA 自动完成）
+│   │   ├── schema.sql               # 表结构参考文档（实际建表由 JPA 自动完成）
+│   │   └── static/widget.js        # Widget 构建产物（由 widget/ 子项目构建后入库）
 │   └── pom.xml
 ├── frontend/                         # 前端管理后台 (React + Vite)
 │   └── src/{api,pages,components,layouts,stores,...}
+├── widget/                           # 可嵌入网页的 Widget SDK（独立 Vite 子项目，产物 widget.js）
 ├── docker/                           # 基础设施 docker-compose 与初始化脚本
 ├── SaaS平台规划.md                   # 产品与技术路线图
 └── README.md
@@ -156,6 +160,7 @@ pnpm dev
 | `AiModelController` / `HandoverRuleController` | 模型配置与转人工规则 |
 | `TenantController` / `ApplicationController` / `UserController` | 租户 / 应用 / 用户管理 |
 | `DashboardController` | 统计仪表盘 |
+| `open/*`（`/open/v1/**`） | 对外开放 API：对话 / 会话 / Widget 配置（独立鉴权与限流） |
 
 ## 🔧 核心配置说明
 
@@ -173,9 +178,9 @@ pnpm dev
 
 ```
 Phase 1  多租户基础架构   ████████████ 已完成
-Phase 2  对外接入能力     ░░░░░░░░░░░░ 规划中（下一步重点）
-Phase 3  管理后台         ██████████░░ 接近完成（仅剩用量账单/接入配置）
-Phase 4  高级功能         ░░░░░░░░░░░░ 待规划
+Phase 2  对外接入能力     ████████████ 已完成（开放 API + Widget + Webhook）
+Phase 3  管理后台         ███████████░ 接近完成（仅剩用量统计与账单，已延后）
+Phase 4  高级功能         ░░░░░░░░░░░░ 下一步（计费 / 多渠道 / 高级 RAG）
 ```
 
 ## 📄 许可证
