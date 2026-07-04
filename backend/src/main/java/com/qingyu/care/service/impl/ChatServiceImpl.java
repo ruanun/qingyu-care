@@ -171,18 +171,47 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public Flux<String> streamChat(ChatRequest request) {
-        // 流式响应实现
+        // 内部调用：不计量，回调为空操作
+        return streamChat(request, t -> {});
+    }
+
+    @Override
+    public Flux<String> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed) {
         ChatSession session = getOrCreateSession(request);
         ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy.getTopK(), strategy.getSimilarityThreshold());
         String context = buildContext(relevantDocs);
         List<Message> messages = buildMessages(session, request.getMessage(), context);
-        
+
         ChatClient chatClient = modelRouterService.getDefaultChatClient();
-        return chatClient.prompt()
-                .messages(messages)
-                .stream()
-                .content();
+        // stream().chatResponse() 返回 Flux<org.springframework.ai.chat.model.ChatResponse>
+        Flux<org.springframework.ai.chat.model.ChatResponse> source =
+                chatClient.prompt().messages(messages).stream().chatResponse();
+        return meterContentStream(source, onTokensUsed);
+    }
+
+    /**
+     * 纯方法：从 Spring AI 响应流中 tap 末尾 usage、映射为内容、结束时回调 total_tokens。
+     * 无实例状态依赖（static），可在不启动 Spring 容器的单元测试中直接调用。
+     *
+     * M4 说明：streamUsage(true) 已在 OpenAiChatOptions 中支持（见 ModelRouterService）；
+     * 末尾 chunk 携带真实 total_tokens，tokens.get() 即为真实用量。
+     * 若某 chunk 无 usage 信息（非末尾 chunk），tokens 保持上次设值（最终为末尾值）。
+     */
+    static Flux<String> meterContentStream(
+            Flux<org.springframework.ai.chat.model.ChatResponse> source,
+            java.util.function.IntConsumer onTokensUsed) {
+        java.util.concurrent.atomic.AtomicInteger tokens = new java.util.concurrent.atomic.AtomicInteger(0);
+        return source
+                .doOnNext(cr -> {
+                    if (cr.getMetadata() != null && cr.getMetadata().getUsage() != null
+                            && cr.getMetadata().getUsage().getTotalTokens() != null) {
+                        tokens.set(cr.getMetadata().getUsage().getTotalTokens().intValue());
+                    }
+                })
+                .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
+                        ? cr.getResult().getOutput().getContent() : null)
+                .doFinally(sig -> onTokensUsed.accept(tokens.get()));
     }
 
     @Override

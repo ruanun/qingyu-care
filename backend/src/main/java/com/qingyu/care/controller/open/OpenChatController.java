@@ -53,13 +53,16 @@ public class OpenChatController {
     }
 
     /**
-     * 流式对话（SSE）。流式端点暂不计量（token 无法同步获取）。
+     * 流式对话（SSE）。流结束时经 doFinally 回调异步记录用量（计量保持开放 API 专属）。
      * POST /open/v1/chat/stream
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody OpenChatRequest req) {
-        // TODO: 流式结束后经 onComplete 回调异步计量
-        return chatService.streamChat(toInternal(req, true));
+        // 必须在请求线程（Reactor 订阅前）捕获上下文，doFinally 回调运行在非 HTTP 线程中无上下文
+        final Long tid = TenantContext.getTenantId();
+        final Long aid = TenantContext.getAppId();
+        return chatService.streamChat(toInternal(req, true),
+                tokens -> apiUsageService.record(tid, aid, 1L, tokens));
     }
 
     /**

@@ -23,9 +23,15 @@ public interface ChatService {
     ChatResponse chat(ChatRequest request);
     
     /**
-     * 流式聊天
+     * 流式聊天（内部调用，不计量）
      */
     Flux<String> streamChat(ChatRequest request);
+
+    /**
+     * 流式聊天，流正常/异常结束时以本次 total_tokens 回调（供开放 API 计量；内部调用用无回调重载）。
+     */
+    reactor.core.publisher.Flux<String> streamChat(com.qingyu.care.dto.ChatRequest request,
+                                                   java.util.function.IntConsumer onTokensUsed);
     
     /**
      * 获取会话信息
