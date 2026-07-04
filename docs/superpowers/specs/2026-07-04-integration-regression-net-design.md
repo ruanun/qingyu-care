@@ -2,7 +2,7 @@
 title: 质量加固 · 集成回归网 + 种子归属审计 设计
 author: ruan
 date: 2026-07-04
-status: 待评审
+status: 已实现
 ---
 
 # 质量加固 · 集成回归网 + 种子归属审计 设计
@@ -88,6 +88,16 @@ status: 待评审
 - **已有兜底者**（联调中 app=2 对话跑通，说明策略/模型至少有可用路径）→ 不改逻辑，补一条 IT 固化「租户无自有配置时仍能拿到平台默认」的行为，防未来回归。
 
 产出：审计结论（每处一句：有无 bug、如何处理）+ 相应修复/IT。
+
+**审计结论（2026-07-04）：**
+
+- **ChatStrategyService — 发现隐性 bug 并修复**：`@PostConstruct` 默认策略 `tenant_id=NULL` 被租户过滤挡掉，无自有策略的租户实际拿到运行时硬编码兜底（`allowNoKnowledge=true`）而非配置的平台默认策略（如严格的 complaint 策略）。解析方法 `getActiveStrategy(scenario)`。修复：`ChatStrategyRepository` 加原生查询 `findPlatformDefaultByScenario`，`getActiveStrategy` 在租户场景查询后 `.or(平台场景回退)`（保留原有运行时兜底，strategy 语义允许安全默认）。
+
+- **HandoverRuleService — 无 bug（优雅降级）**：规则查询空列表即"不触发转人工"，各判定方法均 `.orElse(false)`/`Integer.MAX_VALUE` 兜底，租户无自有规则时安全退化，不报错。仅加 IT 固化。
+
+- **ModelRouterService — 无 bug（设计已正确）**：`AiModelConfigRepository.findSharedModelsByScenario` 本就是原生查询，`scope=PLATFORM` 默认模型不受 Hibernate 过滤影响，任何租户上下文均可见。仅加 IT 固化。
+
+- **关键测试经验**：回退类 IT 必须**经真实请求（MockMvc 打开放 API 端点）**驱动，才能让 `TenantDataAspect` 的 Hibernate 过滤器在查询所用的请求作用域会话上真正生效；直接在测试线程 `set TenantContext` 再调 service 不会触发过滤器，会得到"假绿"。故 PromptTemplate/ChatStrategy 回退 IT 均改为经 `/open/v1/chat/completions`（`@MockitoBean ModelRouterService` 免 LLM）驱动。ModelRouterDefaultIT 因不使用 `@MockitoBean` 位于独立 Spring 上下文，与使用 `@MockitoBean` 的 IT 共用同一 Testcontainer DB，需在 `@BeforeEach` 自播种平台模型以防 `create-drop` 跨上下文清除种子。
 
 ### 3.4 交付边界
 

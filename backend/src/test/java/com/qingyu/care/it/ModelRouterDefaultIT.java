@@ -2,9 +2,12 @@ package com.qingyu.care.it;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.repository.AiModelConfigRepository;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -21,12 +24,44 @@ import static org.assertj.core.api.Assertions.assertThat;
  * getModelsForScenario 的合并逻辑 mergeTenantAndShared 将平台共享模型包含在结果中。
  * 此机制在 Phase 2 设计时已经过修复，无需额外修改——本测试仅锁定该正确行为。
  *
+ * 注意：本测试不使用 @MockitoBean，与 PromptTemplateFallbackIT/ChatStrategyFallbackIT 位于不同
+ * Spring 上下文。两个上下文共用同一 Testcontainer 数据库，若另一上下文以 create-drop 重建 schema，
+ * @PostConstruct 种子可能已消失。因此在 @BeforeEach 中直接确保平台种子存在，使测试自包含。
+ *
  * @author ruan
  */
 class ModelRouterDefaultIT extends AbstractPostgresIT {
 
     @Autowired
     private ModelRouterService modelRouterService;
+
+    @Autowired
+    private AiModelConfigRepository aiModelConfigRepository;
+
+    /**
+     * 确保平台默认模型种子存在。
+     * 多 Spring 上下文共用同一 DB（create-drop）时，@PostConstruct 的种子可能已被另一上下文的
+     * DDL 清除；在此直接写入，令本测试完全自包含，不依赖上下文初始化顺序。
+     */
+    @BeforeEach
+    void 确保平台默认模型存在() {
+        // 无租户上下文时原生查询可正常检索
+        List<AiModelConfig> existing = aiModelConfigRepository.findSharedModelsByScenario("default");
+        if (existing.isEmpty()) {
+            aiModelConfigRepository.saveAndFlush(AiModelConfig.builder()
+                    .name("IT-平台默认模型")
+                    .provider("openai")
+                    .modelId("gpt-4o-mini")
+                    .endpoint("https://api.openai.com")
+                    .apiKey("test-key")
+                    .scenario("default")
+                    .priority(1)
+                    .enabled(true)
+                    .scope(OwnerScope.PLATFORM)
+                    .remark("ModelRouterDefaultIT 自播种的平台共享模型")
+                    .build());
+        }
+    }
 
     @AfterEach
     void 清理上下文() {
