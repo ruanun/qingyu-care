@@ -1,6 +1,8 @@
 # 测试环境配置
 spring:
   datasource:
+    # 集成测试(*IT)运行时，url/username/password 由 AbstractPostgresIT.datasourceProps
+    # 用 Testcontainers 容器地址动态覆盖；此处的 localhost 仅为占位、不要求本机 PG。
     url: jdbc:postgresql://localhost:5432/qingyu_care_test
     username: postgres
     password: postgres
@@ -14,6 +16,8 @@ spring:
       api-key: test-key
     vectorstore:
       pgvector:
-        initialize-schema: true
+        initialize-schema: true          # 让 Spring AI 自建 vector_store 表 + 扩展
         dimensions: 1536
+        # 先 DROP 再重建向量表：绕过 VectorStoreEntity(JPA create-drop 先建的无 embedding 列的表)
+        # 与 Spring AI 建表(IF NOT EXISTS 跳过→建 HNSW 索引时 embedding 列缺失)的顺序冲突。
         remove-existing-vector-store-table: true
