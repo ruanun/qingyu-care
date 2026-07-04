@@ -194,25 +194,25 @@ public class ModelRouterService {
     }
 
     /**
-     * 调用模型（带降级）
+     * 调用模型（带降级），泛型化以透出完整响应类型
      * @param scenario 场景
      * @param promptRunner 执行 prompt 的函数
-     * @return AI 回复内容
+     * @return AI 回复（类型由调用方决定：String 或 Spring AI ChatResponse）
      */
-    public String callWithFallback(String scenario, java.util.function.Function<ChatClient, String> promptRunner) {
+    public <T> T callWithFallback(String scenario, java.util.function.Function<ChatClient, T> promptRunner) {
         List<AiModelConfig> models = getModelsForScenario(scenario);
-        
+
         if (models.isEmpty()) {
             throw new RuntimeException("没有可用的 AI 模型配置");
         }
-        
+
         Exception lastException = null;
-        
+
         for (AiModelConfig model : models) {
             try {
                 log.debug("Calling model: {} ({})", model.getName(), model.getModelId());
                 ChatClient client = createChatClient(model);
-                String result = promptRunner.apply(client);
+                T result = promptRunner.apply(client);
                 log.debug("Model {} returned successfully", model.getName());
                 return result;
             } catch (Exception e) {
@@ -220,7 +220,7 @@ public class ModelRouterService {
                 lastException = e;
             }
         }
-        
+
         // 所有模型都失败
         log.error("All models failed for scenario: {}", scenario);
         throw new RuntimeException("所有 AI 模型调用失败", lastException);
