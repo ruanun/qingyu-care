@@ -70,17 +70,18 @@ status: 待评审
 3. **完成时计量**：`doFinally`（或 `doOnComplete`）中调用 `apiUsageService.record(tenantId, appId, 1, capturedTokens)`。
 4. **上下文捕获（关键）**：`doFinally` 可能在 Reactor 的其它线程执行，`TenantContext`（ThreadLocal）此时取不到——与 Webhook `@Async` 同理。故在**请求线程调用 `streamChat` 的入口处**从 `TenantContext` 读出 `tenantId`/`appId`，闭包捕获后带进管道，不在 `doFinally` 里读 ThreadLocal。
 
-### 3.4 计量归位 —— 从控制器移进 service
+### 3.4 计量位置 —— 保持「开放 API 专属」，不下沉到共享 service
 
-现状：`OpenChatController.completions` 里直接 `apiUsageService.record(TenantContext.getTenantId(), TenantContext.getAppId(), 1, tokens)`；`stream` 不记。
+> **修正（2026-07-04，实现前核实）**：`ChatServiceImpl.chat()` / `streamChat()` 被**内部 `ChatController` 与开放 `OpenChatController` 双方共享**。用量计量是**开放 API 专属**概念（内部管理端的测试对话不应计入应用配额），故计量**不能**下沉到共享的 `chat()`/`streamChat()`——否则会误计内部对话。
 
-改为：
-- `chat()` 返回前，在 service 内 `apiUsageService.record(tenantId, appId, 1, totalTokens)`（tenantId/appId 取自 `TenantContext`，chat 为同步调用线程，可直接读）。
-- `streamChat()` 按 §3.3 在 `doFinally` 记账。
-- `OpenChatController.completions` / `stream` **移除**各自的记账调用，仅保留鉴权后调用 service。
+因此：
+- **非流式**：`chat()` 只负责**填 `ChatResponse.tokenUsage`**（纯响应自带信息，内部/开放都填，无害）。计量仍留在 `OpenChatController.completions` 的现有 `apiUsageService.record(...)`——位置不变，只是现在 `tokens` 非零了。内部 `ChatController` 不记账（现状即如此）。
+- **流式**：usage 只在流完成时（Reactor 管道内）才拿得到，故需在 `streamChat` 内捕获，但**计量动作由调用方决定**——给 `streamChat` 加一个**带完成回调的重载**：
+  - `Flux<String> streamChat(ChatRequest request)` —— 内部用，不计量（委托给下方重载、传一个 no-op 回调，复用同一实现，避免重复管道逻辑）；
+  - `Flux<String> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed)` —— `doFinally` 中 `onTokensUsed.accept(capturedTotalTokens)`。
+  - `OpenChatController.stream` 调用带回调的重载，回调里 `apiUsageService.record(tid, aid, 1, tokens)`；`tid/aid` 在**控制器线程**从 `TenantContext` 读出后闭包捕获（§3.3(4)）。内部 `ChatController.stream` 调用无回调重载 → 不计量。
 
-> 好处：usage 只有 service 层（模型响应处）知道，记账与产生 usage 的地方内聚；两条路径口径一致；控制器变薄。
-> 注意：`record` 仍是 `@Async`，其 `@Transactional` 的 `incrementUsage` 保证落库（见既有修复），不阻塞对话主链路。
+> 结果：计量始终是开放 API 专属；非流式改动最小（仅 `chat()` 填 tokenUsage）；流式通过回调把「产生 usage 的服务层」与「记账的开放层」解耦。`record` 仍 `@Async` + `@Transactional incrementUsage`（既有修复）保证落库、不阻塞主链路。
 
 ### 3.5 口径与边界
 
@@ -93,8 +94,10 @@ status: 待评审
 | 文件 | 改动 |
 |---|---|
 | `service/ModelRouterService.java` | `callWithFallback` 泛型化（返回 `<T>`） |
-| `service/impl/ChatServiceImpl.java` | `chat()` 取 usage 填 tokenUsage + 记账；`streamChat()` 改 `chatResponse()` + tap usage + `doFinally` 记账 + 上下文捕获 |
-| `controller/open/OpenChatController.java` | 移除 completions 的记账；stream 不再需要额外改（记账下沉到 service） |
+| `service/ChatService.java`（接口） | 新增 `streamChat(ChatRequest, IntConsumer onTokensUsed)` 重载声明 |
+| `service/impl/ChatServiceImpl.java` | `chat()` 取 usage 填 `tokenUsage`（**不记账**）；`streamChat` 加带回调重载：`.stream().chatResponse()` + tap 末尾 usage + `doFinally` 触发回调；无参重载委托传 no-op 回调 |
+| `controller/open/OpenChatController.java` | completions 记账**保留**（tokens 现在非零）；stream 改为调带回调重载，回调里 `record`（先在控制器线程捕获 tenantId/appId） |
+| `controller/ChatController.java` | 内部 stream 继续用无参 `streamChat`（不计量），**无需改动** |
 | `dto/ChatResponse.java` | 无需改（`tokenUsage` 字段已存在，只是现在被填） |
 
 ## 5. 测试
@@ -113,7 +116,7 @@ status: 待评审
 
 ## 7. 验收标准
 
-- 非流式对话后 `sys_api_usage.token_count` 为真实 total_tokens（> 0）。
-- 流式对话完成后，该应用在 `sys_api_usage` 有计量行（至少 call_count 增加；token 尽力而为）。
-- 记账逻辑只在 service 层；控制器不再直接 `record`。
+- 非流式**开放** API 对话后 `sys_api_usage.token_count` 为真实 total_tokens（> 0）。
+- 流式**开放** API 对话完成后，该应用在 `sys_api_usage` 有计量行（至少 call_count 增加；token 尽力而为）。
+- 计量始终**开放 API 专属**：内部 `ChatController` 的对话（流式/非流式）**不**产生 `sys_api_usage` 记录。
 - 单测 + IT 全绿；`mvn test` 仍免 Docker、`mvn verify` 含新 IT 全绿。
