@@ -60,17 +60,15 @@ public class ChatStrategyService {
 
     /**
      * 获取指定场景的有效策略
-     * 1. 租户自有场景策略（Hibernate 过滤器作用域）
-     * 2. 平台默认场景策略（tenant_id IS NULL，原生查询绕过过滤器）
-     * 3. 租户自有 default 场景策略
-     * 4. 平台 default 场景策略（tenant_id IS NULL）
-     * 5. 运行时硬编码兜底
+     * 1. 查找场景默认策略（租户自有；@PostConstruct 平台种子 tenant_id=NULL 会被租户过滤挡住）
+     * 2. 回退平台默认策略（tenant_id IS NULL，原生查询绕过 Hibernate 过滤器）——闭 bug 的唯一关键
+     * 3. 降级到 default 场景的默认策略
+     * 4. 兜底返回运行时静态对象（与 prompt 不同，strategy 语义允许无配置时有安全默认，故不抛异常）
      */
     public ChatStrategy getActiveStrategy(String scenario) {
         return repository.findByScenarioAndEnabledTrueAndIsDefaultTrue(scenario)
                 .or(() -> repository.findPlatformDefaultByScenario(scenario))
                 .or(() -> repository.findByScenarioAndEnabledTrueAndIsDefaultTrue("default"))
-                .or(() -> repository.findPlatformDefaultByScenario("default"))
                 .orElseGet(() -> ChatStrategy.builder()
                         .name("运行时硬编码兜底")
                         .scenario("default")
