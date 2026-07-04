@@ -12,3 +12,8 @@ spring:
   ai:
     openai:
       api-key: test-key
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        dimensions: 1536
+        remove-existing-vector-store-table: true
