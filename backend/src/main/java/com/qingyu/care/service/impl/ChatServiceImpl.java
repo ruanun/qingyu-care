@@ -136,23 +136,28 @@ public class ChatServiceImpl implements ChatService {
         // 构建消息历史
         List<Message> messages = buildMessages(session, request.getMessage(), context);
         
-        // 调用AI（使用动态模型路由）
+        // 调用AI（动态模型路由）；取完整响应以拿到 token 用量
         final List<Message> finalMessages = messages;
-        String response = modelRouterService.callWithFallback("default", client -> 
-            client.prompt()
-                .messages(finalMessages)
-                .call()
-                .content()
-        );
-        
+        org.springframework.ai.chat.model.ChatResponse aiResp =
+                modelRouterService.callWithFallback("default", client ->
+                        client.prompt().messages(finalMessages).call().chatResponse());
+        // M4: 取文本用 getResult().getOutput().getContent()（1.0 GA 才是 getText()）
+        String response = aiResp.getResult().getOutput().getContent();
+        // M4: getTotalTokens() 返回 Long；安全空检查后转 Integer 填入 DTO
+        Integer tokenUsage = (aiResp.getMetadata() != null && aiResp.getMetadata().getUsage() != null
+                && aiResp.getMetadata().getUsage().getTotalTokens() != null)
+                ? aiResp.getMetadata().getUsage().getTotalTokens().intValue()
+                : null;
+
         // 保存消息
         saveMessages(session, request.getMessage(), response, maxScore);
-        
-        // 构建响应
+
+        // 构建响应（tokenUsage 由开放控制器用于计量；内部对话同样填入供前端展示）
         return ChatResponse.builder()
                 .sessionId(session.getSessionId())
                 .content(response)
                 .confidenceScore(maxScore)
+                .tokenUsage(tokenUsage)
                 .suggestHandover(handoverRuleService.checkLowConfidenceTrigger(maxScore))
                 .knowledgeHits(relevantDocs.stream()
                         .map(doc -> ChatResponse.KnowledgeHit.builder()

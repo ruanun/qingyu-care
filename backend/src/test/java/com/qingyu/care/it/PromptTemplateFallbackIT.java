@@ -3,6 +3,7 @@ package com.qingyu.care.it;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
+import com.qingyu.care.support.SpringAiResponses;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -50,10 +51,10 @@ class PromptTemplateFallbackIT extends AbstractPostgresIT {
         // 该租户应用不建自有 prompt/strategy，只留 @PostConstruct 的平台默认（tenant_id=NULL）
         Application app = seedApp("prompt_fb", "http://it.example.com");
 
-        // 对话最终会调用 callWithFallback；打桩返回固定回复，避免真实模型
+        // 对话最终会调用 callWithFallback；打桩返回带 usage 的 Spring AI ChatResponse，避免真实模型
         Mockito.when(modelRouterService.callWithFallback(
                         ArgumentMatchers.eq("default"), ArgumentMatchers.any()))
-                .thenReturn("MOCK_AI_REPLY");
+                .thenReturn(SpringAiResponses.of("MOCK_AI_REPLY", 7));
 
         mockMvc.perform(post("/open/v1/chat/completions")
                         .header("X-App-Id", app.getAppKey())

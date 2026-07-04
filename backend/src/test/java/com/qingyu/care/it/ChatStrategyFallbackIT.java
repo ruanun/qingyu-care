@@ -5,6 +5,7 @@ import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.repository.ChatStrategyRepository;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
+import com.qingyu.care.support.SpringAiResponses;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -64,10 +65,10 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
 
         Application app = seedApp("strategy_fb", "http://it.example.com");
 
-        // 若走硬编码兜底（无修复），对话会调用模型；打桩返回可区分的 MOCK_AI_REPLY
+        // 若走硬编码兜底（无修复），对话会调用模型；打桩返回带 usage 的 Spring AI ChatResponse（类型一致，避免 CCE）
         Mockito.when(modelRouterService.callWithFallback(
                         ArgumentMatchers.eq("default"), ArgumentMatchers.any()))
-                .thenReturn("MOCK_AI_REPLY");
+                .thenReturn(SpringAiResponses.of("MOCK_AI_REPLY", 7));
 
         // 知识库空命中（该租户无向量数据）→ 命中平台策略时 allowNoKnowledge=false 分支返回 fallbackMessage
         mockMvc.perform(post("/open/v1/chat/completions")
