@@ -2,7 +2,7 @@
 title: 开放 API Token 记账 设计
 author: ruan
 date: 2026-07-04
-status: 待评审
+status: 已实现
 ---
 
 # 开放 API Token 记账 设计
@@ -113,6 +113,8 @@ status: 待评审
 - **Spring AI M4 流式 usage 支持不确定**：M4（里程碑版）对 `stream_options.include_usage` 的封装可能不完整。实现时先用一个探针确认 `.stream().chatResponse()` 末尾是否带 usage；若不支持，按 §3.3(1) 退化（流式只记调用次数、token=0），并在 spec/代码注释如实标注，不阻塞主目标（非流式 token + 流式调用计量）。
 - **Reactor 上下文传播**：务必闭包捕获 tenantId/appId，勿在 `doFinally` 读 ThreadLocal（已在 §3.3(4) 固化）。
 - **泛型化的兼容性**：`callWithFallback` 现有 2 个调用点（chat、summary）；泛型化后 summary 仍传返回 String 的 lambda，类型推断正常，无破坏。
+
+**实现结论（2026-07-05）：**Spring AI M4 **支持** `OpenAiChatOptions.withStreamUsage(true)`，已启用 → 流式 token 计量为**真实值**（非降级为仅记调用次数）。流式端到端 IT 因 M4 下 mock 流式 `ChatClient` 链过脆而**跳过**；核心"流结束→回调携带末尾 total_tokens→记账"由纯单测 `MeterContentStreamTest`（4 例）覆盖，落库路径由非流式 `TokenMeteringIT` 覆盖。`meterContentStream` 抽为 static 纯方法以便无容器单测。
 
 ## 7. 验收标准
 
