@@ -15,6 +15,8 @@ import type { UsageAnalytics } from '@/api/analytics';
 import { applicationService } from '@/api/application';
 import type { Application } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { billingService } from '@/api/billing';
+import type { QuotaView } from '@/api/billing';
 
 const DAY_OPTIONS = [
     { value: '7', label: '近 7 天' },
@@ -28,6 +30,7 @@ const UsagePage: React.FC = () => {
     const [appId, setAppId] = useState(ALL_APPS);
     const [data, setData] = useState<UsageAnalytics | null>(null);
     const [apps, setApps] = useState<Application[]>([]);
+    const [quota, setQuota] = useState<QuotaView | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const { toast } = useToast();
 
@@ -58,6 +61,17 @@ const UsagePage: React.FC = () => {
             }).catch(() => { /* 下钻列表拉取失败不阻断看板 */ });
         }
     }, [data?.scope, apps.length]);
+
+    // 租户视角拉取本月额度
+    useEffect(() => {
+        if (data?.scope === 'TENANT') {
+            billingService.getQuota().then((res) => {
+                if (res.code === 200 && res.data?.plan) setQuota(res.data);
+            }).catch(() => { /* 额度拉取失败不阻断看板 */ });
+        } else {
+            setQuota(null); // 非租户视角清零，防旧额度残留
+        }
+    }, [data?.scope]);
 
     const isTenant = data?.scope === 'TENANT';
     const rankingTitle = isTenant ? '应用用量 Top 10' : '租户用量 Top 10';
@@ -115,6 +129,22 @@ const UsagePage: React.FC = () => {
                 <StatCard icon={<Bot className="w-4 h-4 text-blue-500" />} label="AI 解决率" value={`${s?.aiResolutionRate ?? 0}%`} />
                 <StatCard icon={<UserPen className="w-4 h-4 text-purple-500" />} label="转人工率" value={`${s?.handoverRate ?? 0}%`} />
             </div>
+
+            {/* 本月额度（租户视角） */}
+            {isTenant && quota && (
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            本月额度
+                            <span className="text-xs font-normal text-muted-foreground">套餐 {quota.plan}</span>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid md:grid-cols-2 gap-6">
+                        <QuotaBar label="调用次数" used={quota.callsUsed} limit={quota.callsLimit} />
+                        <QuotaBar label="Token" used={quota.tokensUsed} limit={quota.tokensLimit} />
+                    </CardContent>
+                </Card>
+            )}
 
             {/* 趋势折线图 */}
             <Card>
@@ -186,5 +216,29 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: React.Re
         <CardContent><div className="text-2xl font-bold">{value}</div></CardContent>
     </Card>
 );
+
+// 额度进度条子组件
+const QuotaBar: React.FC<{ label: string; used: number; limit: number }> = ({ label, used, limit }) => {
+    const unlimited = limit <= 0;
+    const pct = unlimited ? 0 : Math.min(100, Math.round((used / limit) * 100));
+    const danger = pct >= 100;
+    const warn = pct >= 80 && pct < 100;
+    return (
+        <div className="space-y-1">
+            <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="font-mono">{used}{unlimited ? '' : ` / ${limit}`}{unlimited && ' （不限）'}</span>
+            </div>
+            {!unlimited && (
+                <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                        className={danger ? 'h-full bg-destructive' : warn ? 'h-full bg-amber-500' : 'h-full bg-primary'}
+                        style={{ width: `${pct}%` }}
+                    />
+                </div>
+            )}
+        </div>
+    );
+};
 
 export default UsagePage;
