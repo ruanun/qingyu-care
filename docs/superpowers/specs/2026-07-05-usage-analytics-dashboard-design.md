@@ -47,7 +47,7 @@ Phase 3「管理后台」唯一未落地的收尾项：路线图菜单 `📊 数
 
 **口径定义**：
 - **token**：记 `total_tokens`（含 reasoning tokens），与记账口径一致。
-- **AI 解决率** = 区间内 `status = ENDED 且 handover_time 为空` 的会话数 / 区间内 `ENDED` 会话数（沿用现有 `DashboardController` 的「无人工介入结束占比」口径）。
+- **AI 解决率** = 区间内 `status = ENDED 且 agent_id 为空` 的会话数 / 区间内 `ENDED` 会话数（沿用现有 `ChatSessionRepository.countAiResolvedSessions` 的「无人工介入结束占比」口径，判定字段为 `agent_id`）。
 - **转人工率** = 区间内 `handover_time 非空` 的会话数 / 区间内总会话数。
 
 > ⚠️ **口径差异**：`sys_api_usage`（用量）只计开放 API，`chat_session`（会话）是全渠道，两者天然对不齐（如后台测试对话增加会话数但不增加调用数）。**界面须明确标注**「用量 = 开放 API 接入，会话 = 全部渠道」，避免被当成数据 bug。
@@ -79,7 +79,7 @@ Phase 3「管理后台」唯一未落地的收尾项：路线图菜单 `📊 数
   - 按天 `group by usage_date`：`sum(call_count)`, `sum(token_count)`, `sum(message_count)`，`where usage_date >= :from [and tenant_id = :tid] [and app_id = :aid]`。
   - 排行：平台 `group by tenant_id`、租户 `group by app_id`，`sum(call_count)`, `sum(token_count)`，`order by sum(call_count) desc limit 10`。
 - **`ChatSessionRepository`** 新增区间聚合查询：
-  - 按天 `group by date(created_at)`：会话数、`ENDED` 数、`ENDED 且 handover_time is null` 数、`handover_time is not null` 数，`where created_at >= :from [and tenant_id = :tid]`。
+  - 按天 `group by date(created_at)`：会话数、`ENDED` 数、`ENDED 且 agent_id is null` 数（AI 解决）、`handover_time is not null` 数（转人工），`where created_at >= :from [and tenant_id = :tid]`。
   - **关键**：跨应用聚合**显式传 `tenantId` 过滤**，不依赖 Hibernate `appFilter`——否则请求头 `X-App-Id` 会把 `chat_session` 限到单应用，导致租户级汇总只剩当前应用。实现用 `@Query`（JPQL/native）显式带 `tenant_id` 条件。
 - 名称回填：排行结果的 `tenant_id`/`app_id` 二次查 `Tenant`/`Application` 取 `name`（Top 10 数量小，无 N+1 顾虑）。
 
