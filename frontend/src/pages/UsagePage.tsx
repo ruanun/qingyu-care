@@ -137,6 +137,11 @@ const UsagePage: React.FC = () => {
                         <CardTitle className="text-base flex items-center gap-2">
                             本月额度
                             <span className="text-xs font-normal text-muted-foreground">套餐 {quota.plan}</span>
+                            {quota.resetDate && (
+                                <span className="text-xs font-normal text-muted-foreground ml-auto">
+                                    {Number(quota.resetDate.slice(5, 7))} 月 {Number(quota.resetDate.slice(8, 10))} 日重置
+                                </span>
+                            )}
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="grid md:grid-cols-2 gap-6">

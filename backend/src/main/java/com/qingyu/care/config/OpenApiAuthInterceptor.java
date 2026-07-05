@@ -80,15 +80,15 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
                 return false;
             }
             if (quota.nearThreshold()) {
-                response.setHeader("X-Quota-Usage",
-                        "calls=" + quota.callsUsed() + "/" + quota.callsLimit()
-                        + ";tokens=" + quota.tokensUsed() + "/" + quota.tokensLimit());
+                // 某维度 limit<=0（不限）时显示 unlimited，避免 used/0 的误导
+                String usage = "calls=" + formatUsage(quota.callsUsed(), quota.callsLimit())
+                        + ";tokens=" + formatUsage(quota.tokensUsed(), quota.tokensLimit());
+                response.setHeader("X-Quota-Usage", usage);
                 auditLogService.saveAsync(SysAuditLog.builder()
                         .tenantId(app.getTenant().getId())
                         .action("QUOTA_WARN").targetType("Tenant")
                         .targetId(String.valueOf(app.getTenant().getId()))
-                        .detail("接近额度: calls=" + quota.callsUsed() + "/" + quota.callsLimit()
-                                + ", tokens=" + quota.tokensUsed() + "/" + quota.tokensLimit())
+                        .detail("接近额度: " + usage)
                         .build());
             }
 
@@ -134,6 +134,11 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
             }
         }
         return null;
+    }
+
+    /** 额度用量展示：limit&lt;=0（不限）显示 unlimited，避免 used/0 的误导。 */
+    private static String formatUsage(long used, long limit) {
+        return used + "/" + (limit > 0 ? String.valueOf(limit) : "unlimited");
     }
 
     private void writeError(HttpServletResponse response, int status, String message) throws Exception {
