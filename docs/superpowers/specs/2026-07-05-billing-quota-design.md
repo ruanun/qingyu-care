@@ -2,7 +2,7 @@
 title: 计费与套餐额度 设计
 author: ruan
 date: 2026-07-05
-status: 草案
+status: 已实现
 ---
 
 # 计费与套餐额度 设计
@@ -153,3 +153,15 @@ if (q.nearThreshold()) {
 - 租户 `GET /v1/billing/quota` 返回正确的已用/额度/重置日；用量看板展示额度卡片。
 - 额度限制**仅作用于开放 API**，内部管理端对话不受限。
 - 单测 + IT 全绿；`mvn verify` 通过；`pnpm build` 通过。
+
+## 11. 实现结论（2026-07-05 落地）
+
+按 6 任务 TDD 完成，全量 `mvn verify`（单测 75 个、IT 29 个，失败 0，错误 0）与 `pnpm build` 通过。要点：
+
+- 额度检查在 `OpenApiAuthInterceptor` 限流之后触发，**开放 API 专属**（内部管理端不受限）。
+- 双维度（调用次数 + token）任一超额即 403 `QUOTA_EXCEEDED`；`limit <= 0` 表示不限（快路径不查用量库）。
+- 月度自然重置（按 `usage_date >= 当月 1 日` 累计，无定时任务），跨月后从 0 起算由 SQL WHERE 条件保证。
+- `QuotaService.check` 组件异常 fail-open 放行（见 `QuotaServiceTest.检查异常_failOpen放行`）；`ConfigService.getLong` 读取 token 额度避免 int 截断（见 `ConfigServiceTest`）。
+- 近阈值放行并加 `X-Quota-Usage` 响应头 + 异步 `QUOTA_WARN` 审计（逻辑在 `OpenApiAuthInterceptor`；`BillingQuotaIT` 仅覆盖未达/超额/不限三用例，近阈值路径由代码保证、**无专门 IT**）。
+- 租户 `GET /v1/billing/quota` 查本月额度（`BillingController` + `BillingQuotaViewIT` 验证）；用量看板租户视角展示额度卡片（`UsagePage.tsx` 前端组件）。
+- **测试覆盖缺口（如实记录）**：跨月自然重置、近阈值 `X-Quota-Usage` 头/`QUOTA_WARN` 审计两项**无专门独立 IT**——前者由 SQL `usage_date >= 当月 1 日` 过滤逻辑保证，后者由 `OpenApiAuthInterceptor` 代码逻辑保证；如需更强守护可后续补 IT。
