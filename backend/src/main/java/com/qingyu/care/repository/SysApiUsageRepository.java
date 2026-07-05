@@ -1,6 +1,7 @@
 package com.qingyu.care.repository;
 
 import com.qingyu.care.entity.SysApiUsage;
+import com.qingyu.care.repository.projection.QuotaUsageRow;
 import com.qingyu.care.repository.projection.UsageDailyRow;
 import com.qingyu.care.repository.projection.UsageRankRow;
 import org.springframework.data.domain.Pageable;
@@ -82,4 +83,16 @@ public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> 
     List<UsageRankRow> rankByApp(
             @Param("from") LocalDate from, @Param("tenantId") Long tenantId,
             Pageable pageable);
+
+    /**
+     * 租户当月用量累计（calls/tokens）。SysApiUsage 非 filter 实体，手写 where。
+     * COALESCE 保证无记录时返回 0 而非 null。
+     */
+    @Query("""
+            SELECT COALESCE(SUM(u.callCount), 0) AS calls,
+                   COALESCE(SUM(u.tokenCount), 0) AS tokens
+            FROM SysApiUsage u
+            WHERE u.tenantId = :tenantId AND u.usageDate >= :monthStart
+            """)
+    QuotaUsageRow sumSince(@Param("tenantId") Long tenantId, @Param("monthStart") LocalDate monthStart);
 }
