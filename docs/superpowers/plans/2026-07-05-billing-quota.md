@@ -162,6 +162,7 @@ git commit -m "feat: 额度 DTO/投影 + 租户当月用量累计查询"
 ## Task 2: QuotaService（解析额度 + 检查 + 视图）
 
 **Files:**
+- Modify: `backend/src/main/java/com/qingyu/care/service/ConfigService.java`（加 `getLong`）
 - Create: `backend/src/main/java/com/qingyu/care/service/QuotaService.java`
 - Test: `backend/src/test/java/com/qingyu/care/service/QuotaServiceTest.java`
 
@@ -211,11 +212,11 @@ class QuotaServiceTest {
                 .thenReturn(Optional.of(Tenant.builder().plan(plan).build()));
     }
 
-    private void stubQuota(TenantPlan plan, int calls, int tokens) {
-        when(configService.getInt(eq(OwnerScope.PLATFORM), isNull(),
-                eq("billing.quota." + plan.name() + ".calls"), anyInt())).thenReturn(calls);
-        when(configService.getInt(eq(OwnerScope.PLATFORM), isNull(),
-                eq("billing.quota." + plan.name() + ".tokens"), anyInt())).thenReturn(tokens);
+    private void stubQuota(TenantPlan plan, long calls, long tokens) {
+        when(configService.getLong(eq(OwnerScope.PLATFORM), isNull(),
+                eq("billing.quota." + plan.name() + ".calls"), anyLong())).thenReturn(calls);
+        when(configService.getLong(eq(OwnerScope.PLATFORM), isNull(),
+                eq("billing.quota." + plan.name() + ".tokens"), anyLong())).thenReturn(tokens);
     }
 
     private void stubWarn(int pct) {
@@ -293,8 +294,21 @@ class QuotaServiceTest {
 Run: `cd /d/Code/m/qingyu-care/backend && mvn -q test -Dtest=QuotaServiceTest`
 Expected: 编译失败（`QuotaService` 不存在）。
 
-- [ ] **Step 3: 实现 `QuotaService`**
+- [ ] **Step 3: 实现 `QuotaService`（含给 `ConfigService` 加 `getLong`）**
 
+先给 `ConfigService`（`getInt` 之后）追加 `getLong`（token 额度可达十亿级，避免 int 截断）：
+```java
+    public long getLong(OwnerScope scope, Long tenantId, String key, long defaultValue) {
+        String v = get(scope, tenantId, key, null);
+        try {
+            return v == null ? defaultValue : Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+```
+
+再实现 `QuotaService`：
 ```java
 package com.qingyu.care.service;
 
@@ -373,15 +387,15 @@ public class QuotaService {
                 warn, monthStart().plusMonths(1));
     }
 
-    /** 解析 [callsLimit, tokensLimit]；平台配置优先，缺失回落内置默认。 */
+    /** 解析 [callsLimit, tokensLimit]；平台配置优先，缺失回落内置默认。token 额度可达十亿级，用 long 读取避免 int 截断。 */
     private long[] resolveQuota(Long tenantId) {
         TenantPlan plan = tenantRepository.findById(tenantId)
                 .map(Tenant::getPlan).orElse(TenantPlan.FREE);
         long[] def = DEFAULTS.getOrDefault(plan, DEFAULTS.get(TenantPlan.FREE));
-        long calls = configService.getInt(OwnerScope.PLATFORM, null,
-                "billing.quota." + plan.name() + ".calls", (int) def[0]);
-        long tokens = configService.getInt(OwnerScope.PLATFORM, null,
-                "billing.quota." + plan.name() + ".tokens", (int) def[1]);
+        long calls = configService.getLong(OwnerScope.PLATFORM, null,
+                "billing.quota." + plan.name() + ".calls", def[0]);
+        long tokens = configService.getLong(OwnerScope.PLATFORM, null,
+                "billing.quota." + plan.name() + ".tokens", def[1]);
         return new long[]{calls, tokens};
     }
 
@@ -402,8 +416,8 @@ Expected: BUILD SUCCESS，6 测试全绿。
 
 ```bash
 cd /d/Code/m/qingyu-care
-git add backend/src/main/java/com/qingyu/care/service/QuotaService.java backend/src/test/java/com/qingyu/care/service/QuotaServiceTest.java
-git commit -m "feat: QuotaService 套餐额度解析与当月用量检查"
+git add backend/src/main/java/com/qingyu/care/service/ConfigService.java backend/src/main/java/com/qingyu/care/service/QuotaService.java backend/src/test/java/com/qingyu/care/service/QuotaServiceTest.java
+git commit -m "feat: QuotaService 套餐额度解析与当月用量检查（ConfigService 加 getLong）"
 ```
 
 ---
@@ -441,7 +455,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -449,8 +468,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 开放 API 额度拦截：FREE 超额 403 QUOTA_EXCEEDED；ENTERPRISE(0) 不限放行。
- * 额度检查是开放 API 专属。手动清理 seed + 平台配置。
+ * 开放 API 额度拦截：FREE 达额度 403 QUOTA_EXCEEDED；未达放行；ENTERPRISE(0) 不限放行。
+ * 额度检查是开放 API 专属。每个用例独立 app，避开 uk_api_usage_app_date(app_id,usage_date) 唯一约束；
+ * 放行用例用 awaitility 等异步计量落库后再清理，避免脏行污染其它 IT。
  *
  * @author ruan
  */
@@ -462,77 +482,105 @@ class BillingQuotaIT extends AbstractPostgresIT {
 
     @MockitoBean ModelRouterService modelRouterService;
 
-    private Application freeApp, entApp;
+    private final List<Application> createdApps = new ArrayList<>();
+    private final List<Tenant> createdTenants = new ArrayList<>();
 
     @AfterEach
     void cleanup() {
-        for (Application a : new Application[]{freeApp, entApp}) {
-            if (a == null) continue;
+        for (Application a : createdApps) {
             usageRepository.findAll().stream()
                     .filter(u -> a.getId().equals(u.getAppId()))
                     .forEach(usageRepository::delete);
+            applicationRepository.delete(a);
         }
-        // 清理本测试写入的平台额度配置（避免污染其它 IT）
+        createdTenants.forEach(tenantRepository::delete);
+        // 恢复平台 FREE 额度默认，避免污染其它跑 FREE 对话的 IT
         configService.set(OwnerScope.PLATFORM, null, "billing.quota.FREE.calls", "", null);
     }
 
+    /** 一行当月用量（当天）；同一 app 只调一次，避开唯一约束。 */
     private void seedUsage(Application app, long calls) {
         usageRepository.save(SysApiUsage.builder()
                 .tenantId(app.getTenant().getId()).appId(app.getId())
                 .usageDate(LocalDate.now()).callCount(calls).messageCount(calls).tokenCount(0).build());
     }
 
-    @Test
-    void FREE超额返回403_未超额放行() throws Exception {
-        freeApp = seedApp("quota_free", "http://it.example.com"); // 租户默认 FREE
-        configService.set(OwnerScope.PLATFORM, null, "billing.quota.FREE.calls", "3", "IT");
+    private void stubModel() {
         Mockito.when(modelRouterService.callWithFallback(eq("default"), any()))
                 .thenReturn(SpringAiResponses.of("OK", 1));
+    }
 
-        // 当月已用 2 < 3 → 放行 200
-        seedUsage(freeApp, 2);
+    /** 播种一个 FREE 租户 + 应用并登记，供 @AfterEach 统一清理。 */
+    private Application seedTrackedApp(String suffix) {
+        Application app = seedApp(suffix, "http://it.example.com"); // 租户默认 FREE
+        createdApps.add(app);
+        return app;
+    }
+
+    @Test
+    void FREE未达额度_放行() throws Exception {
+        Application app = seedTrackedApp("quota_free_ok");
+        configService.set(OwnerScope.PLATFORM, null, "billing.quota.FREE.calls", "3", "IT");
+        stubModel();
+        seedUsage(app, 2); // 当月已用 2 < 3
+
         mockMvc.perform(post("/open/v1/chat/completions")
-                        .header("X-App-Id", freeApp.getAppKey()).header("X-Api-Key", freeApp.getAppSecret())
+                        .header("X-App-Id", app.getAppKey()).header("X-Api-Key", app.getAppSecret())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"hi\"}"))
                 .andExpect(status().isOk());
 
-        // 追加到 3（达额度）→ 403 QUOTA_EXCEEDED
-        seedUsage(freeApp, 1);
+        // 放行后异步计量会 UPDATE 该行（+1）；等它落库再由 @AfterEach 清理，避免脏行残留
+        await().atMost(5, SECONDS).untilAsserted(() ->
+                assertThat(usageRepository.findAll().stream()
+                        .filter(u -> app.getId().equals(u.getAppId()))
+                        .mapToLong(SysApiUsage::getCallCount).sum()).isEqualTo(3));
+    }
+
+    @Test
+    void FREE达额度_返回403_QUOTA_EXCEEDED() throws Exception {
+        Application app = seedTrackedApp("quota_free_over");
+        configService.set(OwnerScope.PLATFORM, null, "billing.quota.FREE.calls", "3", "IT");
+        stubModel();
+        seedUsage(app, 3); // 当月已用 3 >= 3 → preHandle 拦截、返回 false，不进 controller、不触发异步计量
+
         mockMvc.perform(post("/open/v1/chat/completions")
-                        .header("X-App-Id", freeApp.getAppKey()).header("X-Api-Key", freeApp.getAppSecret())
+                        .header("X-App-Id", app.getAppKey()).header("X-Api-Key", app.getAppSecret())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"hi\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.reason").value("QUOTA_EXCEEDED"));
     }
 
     @Test
-    void ENTERPRISE额度0不限_高用量仍放行() throws Exception {
+    void ENTERPRISE额度0_不限_高用量仍放行() throws Exception {
         Tenant ent = tenantRepository.save(Tenant.builder()
                 .name("企业IT").code("QUOTA_ENT")
                 .status(TenantStatus.ACTIVE).plan(TenantPlan.ENTERPRISE).build());
-        entApp = new Application();
-        entApp.setName("ent"); entApp.setTenant(ent);
-        entApp.setAppKey("quota_ent_key"); entApp.setAppSecret("quota_ent_sec");
-        entApp.setEnabled(true); entApp.setAllowedOrigins("http://it.example.com");
-        entApp = applicationRepository.save(entApp);
+        createdTenants.add(ent);
+        Application app = new Application();
+        app.setName("ent"); app.setTenant(ent);
+        app.setAppKey("quota_ent_key"); app.setAppSecret("quota_ent_sec");
+        app.setEnabled(true); app.setAllowedOrigins("http://it.example.com");
+        app = applicationRepository.save(app);
+        createdApps.add(app);
+        final Application entApp = app;
 
-        Mockito.when(modelRouterService.callWithFallback(eq("default"), any()))
-                .thenReturn(SpringAiResponses.of("OK", 1));
-        seedUsage(entApp, 999999); // 用量很高，但 ENTERPRISE 额度=0（不限）
+        stubModel();
+        seedUsage(entApp, 999999); // 用量很高，但 ENTERPRISE 额度=0（不限），快路径直接放行
 
         mockMvc.perform(post("/open/v1/chat/completions")
                         .header("X-App-Id", entApp.getAppKey()).header("X-Api-Key", entApp.getAppSecret())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"hi\"}"))
                 .andExpect(status().isOk());
 
-        applicationRepository.delete(entApp);
-        tenantRepository.delete(ent);
-        entApp = null;
+        // 等异步计量落库后再由 @AfterEach（createdApps/createdTenants）清理
+        await().atMost(5, SECONDS).untilAsserted(() ->
+                assertThat(usageRepository.findAll().stream()
+                        .anyMatch(u -> entApp.getId().equals(u.getAppId()))).isTrue());
     }
 }
 ```
 
-> 说明：`seedApp` 的租户默认 `FREE`（见 `AbstractPostgresIT`）。`@AfterEach` 把 `billing.quota.FREE.calls` 置空恢复默认，避免污染其它跑 FREE 对话的 IT。`ENTERPRISE` 分支用完即删应用/租户。
+> 说明：`seedApp` 的租户默认 `FREE`（见 `AbstractPostgresIT`）。因 `sys_api_usage` 有唯一约束 `uk_api_usage_app_date(app_id, usage_date)`，**每个用例用独立 app、同一 app 只 `seedUsage` 一次**——原两段式对同一 (app, 当天) 二次 `INSERT` 会撞唯一约束、且与请求后的异步计量存在竞态，故拆成「未达/达额度/不限」三个独立用例。放行用例请求后异步计量会 `UPDATE` 该行，用 `awaitility` 等落库后再清理；`403` 用例在 `preHandle` 即被拦截、不触发异步计量。`@AfterEach` 统一删应用/租户/用量并把 `billing.quota.FREE.calls` 置空恢复默认。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -623,7 +671,7 @@ public class OpenErrorResponse {
 - [ ] **Step 5: 运行确认通过 + 全量单测无回归**
 
 Run: `cd /d/Code/m/qingyu-care/backend && mvn -q verify -Dit.test=BillingQuotaIT`
-Expected: BUILD SUCCESS，2 测试全绿。
+Expected: BUILD SUCCESS，3 测试全绿。
 
 Run: `cd /d/Code/m/qingyu-care/backend && mvn -q test`
 Expected: BUILD SUCCESS（免 Docker）。
@@ -763,6 +811,8 @@ public class BillingController {
     }
 }
 ```
+
+> 鉴权：`/v1/billing/**` 由全局 `SaInterceptor`（`config/SaTokenConfig`，拦 `/**`、exclude 不含 billing）兜底登录校验，未登录 → `NotLoginException` → 401，**无需** `@SaCheckLogin`（与 `AnalyticsController` 一致）。平台管理员已登录但无 `tenantId`，`getCurrentTenantId()` 返回 `null` → `view` 返回空视图。
 
 - [ ] **Step 4: 运行确认通过**
 

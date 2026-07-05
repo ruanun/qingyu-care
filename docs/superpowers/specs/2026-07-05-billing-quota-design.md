@@ -63,7 +63,7 @@ Phase 4.1 的第一步：给开放 API 加**租户级月度用量额度**（调�
 
 新增 `service/QuotaService.java`（单个 `@Service`，注入 `ConfigService` + `TenantRepository` + `SysApiUsageRepository`）。
 
-- **解析额度** `resolveQuota(Long tenantId)`：查租户 `plan` → 从平台配置读 `billing.quota.{plan}.calls`/`.tokens`（`ConfigService.getInt`，缺失回落内置默认）。返回 `{callsLimit, tokensLimit}`（`long`，0=不限）。
+- **解析额度** `resolveQuota(Long tenantId)`：查租户 `plan` → 从平台配置读 `billing.quota.{plan}.calls`/`.tokens`（`ConfigService.getLong`（新增，`getInt` 的 long 版），缺失回落内置默认）。返回 `{callsLimit, tokensLimit}`（`long`，0=不限）。**token 额度可达十亿级，须用 long 读取**：`getInt` 在值超过 21 亿时会 `NumberFormatException` 静默回落默认，行为诡异且难排查。
 - **累计用量**：`SysApiUsageRepository` 新增
   ```
   SELECT COALESCE(SUM(call_count),0) AS calls, COALESCE(SUM(token_count),0) AS tokens
@@ -88,7 +88,7 @@ Phase 4.1 的第一步：给开放 API 加**租户级月度用量额度**（调�
 QuotaCheckResult q = quotaService.check(app.getTenant().getId());
 if (q.exceeded()) {
     TenantContext.clear();
-    writeError(response, 403, "本月额度已用尽，请升级套餐"); // code=QUOTA_EXCEEDED
+    writeError(response, 403, "本月额度已用尽，请升级套餐", "QUOTA_EXCEEDED"); // reason=QUOTA_EXCEEDED
     return false;
 }
 if (q.nearThreshold()) {
@@ -99,7 +99,7 @@ if (q.nearThreshold()) {
 }
 ```
 - **开放 API 专属**：内部管理端不经此拦截器，测试对话不计费、不拦（与 token 计量口径一致）。
-- 超额响应：403 + `QUOTA_EXCEEDED`。`OpenErrorResponse` 若无 `code` 字段则扩展一个可空 `code`（限流 429 不带 code，额度 403 带 `QUOTA_EXCEEDED`，供客户端区分）。
+- 超额响应：403 + `reason=QUOTA_EXCEEDED`。`OpenErrorResponse.Error` 已有 `int code`（HTTP 状态码），故**新增可空 `reason` 字段**承载业务标识（限流 429 不带 reason，额度 403 带 `reason=QUOTA_EXCEEDED`，供客户端区分同状态码下的不同原因）。
 - 检查发生在计量之前（异步 `ApiUsageService.record` 在对话完成后），故为"截至上次累计"的宽松检查。
 
 ## 6. 展示
@@ -116,12 +116,13 @@ if (q.nearThreshold()) {
 
 | 文件 | 改动 |
 |---|---|
+| `service/ConfigService.java` | 加 `getLong`（token 额度用 long 读取，避免 int 截断） |
 | `service/QuotaService.java` | **新增**：额度解析、月度累计、检查 |
 | `dto/QuotaCheckResult.java`（或 record 内嵌） | **新增**：检查结果 |
 | `repository/projection/QuotaUsageRow.java` | **新增**：累计投影 |
 | `repository/SysApiUsageRepository.java` | 新增按租户当月累计查询 |
 | `config/OpenApiAuthInterceptor.java` | 限流后插额度检查（注入 `QuotaService` + `AuditLogService`） |
-| `dto/open/OpenErrorResponse.java` | 增可空 `code` 字段（用于 `QUOTA_EXCEEDED`） |
+| `dto/open/OpenErrorResponse.java` | 增可空 `reason` 字段（用于 `QUOTA_EXCEEDED`；`code` 已表 HTTP 状态） |
 | `controller/BillingController.java` | **新增**：`GET /v1/billing/quota` |
 | `dto/QuotaViewDTO.java` | **新增**：额度展示返回体 |
 | `frontend/src/api/billing.ts` | **新增**：额度查询 service |
