@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer,
@@ -31,7 +31,7 @@ const UsagePage: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const { toast } = useToast();
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setIsLoading(true);
         try {
             const res = await analyticsService.getUsage(
@@ -39,15 +39,16 @@ const UsagePage: React.FC = () => {
                 appId === ALL_APPS ? undefined : Number(appId),
             );
             if (res.code === 200) setData(res.data);
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '加载失败', description: error.message });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            toast({ variant: 'destructive', title: '加载失败', description: msg });
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [days, appId, toast]);
 
     // days 或 appId 变化时重新拉取
-    useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [days, appId]);
+    useEffect(() => { fetchData(); }, [fetchData]);
 
     // 租户视角才需要应用下钻列表；平台视角接口忽略 appId，无需拉取
     useEffect(() => {
@@ -84,7 +85,7 @@ const UsagePage: React.FC = () => {
                 <div className="flex items-center gap-3">
                     {isTenant && (
                         <Select value={appId} onValueChange={setAppId}>
-                            <SelectTrigger className="w-40"><SelectValue placeholder="全部应用" /></SelectTrigger>
+                            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value={ALL_APPS}>全部应用</SelectItem>
                                 {apps.map((a) => (
