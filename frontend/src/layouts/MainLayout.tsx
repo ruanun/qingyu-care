@@ -4,7 +4,7 @@ import {
     MessageSquare, Database, UserPen, LayoutDashboard,
     History, FileText, Layers, Settings, Bot,
     LogOut, User as UserIcon, Shield, Users, Smartphone, Building,
-    Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug
+    Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -61,6 +61,7 @@ const sections: NavSection[] = [
             { label: '成员管理', path: '/users', icon: Users, roles: ['TENANT_ADMIN', 'TENANT_MEMBER', 'PLATFORM_ADMIN'] },
             { label: '租户管理', path: '/tenants', icon: Building, roles: ['PLATFORM_ADMIN'] },
             { label: '数据统计', path: '/dashboard', icon: LayoutDashboard },
+            { label: '用量统计', path: '/usage', icon: BarChart3, roles: ['PLATFORM_ADMIN', 'TENANT_ADMIN'] },
             { label: '系统概览', path: '/platform/overview', icon: Activity, roles: ['PLATFORM_ADMIN'] },
             { label: '共享模型池', path: '/platform/models', icon: Boxes, roles: ['PLATFORM_ADMIN'] },
             { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal, roles: ['PLATFORM_ADMIN'] },

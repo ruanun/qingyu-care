@@ -19,6 +19,7 @@ import PlatformConfigPage from './pages/PlatformConfigPage';
 import TenantConfigPage from './pages/TenantConfigPage';
 import AuditLogPage from './pages/AuditLogPage';
 import IntegrationPage from './pages/IntegrationPage';
+import UsagePage from './pages/UsagePage';
 import RequireApp from './components/RequireApp';
 import { Toaster } from './components/ui/toaster';
 import { useAuthStore } from './stores/authStore';
@@ -61,6 +62,7 @@ function App() {
           <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
           {/* 管理 */}
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="usage" element={<UsagePage />} />
           <Route path="users" element={<UserListPage />} />
           <Route path="applications" element={<ApplicationListPage />} />
           <Route path="tenants" element={<TenantListPage />} />
