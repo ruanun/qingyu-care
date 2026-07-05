@@ -92,5 +92,46 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
      */
     @Query("SELECT COUNT(s) FROM ChatSession s WHERE s.status = 'ENDED'")
     long countEndedSessions();
+
+    // ===== 用量看板会话聚合 =====
+    // chat_session 继承 BaseTenantEntity，受 Hibernate tenantFilter/appFilter 约束。
+    // Hibernate 过滤器只作用于 JPQL/Criteria，不作用于 native SQL——故这里用 nativeQuery
+    // 绕过过滤器、手写 tenant_id 条件，确保「租户级跨应用汇总」不被请求头 X-App-Id 挡到单应用。
+
+    /**
+     * 按天会话数（native 绕过过滤器）。
+     */
+    @Query(value = """
+            SELECT CAST(created_at AS DATE) AS date, COUNT(*) AS sessions
+            FROM chat_session
+            WHERE created_at >= :from
+              AND (:tenantId IS NULL OR tenant_id = :tenantId)
+              AND (:appId IS NULL OR app_id = :appId)
+            GROUP BY CAST(created_at AS DATE)
+            ORDER BY CAST(created_at AS DATE)
+            """, nativeQuery = true)
+    List<com.qingyu.care.repository.projection.SessionDailyRow> aggregateDailySessions(
+            @Param("from") LocalDateTime from,
+            @Param("tenantId") Long tenantId,
+            @Param("appId") Long appId);
+
+    /**
+     * 区间汇总：总数 / 已结束 / AI 解决（ENDED 且无人工 agent_id）/ 转人工（handover_time 非空）。
+     * native 查询绕过 Hibernate 租户过滤器，手写 tenant_id/app_id 条件确保跨应用汇总正确。
+     */
+    @Query(value = """
+            SELECT COUNT(*) AS total,
+                   COALESCE(SUM(CASE WHEN status = 'ENDED' THEN 1 ELSE 0 END), 0) AS ended,
+                   COALESCE(SUM(CASE WHEN status = 'ENDED' AND agent_id IS NULL THEN 1 ELSE 0 END), 0) AS aiResolved,
+                   COALESCE(SUM(CASE WHEN handover_time IS NOT NULL THEN 1 ELSE 0 END), 0) AS handover
+            FROM chat_session
+            WHERE created_at >= :from
+              AND (:tenantId IS NULL OR tenant_id = :tenantId)
+              AND (:appId IS NULL OR app_id = :appId)
+            """, nativeQuery = true)
+    com.qingyu.care.repository.projection.SessionSummaryRow aggregateSessionSummary(
+            @Param("from") LocalDateTime from,
+            @Param("tenantId") Long tenantId,
+            @Param("appId") Long appId);
 }
 
