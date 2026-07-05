@@ -4,8 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.dto.open.OpenErrorResponse;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.exception.OpenApiException;
+import com.qingyu.care.entity.SysAuditLog;
+import com.qingyu.care.service.AuditLogService;
 import com.qingyu.care.service.OpenApiAuthService;
+import com.qingyu.care.service.QuotaService;
 import com.qingyu.care.service.RateLimitService;
+import com.qingyu.care.dto.QuotaCheckResult;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +33,8 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     private final OpenApiAuthService openApiAuthService;
     private final ObjectMapper objectMapper;
     private final RateLimitService rateLimitService;
+    private final QuotaService quotaService;
+    private final AuditLogService auditLogService;
 
     /** 平台默认每分钟限额，可在配置中覆盖；@Value 不能注入 final 字段，用普通字段 */
     @Value("${qingyu.care.openapi.default-rate-limit-per-minute:60}")
@@ -64,6 +70,26 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
                 response.setHeader("Retry-After", "60");
                 writeError(response, 429, "请求过于频繁");
                 return false;
+            }
+
+            // 额度检查（开放 API 专属）：超额 403，近阈值放行 + 软提示 + 审计
+            QuotaCheckResult quota = quotaService.check(app.getTenant().getId());
+            if (quota.exceeded()) {
+                TenantContext.clear();
+                writeError(response, 403, "本月额度已用尽，请升级套餐", "QUOTA_EXCEEDED");
+                return false;
+            }
+            if (quota.nearThreshold()) {
+                response.setHeader("X-Quota-Usage",
+                        "calls=" + quota.callsUsed() + "/" + quota.callsLimit()
+                        + ";tokens=" + quota.tokensUsed() + "/" + quota.tokensLimit());
+                auditLogService.saveAsync(SysAuditLog.builder()
+                        .tenantId(app.getTenant().getId())
+                        .action("QUOTA_WARN").targetType("Tenant")
+                        .targetId(String.valueOf(app.getTenant().getId()))
+                        .detail("接近额度: calls=" + quota.callsUsed() + "/" + quota.callsLimit()
+                                + ", tokens=" + quota.tokensUsed() + "/" + quota.tokensLimit())
+                        .build());
             }
 
             return true;
@@ -111,9 +137,13 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     }
 
     private void writeError(HttpServletResponse response, int status, String message) throws Exception {
+        writeError(response, status, message, null);
+    }
+
+    private void writeError(HttpServletResponse response, int status, String message, String reason) throws Exception {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(objectMapper.writeValueAsString(OpenErrorResponse.of(status, message)));
+        response.getWriter().write(objectMapper.writeValueAsString(OpenErrorResponse.of(status, message, reason)));
     }
 }
