@@ -52,6 +52,15 @@ public class ConfigService {
         }
     }
 
+    public long getLong(OwnerScope scope, Long tenantId, String key, long defaultValue) {
+        String v = get(scope, tenantId, key, null);
+        try {
+            return v == null ? defaultValue : Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     @Transactional
     public void set(OwnerScope scope, Long tenantId, String key, String value, String description) {
         Optional<SysConfig> found = (scope == OwnerScope.PLATFORM)
