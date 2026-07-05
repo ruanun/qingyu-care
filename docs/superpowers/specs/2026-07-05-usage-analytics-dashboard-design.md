@@ -2,7 +2,7 @@
 title: 用量统计看板 设计
 author: ruan
 date: 2026-07-05
-status: 草案
+status: 已实现
 ---
 
 # 用量统计看板 设计
@@ -161,3 +161,11 @@ RankingItem { Long id; String name; long calls; long tokens; }
 - 趋势图区间内每天有点（无数据补零）；切换 7/30/90 天正常刷新。
 - 界面标注用量与会话的口径差异。
 - 单测 + IT 全绿；`mvn test` 免 Docker、`mvn verify` 含 `AnalyticsUsageIT` 全绿；`pnpm build` 通过。
+
+## 10. 实现结论（2026-07-05）
+
+已按实现计划 `docs/superpowers/plans/2026-07-05-usage-analytics-dashboard.md` 落地，合入特性分支 `feat/usage-analytics-dashboard`（9 个功能提交，子代理驱动开发 + 两阶段审查）。关键实现要点：
+
+- **后端**：`AnalyticsController`（瘦）→ `AnalyticsService`（注入现有 `AuthService.isPlatformAdmin()`/`getCurrentTenantId()` 判角色，未另造判定）。`sys_api_usage` 用 JPQL 聚合（非 filter 实体）；`chat_session` 用 **native query** 绕过 Hibernate `appFilter`——`AnalyticsUsageIT` 固化「租户管理员带 `X-App-Id` 时会话汇总仍跨应用」这一坑。AI 解决率口径用 `agent_id IS NULL`（与既有 `DashboardController` 同源），转人工率用 `handover_time IS NOT NULL`。趋势后端补零。
+- **前端**：引入 **recharts 3.9.2**（React 19 兼容，`pnpm build` 验证通过），新增 `UsagePage`，直接用 recharts 原生组件（未建 `components/ui/chart.tsx` 全套封装，属对 §5 的 YAGNI 简化）；`fetchData` 用 `useCallback` 规范 effect 依赖；导航「用量统计」对平台/租户管理员可见。
+- **验证**：后端 `mvn verify` BUILD SUCCESS（单测 69 + 集成 23，含 `AnalyticsRepositoryIT` 4、`AnalyticsUsageIT` 1，全绿、零回归）；前端 `pnpm build` 通过。
