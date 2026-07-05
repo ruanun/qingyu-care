@@ -2,6 +2,8 @@ package com.qingyu.care.repository;
 
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.repository.projection.SessionDailyRow;
+import com.qingyu.care.repository.projection.SessionSummaryRow;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -110,7 +112,7 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
             GROUP BY CAST(created_at AS DATE)
             ORDER BY CAST(created_at AS DATE)
             """, nativeQuery = true)
-    List<com.qingyu.care.repository.projection.SessionDailyRow> aggregateDailySessions(
+    List<SessionDailyRow> aggregateDailySessions(
             @Param("from") LocalDateTime from,
             @Param("tenantId") Long tenantId,
             @Param("appId") Long appId);
@@ -118,6 +120,8 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
     /**
      * 区间汇总：总数 / 已结束 / AI 解决（ENDED 且无人工 agent_id）/ 转人工（handover_time 非空）。
      * native 查询绕过 Hibernate 租户过滤器，手写 tenant_id/app_id 条件确保跨应用汇总正确。
+     * 注：native 列别名 → projection 的映射不区分大小写，PostgreSQL 折叠大小写后 aiResolved
+     * 列名仍能匹配到 SessionSummaryRow.getAiResolved()。
      */
     @Query(value = """
             SELECT COUNT(*) AS total,
@@ -129,7 +133,7 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
               AND (:tenantId IS NULL OR tenant_id = :tenantId)
               AND (:appId IS NULL OR app_id = :appId)
             """, nativeQuery = true)
-    com.qingyu.care.repository.projection.SessionSummaryRow aggregateSessionSummary(
+    SessionSummaryRow aggregateSessionSummary(
             @Param("from") LocalDateTime from,
             @Param("tenantId") Long tenantId,
             @Param("appId") Long appId);

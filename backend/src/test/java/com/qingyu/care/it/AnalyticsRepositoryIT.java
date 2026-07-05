@@ -5,6 +5,7 @@ import com.qingyu.care.entity.SysApiUsage;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.SysApiUsageRepository;
+import com.qingyu.care.repository.projection.SessionDailyRow;
 import com.qingyu.care.repository.projection.SessionSummaryRow;
 import com.qingyu.care.repository.projection.UsageDailyRow;
 import com.qingyu.care.repository.projection.UsageRankRow;
@@ -50,7 +51,7 @@ class AnalyticsRepositoryIT extends AbstractPostgresIT {
     void sys用量按天聚合_可按租户与应用过滤() {
         LocalDate today = LocalDate.now();
         // sys_api_usage 有唯一约束 (app_id, usage_date)，不能同 app+date 两行；
-        // 用不同应用 A1/A2 分两天来模拟「同租户两行按天聚合」
+        // 用同租户不同应用（A1/A2）同一天，验证按天 SUM 聚合（两条 → 聚合到一天）
         seedUsage(T1, A1, today, 3, 30);
         seedUsage(T1, A2, today, 2, 20);   // 同租户不同应用同天 → 聚合到一天两条 → calls 总计 5
         seedUsage(T2, A3, today, 9, 90);
@@ -77,6 +78,21 @@ class AnalyticsRepositoryIT extends AbstractPostgresIT {
 
         List<UsageRankRow> byApp = usageRepository.rankByApp(today.minusDays(29), T1, PageRequest.of(0, 10));
         assertThat(byApp.get(0).getRefId()).isEqualTo(A1);      // A1=5 > A2=1
+    }
+
+    @Test
+    void 按天会话数聚合_native绕过过滤() {
+        // 同租户不同应用（A1/A2）当天各 seed 会话，验证 native CAST(created_at AS DATE) 按天聚合，
+        // 并确认 SessionDailyRow.getDate() 能正常映射为 LocalDate（提前暴露类型映射风险）
+        seedSession(T1, A1, SessionStatus.ENDED, null, false);
+        seedSession(T1, A2, SessionStatus.AI_PROCESSING, null, false);
+        seedSession(T2, A3, SessionStatus.ENDED, null, false);   // 他租户，不应计入 T1
+
+        LocalDateTime from = LocalDate.now().minusDays(29).atStartOfDay();
+        List<SessionDailyRow> t1 = sessionRepository.aggregateDailySessions(from, T1, null);
+        assertThat(t1).hasSize(1);   // 同一天聚合后只有 1 行
+        assertThat(t1.get(0).getDate()).isEqualTo(LocalDate.now());
+        assertThat(t1.get(0).getSessions()).isEqualTo(2);   // T1 下 A1+A2 两条
     }
 
     @Test

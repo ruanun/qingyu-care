@@ -1,6 +1,9 @@
 package com.qingyu.care.repository;
 
 import com.qingyu.care.entity.SysApiUsage;
+import com.qingyu.care.repository.projection.UsageDailyRow;
+import com.qingyu.care.repository.projection.UsageRankRow;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -48,7 +51,7 @@ public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> 
             GROUP BY u.usageDate
             ORDER BY u.usageDate
             """)
-    List<com.qingyu.care.repository.projection.UsageDailyRow> aggregateDaily(
+    List<UsageDailyRow> aggregateDaily(
             @Param("from") LocalDate from,
             @Param("tenantId") Long tenantId,
             @Param("appId") Long appId);
@@ -63,8 +66,8 @@ public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> 
             GROUP BY u.tenantId
             ORDER BY SUM(u.callCount) DESC
             """)
-    List<com.qingyu.care.repository.projection.UsageRankRow> rankByTenant(
-            @Param("from") LocalDate from, org.springframework.data.domain.Pageable pageable);
+    List<UsageRankRow> rankByTenant(
+            @Param("from") LocalDate from, Pageable pageable);
 
     /**
      * 租户视角：本租户内按应用排行。
@@ -76,7 +79,7 @@ public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> 
             GROUP BY u.appId
             ORDER BY SUM(u.callCount) DESC
             """)
-    List<com.qingyu.care.repository.projection.UsageRankRow> rankByApp(
+    List<UsageRankRow> rankByApp(
             @Param("from") LocalDate from, @Param("tenantId") Long tenantId,
-            org.springframework.data.domain.Pageable pageable);
+            Pageable pageable);
 }
