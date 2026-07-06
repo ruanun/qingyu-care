@@ -40,8 +40,11 @@ public class ChatStrategyService {
                     .allowNoKnowledge(true)
                     .isDefault(true)
                     .enabled(true)
+                    .hybridEnabled(true)
+                    .keywordTopK(10)
+                    .rrfK(60)
                     .build());
-            
+
             // 投诉场景策略（更高的 TopK 和 阈值，不允许自由发挥）
             repository.save(ChatStrategy.builder()
                     .name("严谨投诉处理")
@@ -52,6 +55,9 @@ public class ChatStrategyService {
                     .fallbackMessage("抱歉，我无法在知识库中找到关于该投诉的明确处理方案，已为您转接人工处理。")
                     .isDefault(true)
                     .enabled(true)
+                    .hybridEnabled(true)
+                    .keywordTopK(10)
+                    .rrfK(60)
                     .build());
 
             log.info("Default chat strategies initialized");

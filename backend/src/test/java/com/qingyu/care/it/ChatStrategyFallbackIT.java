@@ -1,11 +1,14 @@
 package com.qingyu.care.it;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.repository.ChatStrategyRepository;
+import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import com.qingyu.care.support.SpringAiResponses;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -15,6 +18,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -49,8 +53,16 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
     @Autowired
     private ChatStrategyRepository chatStrategyRepository;
 
+    @Autowired
+    private ChatStrategyService chatStrategyService;
+
     @MockitoBean
     private ModelRouterService modelRouterService;
+
+    @AfterEach
+    void 清理租户上下文() {
+        TenantContext.clear();
+    }
 
     @Test
     void 租户无自有策略时走对话端点应回退平台默认策略() throws Exception {
@@ -79,5 +91,25 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 // 命中平台种子策略 → 返回独特兜底语；若回退被删 → 返回 MOCK_AI_REPLY（断言失败）
                 .andExpect(jsonPath("$.reply").value(独特兜底语));
+    }
+
+    /**
+     * Task 6：混合检索配置字段（hybridEnabled/keywordTopK/rrfK）也须随「租户自有→平台默认」
+     * 回退链路一起可见。租户上下文直接用 TenantContext 设置（与 ModelRouterDefaultIT /
+     * HandoverRuleFallbackIT 同一手法），无需真实 HTTP 请求即可让 TenantDataAspect 生效。
+     */
+    @Test
+    void 平台默认hybrid字段_对租户可见_经native回退() {
+        // 租户 90601 / 应用 90602 没有自己的 default 场景策略
+        TenantContext.setTenantId(90601L);
+        TenantContext.setAppId(90602L);
+
+        ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
+
+        // 租户自有查询被过滤器挡住 → 回退 findPlatformDefaultByScenario（原生 SQL 绕过过滤器）
+        // 命中 @PostConstruct 播种的平台默认行，三个混合检索字段应随之带出
+        assertThat(strategy.getHybridEnabled()).isTrue();
+        assertThat(strategy.getKeywordTopK()).isEqualTo(10);
+        assertThat(strategy.getRrfK()).isEqualTo(60);
     }
 }
