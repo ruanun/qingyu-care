@@ -14,7 +14,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.utility.DockerImageName;
+
+import java.nio.file.Paths;
 
 /**
  * 集成测试基类：单例 pgvector 容器 + MockMvc + 播种辅助。
@@ -29,13 +32,28 @@ import org.testcontainers.utility.DockerImageName;
 @ActiveProfiles("test")
 public abstract class AbstractPostgresIT {
 
+    /**
+     * PostgreSQLContainer(1.20.4) 未提供接收 Future&lt;String&gt;/ImageFromDockerfile 的构造函数，
+     * 因此先同步构建镜像（.get() 触发 docker build 并返回镜像 tag），再包成兼容 DockerImageName 传入。
+     * 首次构建含编译 zhparser 扩展，耗时数分钟；之后 Docker 本地镜像缓存复用，秒级启动。
+     */
     static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("pgvector/pgvector:pg17")
+            new PostgreSQLContainer<>(DockerImageName.parse(buildZhparserImage())
                     .asCompatibleSubstituteFor("postgres"))
                     .withInitScript("db/init-vector.sql");
 
     static {
         POSTGRES.start();
+    }
+
+    private static String buildZhparserImage() {
+        try {
+            return new ImageFromDockerfile("qingyu/pgvector-zhparser:it", false)
+                    .withDockerfile(Paths.get("../docker/postgres-zhparser/Dockerfile"))
+                    .get();
+        } catch (Exception e) {
+            throw new IllegalStateException("构建 zhparser 镜像失败", e);
+        }
     }
 
     @DynamicPropertySource

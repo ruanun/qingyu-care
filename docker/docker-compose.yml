@@ -1,7 +1,9 @@
 services:
-  # PostgreSQL with pgvector
+  # PostgreSQL with pgvector + zhparser（中文全文检索）
   postgres:
-    image: pgvector/pgvector:pg17
+    build:
+      context: ./postgres-zhparser
+    image: qingyu/pgvector-zhparser:pg17
     container_name: qingyu-postgres
     environment:
       POSTGRES_USER: postgres
