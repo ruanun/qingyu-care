@@ -63,4 +63,16 @@ class HybridRetrievalServiceTest {
 
         assertThat(out).extracting(Document::getId).containsExactly("a");
     }
+
+    @Test
+    void 向量路异常_降级为关键词() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenThrow(new RuntimeException("vector store down"));
+        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of(new KeywordSearchDao.KeywordHit("c", "关键词内容c", Map.of())));
+
+        List<Document> out = service.search("查询", "1", strategy(true));
+
+        assertThat(out).extracting(Document::getId).containsExactly("c");
+    }
 }

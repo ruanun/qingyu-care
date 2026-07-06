@@ -445,7 +445,8 @@ class RrfFuserTest {
 
         List<RrfFuser.Item> fused = RrfFuser.fuse(List.of(a, b), 60, 10);
 
-        assertThat(fused).extracting(RrfFuser.Item::id).containsExactly("b", "a", "c", "d");
+        assertThat(fused).extracting(RrfFuser.Item::id).containsExactly("b", "a", "d", "c");
+        // d(1/62) > c(1/63)：d 在其列表中排名第2，c 在其列表中排名第3，故 d 的 RRF 分数更高、排在 c 之前
     }
 
     @Test

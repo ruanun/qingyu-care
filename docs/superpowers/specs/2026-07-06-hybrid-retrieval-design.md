@@ -2,7 +2,7 @@
 title: 混合检索（向量 + zhparser 关键词）设计
 author: ruan
 date: 2026-07-06
-status: 草案
+status: 已实现
 ---
 
 # 混合检索（向量 + zhparser 关键词）设计
@@ -169,3 +169,32 @@ LIMIT :keywordTopK
 - `ChatStrategy` 新字段走「租户自有 → 平台默认（native 绕过滤器）」回退，`ChatStrategyFallbackIT` 绿。
 - 关键词路故障时对话不中断（退化为纯向量）。
 - 单测 + IT 全绿；`mvn verify` 通过（含 zhparser 镜像构建）；`mvn test` 免 Docker 通过。
+
+## 10. 实现结论（2026-07-06 落地）
+
+Task 1-8 全部完成并合入特性分支 `feat/hybrid-retrieval`。`mvn verify` 全绿（Surefire 单测 82、Failsafe IT 38，0 失败 0 错误），`mvn test` 免 Docker 通过。落地要点与设计的偏差如实记录如下：
+
+### 10.1 基础设施（zhparser 镜像 + Testcontainers 基座）
+- 自定义镜像 `docker/postgres-zhparser/Dockerfile`：`FROM pgvector/pgvector:pg17`，编译安装 **SCWS + zhparser**。实测偏差：SCWS 改用 **git 源**编译（发行 tar 包源不稳），zhparser 用 **v2.3**（非计划里的 V2.2）；`apt` 换 **阿里云源**规避官方源 502。产出镜像同具 `vector` 与 `zhparser` 两扩展。
+- `AbstractPostgresIT` 改用 `ImageFromDockerfile("qingyu/pgvector-zhparser:it", false).withDockerfile(...)`。偏差：testcontainers **1.20.4 的 `PostgreSQLContainer` 无接收 `Future<String>` 的构造函数**，故用 `.get()` 同步触发 `docker build`（返回镜像 tag）后再包成 `DockerImageName` 传入。首跑构建数分钟，之后 Docker 本地缓存复用秒级；`mvn test`（Surefire 纯 Mockito）不启容器、仍免 Docker。
+- `chinese_zh` 文本搜索配置在 compose init（`docker/init.sql`）与 IT init（`backend/src/test/resources/db/init-vector.sql`）两处以幂等 `DO` 块建立；`HybridSearchSchemaInitializer` 内再 `IF NOT EXISTS` 兜底。
+
+### 10.2 生成列 + 关键词检索 + 融合
+- `HybridSearchSchemaInitializer`（`ApplicationRunner`，`@Order(0)`）：上下文就绪后幂等给 `vector_store` 加 `content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('chinese_zh', content)) STORED` 生成列 + GIN 索引，失败仅 `log.warn` 不阻断启动。
+- `KeywordSearchDao`（`JdbcTemplate`）：`ts_rank_cd + plainto_tsquery('chinese_zh', ?)`，租户隔离用 `metadata ->> 'tenantId'`（与向量路 `filterExpression` 同源）。
+- `RrfFuser`：标准 RRF（`score = Σ 1/(k+rank)`，rank 从 1 起、`LinkedHashMap` 保序），纯函数、4 个单测。
+- `HybridRetrievalService`/`Impl`：编排两路 + RRF 融合，按 `vector_store.id` 对齐去重。**两路均 fail-soft**——向量路与关键词路各自独立 `try/catch`，任一路异常 → 该路空、由另一路贡献；两路皆空 → RRF 融合返回空，语义正确、不阻断对话（比设计更进一步：设计里向量路异常由上游兜底，落地时下沉到本服务内，也是下面端到端 IT 不再 mock VectorStore 的前提）。
+
+### 10.3 ChatStrategy 配置回退与接入
+- `ChatStrategy` 加 `hybridEnabled/keywordTopK/rrfK`，平台默认由 `@PostConstruct` 播种 `tenant_id IS NULL` 行为 `true/10/60`。native「回退平台默认」查询是 `SELECT *`（实体映射），随 `ddl-auto: update` 新增列**自动带出**，无需改 SQL。
+- 接入 `ChatServiceImpl.searchKnowledge`：**开关用 `!Boolean.FALSE.equals(strategy.getHybridEnabled())`（null→开）**——特性默认开，且免去既有部署（旧平台默认行 `hybridEnabled=null`）的 backfill 迁移。整段 `searchKnowledge` 外层 `try/catch` 返回空、fail-soft 兜底。
+
+### 10.4 测试关键差异（务必留意）
+- **维度差异**：test profile 的 pgvector 维度是 **1536**（`application-test.yml`，非生产 1024）。IT 种子零向量用 `array_fill(0::real, ARRAY[1536])::vector`，与之对齐。
+- **端到端 IT 的表污染坑与根治**：`HybridRetrievalIT` 最初用 `@MockitoBean VectorStore`（避开无 embedding key 的 401）。但 mock 使真实 `PgVectorStore` 的 `initialize-schema` 不跑，该测试上下文里 JPA（`ddl-auto: create-drop`）按预置的 `VectorStoreEntity`（映射不含 embedding 列）把**共享单例容器**的 `vector_store` 重建成缺 `embedding` 列的表；`@BeforeEach` 手动 `ALTER TABLE ADD COLUMN embedding` 的补丁又被类级 `@Transactional` 回滚，导致后续复用旧上下文的 `KeywordSearchDaoIT` 插种子失败（`column "embedding" does not exist`）——**顺序敏感、仅全量 `mvn verify` 复现**。
+  - **根治**：给向量路加 fail-soft 后，`HybridRetrievalIT` **去掉 `@MockitoBean VectorStore`**，直接用真实 `PgVectorStore`（与其它 IT 共享同一上下文，表由 PgVectorStore 建全含 embedding、不再污染共享表）。向量路对零向量种子 cosine 低于阈值不命中、或无 key 时 401 → fail-soft 空；关键词路真实 FTS 命中精确术语 `XZ-9000`。两用例：hybrid 开 → 断言结果 `anyMatch(含 XZ-9000)`（关键词召回向量漏掉的术语）；hybrid 关 → 断言 `noneMatch(含 XZ-9000)`（关闭时关键词路不参与，仅向量路）。
+  - **保留类级 `@Transactional`**：现在安全（表结构在上下文初始化时已建好并提交、不在测试事务内，`@Transactional` 只回滚种子数据），同时它解决非 HTTP 直调下租户过滤器 session 错配的 `NonUniqueResultException`。
+- **预期告警（非失败）**：日志里 `Knowledge search failed: 401` / `向量检索失败，退化为...`（无 embedding key 的向量路 fail-soft）、`关键词检索失败,退化为纯向量`（测试故意触发降级）均为预期。
+
+### 10.5 既有部署提示
+- 因开关语义为 `!Boolean.FALSE.equals`，旧平台默认行 `hybridEnabled=null` 也视为**开启**，无需 backfill 迁移即可让特性对所有租户生效；如需保守灰度，可显式把租户/平台默认置 `false`。

@@ -17,7 +17,8 @@ import java.util.Map;
 
 /**
  * 混合检索编排：向量 similaritySearch + 关键词 FTS DAO，RRF 融合（按 Document.id 对齐）。
- * fail-soft：关键词路异常 → 退化为纯向量；向量路异常由上游 searchKnowledge 兜底。
+ * fail-soft：向量路与关键词路各自独立 try/catch，任一路异常 → 该路空、由另一路贡献结果；
+ * 两路皆失败 → 返回空（RRF 融合空列表），语义正确、不阻断对话。
  *
  * @author ruan
  */
@@ -36,14 +37,23 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         int rrfK = strategy.getRrfK() != null ? strategy.getRrfK() : 60;
         double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
 
-        // 向量路（与 ChatServiceImpl#searchKnowledge 现状一致的构建方式）
-        SearchRequest searchRequest = SearchRequest.query(query)
-                .withTopK(topK)
-                .withSimilarityThreshold(threshold);
-        if (tenantId != null) {
-            searchRequest = searchRequest.withFilterExpression("tenantId == '" + tenantId + "'");
+        // 向量路（fail-soft：异常则空列表 → 融合退化为关键词/空）
+        // 与 ChatServiceImpl#searchKnowledge 现状一致的构建方式
+        List<RrfFuser.Item> vectorItems = new ArrayList<>();
+        try {
+            SearchRequest searchRequest = SearchRequest.query(query)
+                    .withTopK(topK)
+                    .withSimilarityThreshold(threshold);
+            if (tenantId != null) {
+                searchRequest = searchRequest.withFilterExpression("tenantId == '" + tenantId + "'");
+            }
+            for (Document d : vectorStore.similaritySearch(searchRequest)) {
+                String content = d.getContent() != null ? d.getContent() : "";
+                vectorItems.add(new RrfFuser.Item(d.getId(), content));
+            }
+        } catch (Exception e) {
+            log.warn("向量检索失败，退化为关键词/空 tenantId={}", tenantId, e);
         }
-        List<Document> vectorDocs = vectorStore.similaritySearch(searchRequest);
 
         // 关键词路（fail-soft：异常则空列表 → 融合退化为纯向量）
         List<RrfFuser.Item> keywordItems = new ArrayList<>();
@@ -53,12 +63,6 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
             }
         } catch (Exception e) {
             log.warn("关键词检索失败，退化为纯向量 tenantId={}", tenantId, e);
-        }
-
-        List<RrfFuser.Item> vectorItems = new ArrayList<>();
-        for (Document d : vectorDocs) {
-            String content = d.getContent() != null ? d.getContent() : "";
-            vectorItems.add(new RrfFuser.Item(d.getId(), content));
         }
 
         List<RrfFuser.Item> fused = RrfFuser.fuse(List.of(vectorItems, keywordItems), rrfK, topK);
