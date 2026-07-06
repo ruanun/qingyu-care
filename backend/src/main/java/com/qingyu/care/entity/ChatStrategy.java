@@ -92,4 +92,19 @@ public class ChatStrategy extends BaseTenantEntity {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /**
+     * 是否启用混合检索（向量+关键词）。平台默认 true（Task 6 播种）。
+     */
+    private Boolean hybridEnabled;
+
+    /**
+     * 关键词路取回条数。默认 10。
+     */
+    private Integer keywordTopK;
+
+    /**
+     * RRF 融合常数 k。默认 60。
+     */
+    private Integer rrfK;
 }
