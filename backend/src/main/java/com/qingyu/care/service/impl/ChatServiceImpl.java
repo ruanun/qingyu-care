@@ -13,6 +13,7 @@ import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.ChatStrategyService;
+import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -51,6 +52,7 @@ public class ChatServiceImpl implements ChatService {
     private final HandoverRuleService handoverRuleService;
     private final ModelRouterService modelRouterService;
     private final ChatStrategyService chatStrategyService;
+    private final HybridRetrievalService hybridRetrievalService;
     private final ApplicationEventPublisher eventPublisher;
 
     @Override
@@ -108,9 +110,9 @@ public class ChatServiceImpl implements ChatService {
         
         // 获取策略配置（默认为 default，未来可扩充根据请求场景选择）
         ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
-        
-        // 检索相关知识
-        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy.getTopK(), strategy.getSimilarityThreshold());
+
+        // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）
+        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         
         // 计算置信度
         double maxScore = relevantDocs.isEmpty() ? 0.0 : 
@@ -179,7 +181,7 @@ public class ChatServiceImpl implements ChatService {
     public Flux<String> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed) {
         ChatSession session = getOrCreateSession(request);
         ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
-        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy.getTopK(), strategy.getSimilarityThreshold());
+        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         String context = buildContext(relevantDocs);
         List<Message> messages = buildMessages(session, request.getMessage(), context);
 
@@ -311,10 +313,33 @@ public class ChatServiceImpl implements ChatService {
         return session;
     }
     
-    private List<Document> searchKnowledge(String query, int topK, double threshold) {
+    /**
+     * 知识检索入口（供外部/测试直接调用）：按当前租户上下文取该租户激活的 default 场景策略，
+     * 再委派给按 strategy 分流的实现。
+     */
+    @Override
+    public List<Document> searchKnowledge(String query) {
+        ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
+        return searchKnowledge(query, strategy);
+    }
+
+    /**
+     * 按 strategy 分流：hybridEnabled（null 视为开启）为真时走混合检索（向量+关键词 RRF 融合），
+     * 否则走原有纯向量检索。整体 fail-soft：任何异常均返回空列表，不阻断对话。
+     */
+    private List<Document> searchKnowledge(String query, ChatStrategy strategy) {
         try {
-            Long tenantId = com.qingyu.care.config.TenantContext.getTenantId();
-            
+            Long tenantIdLong = com.qingyu.care.config.TenantContext.getTenantId();
+            String tenantId = tenantIdLong != null ? String.valueOf(tenantIdLong) : null;
+
+            // null 视为开启：特性默认开，且免去既有部署（旧数据行 hybridEnabled 为 null）的 backfill 迁移
+            boolean hybrid = !Boolean.FALSE.equals(strategy.getHybridEnabled());
+            if (hybrid) {
+                return hybridRetrievalService.search(query, tenantId, strategy);
+            }
+
+            int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
+            double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
             SearchRequest searchRequest;
             if (tenantId != null) {
                 // 有租户上下文时，添加租户过滤条件

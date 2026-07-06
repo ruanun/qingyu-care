@@ -6,6 +6,7 @@ import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
+import org.springframework.ai.document.Document;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import reactor.core.publisher.Flux;
@@ -52,7 +53,15 @@ public interface ChatService {
      * 请求人工接管
      */
     void requestHandover(String sessionId);
-    
+
+    /**
+     * 知识检索：按当前租户上下文 + 激活的 default 场景策略，检索相关知识（混合检索开关由策略
+     * hybridEnabled 决定，null 视为开启）。fail-soft：任何异常均返回空列表，不阻断对话。
+     * chat()/streamChat() 内部复用同一实现（传入已取的 strategy，避免重复查询）；
+     * 本方法额外暴露给外部（如集成测试）按 query 直接验证检索链路。
+     */
+    List<Document> searchKnowledge(String query);
+
     // ===== 新增方法 =====
     
     /**
