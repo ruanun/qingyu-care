@@ -75,4 +75,19 @@ class HybridRetrievalServiceTest {
 
         assertThat(out).extracting(Document::getId).containsExactly("c");
     }
+
+    @Test
+    void 融合结果携带来源元数据_source字段透传() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenReturn(List.of(new Document("a", "向量内容a", Map.of("source", "手册A"))));
+        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of(new KeywordSearchDao.KeywordHit("c", "关键词内容c", Map.of("source", "手册C"))));
+
+        List<Document> out = service.search("查询", "1", strategy(true));
+
+        Document docA = out.stream().filter(d -> "a".equals(d.getId())).findFirst().orElseThrow();
+        Document docC = out.stream().filter(d -> "c".equals(d.getId())).findFirst().orElseThrow();
+        assertThat(docA.getMetadata().get("source")).isEqualTo("手册A");
+        assertThat(docC.getMetadata().get("source")).isEqualTo("手册C");
+    }
 }

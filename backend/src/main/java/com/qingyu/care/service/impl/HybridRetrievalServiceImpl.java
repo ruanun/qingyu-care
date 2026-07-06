@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 混合检索编排：向量 similaritySearch + 关键词 FTS DAO，RRF 融合（按 Document.id 对齐）。
@@ -49,7 +48,7 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
             }
             for (Document d : vectorStore.similaritySearch(searchRequest)) {
                 String content = d.getContent() != null ? d.getContent() : "";
-                vectorItems.add(new RrfFuser.Item(d.getId(), content));
+                vectorItems.add(new RrfFuser.Item(d.getId(), content, d.getMetadata()));
             }
         } catch (Exception e) {
             log.warn("向量检索失败，退化为关键词/空 tenantId={}", tenantId, e);
@@ -59,7 +58,8 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         List<RrfFuser.Item> keywordItems = new ArrayList<>();
         try {
             for (KeywordSearchDao.KeywordHit h : keywordSearchDao.search(query, tenantId, keywordTopK)) {
-                keywordItems.add(new RrfFuser.Item(h.id(), h.content()));
+                String keywordContent = h.content() != null ? h.content() : "";
+                keywordItems.add(new RrfFuser.Item(h.id(), keywordContent, h.metadata()));
             }
         } catch (Exception e) {
             log.warn("关键词检索失败，退化为纯向量 tenantId={}", tenantId, e);
@@ -68,7 +68,7 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         List<RrfFuser.Item> fused = RrfFuser.fuse(List.of(vectorItems, keywordItems), rrfK, topK);
         List<Document> result = new ArrayList<>();
         for (RrfFuser.Item it : fused) {
-            result.add(new Document(it.id(), it.content(), Map.of()));
+            result.add(new Document(it.id(), it.content(), it.metadata()));
         }
         return result;
     }

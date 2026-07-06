@@ -1,6 +1,9 @@
 package com.qingyu.care.repository;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -15,9 +18,11 @@ import java.util.Map;
  */
 @Repository
 @RequiredArgsConstructor
+@Slf4j
 public class KeywordSearchDao {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
     /** 一条命中：id 为 vector_store 主键（与向量路 Document.id 同源，供 RRF 对齐）。 */
     public record KeywordHit(String id, String content, Map<String, Object> metadata) {
@@ -40,7 +45,21 @@ public class KeywordSearchDao {
                 (rs, rowNum) -> new KeywordHit(
                         rs.getString("id"),
                         rs.getString("content"),
-                        Map.of("tenantId", tenantId)),
+                        parseMetadata(rs.getString("metadata_json"), tenantId)),
                 query, tenantId, query, limit);
+    }
+
+    /** 解析 vector_store.metadata 的 JSON 文本；解析失败兜底为仅含 tenantId，避免单行坏数据拖垮整路检索。 */
+    private Map<String, Object> parseMetadata(String metadataJson, String tenantId) {
+        if (metadataJson == null) {
+            return Map.of("tenantId", tenantId);
+        }
+        try {
+            return objectMapper.readValue(metadataJson, new TypeReference<Map<String, Object>>() {
+            });
+        } catch (Exception e) {
+            log.warn("关键词检索命中的 metadata 解析失败，兜底为仅含 tenantId tenantId={}", tenantId, e);
+            return Map.of("tenantId", tenantId);
+        }
     }
 }

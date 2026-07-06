@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RrfFuserTest {
 
     private RrfFuser.Item item(String id) {
-        return new RrfFuser.Item(id, "内容" + id);
+        return new RrfFuser.Item(id, "内容" + id, java.util.Map.of());
     }
 
     @Test

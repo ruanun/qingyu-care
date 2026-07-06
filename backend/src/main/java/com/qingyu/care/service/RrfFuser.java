@@ -17,8 +17,8 @@ public final class RrfFuser {
     private RrfFuser() {
     }
 
-    /** 融合项：id 用于去重与跨列表对齐（此处即 vector_store 行 id）。 */
-    public record Item(String id, String content) {
+    /** 融合项：id 用于去重与跨列表对齐（此处即 vector_store 行 id）。metadata 随 Item 原样携带穿过融合。 */
+    public record Item(String id, String content, Map<String, Object> metadata) {
     }
 
     /**
