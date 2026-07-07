@@ -33,41 +33,6 @@ public class KeywordSearchDao {
     }
 
     /**
-     * 按中文关键词全文检索，返回按 ts_rank_cd 降序的命中（仅本租户）。
-     * plainto_tsquery 把查询串分词后按 AND 组合；无命中返回空列表。
-     */
-    public List<KeywordHit> search(String query, String tenantId, int limit) {
-        return jdbcTemplate.query(
-                """
-                SELECT id::text AS id, content, metadata::text AS metadata_json
-                FROM vector_store
-                WHERE content_tsv @@ plainto_tsquery('chinese_zh', ?)
-                  AND metadata ->> 'tenantId' = ?
-                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('chinese_zh', ?)) DESC
-                LIMIT ?
-                """,
-                (rs, rowNum) -> new KeywordHit(
-                        rs.getString("id"),
-                        rs.getString("content"),
-                        parseMetadata(rs.getString("metadata_json"), tenantId)),
-                query, tenantId, query, limit);
-    }
-
-    /** 解析 vector_store.metadata 的 JSON 文本；解析失败兜底为仅含 tenantId，避免单行坏数据拖垮整路检索。 */
-    private Map<String, Object> parseMetadata(String metadataJson, String tenantId) {
-        if (metadataJson == null) {
-            return Map.of("tenantId", tenantId);
-        }
-        try {
-            return objectMapper.readValue(metadataJson, new TypeReference<Map<String, Object>>() {
-            });
-        } catch (Exception e) {
-            log.warn("关键词检索命中的 metadata 解析失败，兜底为仅含 tenantId tenantId={}", tenantId, e);
-            return Map.of("tenantId", tenantId);
-        }
-    }
-
-    /**
      * 按检索范围（应用 + enabled 知识库集合 + 租户）做中文关键词全文检索。
      * appId/kbIds 双重保险闭合应用隔离缺口；tenantId 为 null 时省略该子句（同向量路语义）。
      * 仅在非空范围下调用（调用方已短路空范围）。

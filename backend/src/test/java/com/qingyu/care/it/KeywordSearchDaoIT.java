@@ -20,17 +20,6 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
     @Autowired KeywordSearchDao keywordSearchDao;
     @Autowired JdbcTemplate jdbcTemplate;
 
-    /**
-     * 向 vector_store 插一行；embedding 用零向量（array_fill 造，避免巨型字面量）。
-     * 维度取 test profile 实际配置的 1536（application-test.yml），而非生产 1024（text-embedding-v3）。
-     */
-    private void seedChunk(String content, String tenantId) {
-        jdbcTemplate.update(
-                "INSERT INTO vector_store(id, content, metadata, embedding) " +
-                        "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
-                content, "{\"tenantId\":\"" + tenantId + "\"}");
-    }
-
     /** 带完整 scope 元数据的种子（appId/knowledgeBaseId 摄取时即写入，见 KnowledgeServiceImpl）。 */
     private void seedChunkWithScope(String content, String tenantId, String appId, String kbId) {
         jdbcTemplate.update(
@@ -47,12 +36,14 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
 
     @Test
     void 中文关键词命中且仅本租户() {
-        seedChunk("轻语客服支持产品型号XZ-9000的售后咨询", T1);
-        seedChunk("其他无关内容", T1);
-        seedChunk("他租户也有产品型号XZ-9000", T2);   // 他租户，不应命中
+        seedChunkWithScope("轻语客服支持产品型号XZ-9000的售后咨询", T1, "80001", "901");
+        seedChunkWithScope("其他无关内容", T1, "80001", "901");
+        seedChunkWithScope("他租户也有产品型号XZ-9000", T2, "80001", "901");   // 他租户，不应命中
 
-        List<KeywordSearchDao.KeywordHit> hits =
-                keywordSearchDao.search("产品型号", T1, 10);
+        List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
+                "产品型号",
+                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                10);
 
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).content()).contains("XZ-9000");
@@ -60,8 +51,11 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
 
     @Test
     void 无命中返回空() {
-        seedChunk("完全不相关的文本", T1);
-        assertThat(keywordSearchDao.search("量子纠缠", T1, 10)).isEmpty();
+        seedChunkWithScope("完全不相关的文本", T1, "80001", "901");
+        assertThat(keywordSearchDao.search(
+                "量子纠缠",
+                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                10)).isEmpty();
     }
 
     @Test
