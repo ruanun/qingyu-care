@@ -14,6 +14,8 @@ import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.HybridRetrievalService;
+import com.qingyu.care.service.RetrievalScope;
+import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -53,6 +55,7 @@ public class ChatServiceImpl implements ChatService {
     private final ModelRouterService modelRouterService;
     private final ChatStrategyService chatStrategyService;
     private final HybridRetrievalService hybridRetrievalService;
+    private final RetrievalScopeResolver retrievalScopeResolver;
     private final ApplicationEventPublisher eventPublisher;
 
     @Override
@@ -324,36 +327,31 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 按 strategy 分流：hybridEnabled（null 视为开启）为真时走混合检索（向量+关键词 RRF 融合），
-     * 否则走原有纯向量检索。整体 fail-soft：任何异常均返回空列表，不阻断对话。
+     * 先解析检索范围（当前应用下 enabled 知识库集合）：空范围（无应用上下文 / 无启用库 / 解析异常）
+     * 直接短路返回空（省掉 embedding 调用），走既有 allowNoKnowledge/fallbackMessage 语义。
+     * 非空范围下按 strategy 分流：hybridEnabled（null 视为开启）走混合检索，否则纯向量；
+     * 两条路径都带 tenant+app+kbIds 过滤。整体 fail-soft：任何异常均返回空列表，不阻断对话。
      */
     private List<Document> searchKnowledge(String query, ChatStrategy strategy) {
         try {
-            Long tenantIdLong = com.qingyu.care.config.TenantContext.getTenantId();
-            String tenantId = tenantIdLong != null ? String.valueOf(tenantIdLong) : null;
+            RetrievalScope scope = retrievalScopeResolver.resolve();
+            if (scope.isEmpty()) {
+                log.debug("检索范围为空（无应用上下文或无启用知识库），跳过检索");
+                return List.of();
+            }
 
             // null 视为开启：特性默认开，且免去既有部署（旧数据行 hybridEnabled 为 null）的 backfill 迁移
             boolean hybrid = !Boolean.FALSE.equals(strategy.getHybridEnabled());
             if (hybrid) {
-                return hybridRetrievalService.search(query, tenantId, strategy);
+                return hybridRetrievalService.search(query, scope, strategy);
             }
 
             int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
             double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
-            SearchRequest searchRequest;
-            if (tenantId != null) {
-                // 有租户上下文时，添加租户过滤条件
-                searchRequest = SearchRequest.query(query)
-                        .withTopK(topK)
-                        .withSimilarityThreshold(threshold)
-                        .withFilterExpression("tenantId == '" + tenantId + "'");
-                log.debug("Searching knowledge with tenantId filter: {}", tenantId);
-            } else {
-                // 无租户上下文时（如平台管理员），搜索所有
-                searchRequest = SearchRequest.query(query)
-                        .withTopK(topK)
-                        .withSimilarityThreshold(threshold);
-            }
+            SearchRequest searchRequest = SearchRequest.query(query)
+                    .withTopK(topK)
+                    .withSimilarityThreshold(threshold)
+                    .withFilterExpression(scope.toFilterExpression());
             return vectorStore.similaritySearch(searchRequest);
         } catch (Exception e) {
             log.warn("Knowledge search failed: {}", e.getMessage());
