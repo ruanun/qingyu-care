@@ -2,11 +2,15 @@ package com.qingyu.care.repository;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.service.RetrievalScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,5 +65,57 @@ public class KeywordSearchDao {
             log.warn("关键词检索命中的 metadata 解析失败，兜底为仅含 tenantId tenantId={}", tenantId, e);
             return Map.of("tenantId", tenantId);
         }
+    }
+
+    /**
+     * 按检索范围（应用 + enabled 知识库集合 + 租户）做中文关键词全文检索。
+     * appId/kbIds 双重保险闭合应用隔离缺口；tenantId 为 null 时省略该子句（同向量路语义）。
+     * 仅在非空范围下调用（调用方已短路空范围）。
+     */
+    public List<KeywordHit> search(String query, RetrievalScope scope, int limit) {
+        List<Object> params = new ArrayList<>();
+        StringBuilder sql = new StringBuilder(
+                "SELECT id::text AS id, content, metadata::text AS metadata_json FROM vector_store " +
+                "WHERE content_tsv @@ plainto_tsquery('chinese_zh', ?) " +
+                "AND metadata ->> 'appId' = ? ");
+        params.add(query);
+        params.add(String.valueOf(scope.appId()));
+        sql.append("AND metadata ->> 'knowledgeBaseId' IN (")
+           .append(String.join(",", Collections.nCopies(scope.kbIds().size(), "?")))
+           .append(") ");
+        for (Long kbId : scope.kbIds()) {
+            params.add(String.valueOf(kbId));
+        }
+        if (scope.tenantId() != null) {
+            sql.append("AND metadata ->> 'tenantId' = ? ");
+            params.add(String.valueOf(scope.tenantId()));
+        }
+        sql.append("ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('chinese_zh', ?)) DESC LIMIT ?");
+        params.add(query);
+        params.add(limit);
+        return jdbcTemplate.query(sql.toString(),
+                (rs, rowNum) -> new KeywordHit(
+                        rs.getString("id"),
+                        rs.getString("content"),
+                        parseMetadata(rs.getString("metadata_json"), scope)),
+                params.toArray());
+    }
+
+    /** scope 版兜底：解析失败时保留 scope 中已知的隔离键，避免单行坏数据拖垮整路检索。 */
+    private Map<String, Object> parseMetadata(String metadataJson, RetrievalScope scope) {
+        if (metadataJson != null) {
+            try {
+                return objectMapper.readValue(metadataJson, new TypeReference<Map<String, Object>>() {
+                });
+            } catch (Exception e) {
+                log.warn("关键词检索命中的 metadata 解析失败，兜底为 scope 隔离键 appId={}", scope.appId(), e);
+            }
+        }
+        Map<String, Object> fallback = new HashMap<>();
+        if (scope.tenantId() != null) {
+            fallback.put("tenantId", String.valueOf(scope.tenantId()));
+        }
+        fallback.put("appId", String.valueOf(scope.appId()));
+        return fallback;
     }
 }

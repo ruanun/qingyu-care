@@ -44,7 +44,7 @@ class HybridRetrievalServiceTest {
     void 两路融合_关键词命中项进入结果() {
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(List.of(vecDoc("a"), vecDoc("b")));
-        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+        when(keywordSearchDao.search(any(), any(String.class), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(List.of(new KeywordSearchDao.KeywordHit("c", "关键词内容c", Map.of())));
 
         List<Document> out = service.search("查询", "1", strategy(true));
@@ -56,7 +56,7 @@ class HybridRetrievalServiceTest {
     void 关键词路异常_降级为纯向量() {
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(List.of(vecDoc("a")));
-        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+        when(keywordSearchDao.search(any(), any(String.class), org.mockito.ArgumentMatchers.anyInt()))
                 .thenThrow(new RuntimeException("fts down"));
 
         List<Document> out = service.search("查询", "1", strategy(true));
@@ -68,7 +68,7 @@ class HybridRetrievalServiceTest {
     void 向量路异常_降级为关键词() {
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenThrow(new RuntimeException("vector store down"));
-        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+        when(keywordSearchDao.search(any(), any(String.class), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(List.of(new KeywordSearchDao.KeywordHit("c", "关键词内容c", Map.of())));
 
         List<Document> out = service.search("查询", "1", strategy(true));
@@ -80,7 +80,7 @@ class HybridRetrievalServiceTest {
     void 融合结果携带来源元数据_source字段透传() {
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(List.of(new Document("a", "向量内容a", Map.of("source", "手册A"))));
-        when(keywordSearchDao.search(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+        when(keywordSearchDao.search(any(), any(String.class), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(List.of(new KeywordSearchDao.KeywordHit("c", "关键词内容c", Map.of("source", "手册C"))));
 
         List<Document> out = service.search("查询", "1", strategy(true));

@@ -1,6 +1,7 @@
 package com.qingyu.care.it;
 
 import com.qingyu.care.repository.KeywordSearchDao;
+import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.support.AbstractPostgresIT;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,15 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
                 content, "{\"tenantId\":\"" + tenantId + "\"}");
     }
 
+    /** 带完整 scope 元数据的种子（appId/knowledgeBaseId 摄取时即写入，见 KnowledgeServiceImpl）。 */
+    private void seedChunkWithScope(String content, String tenantId, String appId, String kbId) {
+        jdbcTemplate.update(
+                "INSERT INTO vector_store(id, content, metadata, embedding) " +
+                        "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
+                content, "{\"tenantId\":\"" + tenantId + "\",\"appId\":\"" + appId
+                        + "\",\"knowledgeBaseId\":\"" + kbId + "\"}");
+    }
+
     @AfterEach
     void cleanup() {
         jdbcTemplate.update("DELETE FROM vector_store WHERE metadata->>'tenantId' IN (?,?)", T1, T2);
@@ -52,5 +62,33 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
     void 无命中返回空() {
         seedChunk("完全不相关的文本", T1);
         assertThat(keywordSearchDao.search("量子纠缠", T1, 10)).isEmpty();
+    }
+
+    @Test
+    void scope过滤_仅命中启用库与本应用() {
+        seedChunkWithScope("库一 产品型号XK-1111 说明", T1, "80001", "901");
+        seedChunkWithScope("库二 产品型号XK-1111 说明", T1, "80001", "902");   // 不在 kbIds，不应命中
+        seedChunkWithScope("他应用 产品型号XK-1111 说明", T1, "80002", "901"); // 他应用，不应命中
+
+        List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
+                "产品型号",
+                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                10);
+
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).content()).contains("库一");
+    }
+
+    @Test
+    void scope过滤_多库IN联合命中() {
+        seedChunkWithScope("库一 产品型号XK-1111", T1, "80001", "901");
+        seedChunkWithScope("库二 产品型号XK-1111", T1, "80001", "902");
+
+        List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
+                "产品型号",
+                new RetrievalScope(70001L, 80001L, List.of(901L, 902L)),
+                10);
+
+        assertThat(hits).hasSize(2);
     }
 }
