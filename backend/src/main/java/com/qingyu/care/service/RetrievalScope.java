@@ -24,9 +24,12 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds) {
      * 拼接 Spring AI 向量路 filterExpression：
      * tenantId == 'T' && appId == 'A' && knowledgeBaseId in ['1','2']
      * （metadata 值摄取时均为字符串；tenantId 为 null 时省略该子句，同既有语义）
-     * 仅在非空范围下调用。
+     * 仅在非空范围下调用，空范围调用抛 IllegalStateException。
      */
     public String toFilterExpression() {
+        if (isEmpty()) {
+            throw new IllegalStateException("空检索范围不可拼接过滤表达式（调用方应先判 isEmpty() 短路）");
+        }
         StringBuilder sb = new StringBuilder();
         if (tenantId != null) {
             sb.append("tenantId == '").append(tenantId).append("' && ");
