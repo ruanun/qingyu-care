@@ -32,11 +32,6 @@ public class ChatRequest {
     private String message;
     
     /**
-     * 知识库ID（可选，不传则使用默认知识库）
-     */
-    private Long knowledgeBaseId;
-    
-    /**
      * 是否启用流式响应
      */
     private boolean stream = false;

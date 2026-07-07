@@ -73,7 +73,6 @@ public class OpenChatController {
                 .sessionId(req.getSessionId())
                 .userId(req.getUserId())
                 .message(req.getMessage())
-                .knowledgeBaseId(req.getKnowledgeBaseId())
                 .stream(stream)
                 .build();
     }

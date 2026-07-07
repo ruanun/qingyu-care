@@ -26,9 +26,4 @@ public class OpenChatRequest {
      */
     @NotBlank(message = "消息内容不能为空")
     private String message;
-
-    /**
-     * 知识库 ID（可选，不传则使用默认知识库）
-     */
-    private Long knowledgeBaseId;
 }

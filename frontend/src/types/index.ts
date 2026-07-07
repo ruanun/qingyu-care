@@ -69,7 +69,6 @@ export interface ChatRequest {
     userId: string;
     sessionId?: string;
     message: string;
-    knowledgeBaseId?: number;
 }
 
 export interface KnowledgeHit {

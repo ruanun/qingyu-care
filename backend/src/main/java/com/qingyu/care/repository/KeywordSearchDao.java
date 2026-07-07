@@ -16,7 +16,8 @@ import java.util.Map;
 
 /**
  * 关键词全文检索（zhparser 中文分词）DAO。直接查 Spring AI 的 vector_store，
- * 按 metadata.tenantId 隔离（与向量路 filterExpression 同源）。vector_store 非 Hibernate 实体，手写 SQL。
+ * 按 metadata 的 appId + knowledgeBaseId IN 过滤（双重保险），tenantId 子句在有租户上下文时附加
+ * （与向量路 RetrievalScope.toFilterExpression 同源）。vector_store 非 Hibernate 实体，手写 SQL。
  *
  * @author ruan
  */

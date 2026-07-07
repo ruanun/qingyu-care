@@ -20,7 +20,10 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
     @Autowired KeywordSearchDao keywordSearchDao;
     @Autowired JdbcTemplate jdbcTemplate;
 
-    /** 带完整 scope 元数据的种子（appId/knowledgeBaseId 摄取时即写入，见 KnowledgeServiceImpl）。 */
+    /**
+     * 带完整 scope 元数据的种子（appId/knowledgeBaseId 摄取时即写入，见 KnowledgeServiceImpl）。
+     * 维度取 test profile 实际配置的 1536（application-test.yml），而非生产 1024（text-embedding-v3）。
+     */
     private void seedChunkWithScope(String content, String tenantId, String appId, String kbId) {
         jdbcTemplate.update(
                 "INSERT INTO vector_store(id, content, metadata, embedding) " +

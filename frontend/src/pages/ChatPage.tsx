@@ -51,7 +51,6 @@ const ChatPage: React.FC = () => {
                 userId,
                 sessionId,
                 message: input,
-                knowledgeBaseId: 1, // Default knowledge base
             });
 
             if (response.code === 200) {
