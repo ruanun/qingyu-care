@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 多知识库联合检索端到端：enabled 库联合命中、disabled 不参与、应用隔离、
  * 无应用上下文/无 enabled 库时空命中。向量路在测试环境 fail-soft 为空，
  * 命中均来自关键词路（真实中文 FTS），与 HybridRetrievalIT 同手法。
+ * appId 子句由「错标 chunk」用例独立守护（kbIds IN 因 kbId 全局唯一通常已足够，appId 是第二道防线）。
  * 类级 @Transactional：非 HTTP 直调 service 下保证种子与查询共享 Session（见 HybridRetrievalIT 注释）。
  *
  * @author ruan
@@ -96,6 +97,20 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
         List<Document> docs = search("产品型号XK-2222", APP_A);
 
         assertThat(docs).isEmpty();
+    }
+
+    @Test
+    void appId子句独立生效_错标他应用的chunk不命中() {
+        Long kbA = seedKb(APP_A, true);
+        // 脏数据：knowledgeBaseId 命中 A 的库、但 appId 错标为 B（模拟跨应用误写/数据错标）
+        seedChunk("错标数据 产品型号XK-5555 说明", APP_B, kbA);
+        seedChunk("正常数据 产品型号XK-5555 说明", APP_A, kbA);
+
+        List<Document> docs = search("产品型号XK-5555", APP_A);
+
+        assertThat(docs).extracting(Document::getContent)
+                .anyMatch(c -> c.contains("正常数据"))
+                .noneMatch(c -> c.contains("错标数据"));
     }
 
     @Test
