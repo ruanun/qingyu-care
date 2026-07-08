@@ -2,6 +2,7 @@ package com.qingyu.care.repository;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.RetrievalScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,8 @@ import java.util.Map;
 
 /**
  * 关键词全文检索（zhparser 中文分词）DAO。直接查 Spring AI 的 vector_store，
- * 按 metadata 的 appId + knowledgeBaseId IN 过滤（双重保险），tenantId 子句在有租户上下文时附加
+ * 按 metadata 的 appId + knowledgeBaseId IN 过滤（双重保险），docEnabled 恒等值过滤、
+ * visibility 在 PUBLIC 级别下等值过滤，tenantId 子句在有租户上下文时附加
  * （与向量路 RetrievalScope.toFilterExpression 同源）。vector_store 非 Hibernate 实体，手写 SQL。
  *
  * @author ruan
@@ -34,8 +36,9 @@ public class KeywordSearchDao {
     }
 
     /**
-     * 按检索范围（应用 + enabled 知识库集合 + 租户）做中文关键词全文检索。
-     * appId/kbIds 双重保险闭合应用隔离缺口；tenantId 为 null 时省略该子句（同向量路语义）。
+     * 按检索范围（应用 + enabled 知识库集合 + 租户 + 访问级别）做中文关键词全文检索。
+     * appId/kbIds 双重保险闭合应用隔离缺口；tenantId 为 null 时省略该子句（同向量路语义）；
+     * accessLevel 为 PUBLIC 时额外要求 visibility == 'PUBLIC'，INTERNAL/null 不加该子句（全见）。
      * 仅在非空范围下调用（调用方已短路空范围）。
      */
     public List<KeywordHit> search(String query, RetrievalScope scope, int limit) {
@@ -51,6 +54,11 @@ public class KeywordSearchDao {
            .append(") ");
         for (Long kbId : scope.kbIds()) {
             params.add(String.valueOf(kbId));
+        }
+        // 等值条件（摄取写全键 + 启动回填保证键存在；缺键行做 <> 判断会被 SQL NULL 语义静默筛掉，故不用）
+        sql.append("AND metadata ->> 'docEnabled' = 'true' ");
+        if (scope.accessLevel() == DocumentVisibility.PUBLIC) {
+            sql.append("AND metadata ->> 'visibility' = 'PUBLIC' ");
         }
         if (scope.tenantId() != null) {
             sql.append("AND metadata ->> 'tenantId' = ? ");

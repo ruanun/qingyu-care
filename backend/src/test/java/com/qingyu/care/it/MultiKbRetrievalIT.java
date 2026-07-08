@@ -52,7 +52,8 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
                 "INSERT INTO vector_store(id, content, metadata, embedding) " +
                         "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
                 content, "{\"tenantId\":\"" + TID + "\",\"appId\":\"" + appId
-                        + "\",\"knowledgeBaseId\":\"" + kbId + "\"}");
+                        + "\",\"knowledgeBaseId\":\"" + kbId
+                        + "\",\"visibility\":\"PUBLIC\",\"docEnabled\":\"true\"}");
     }
 
     private List<Document> search(String q, Long appId) {

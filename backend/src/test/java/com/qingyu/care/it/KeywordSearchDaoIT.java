@@ -24,13 +24,21 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
     /**
      * 带完整 scope 元数据的种子（appId/knowledgeBaseId 摄取时即写入，见 KnowledgeServiceImpl）。
      * 维度取 test profile 实际配置的 1536（application-test.yml），而非生产 1024（text-embedding-v3）。
+     * 默认 visibility=PUBLIC、docEnabled=true，委托 6 参重载。
      */
     private void seedChunkWithScope(String content, String tenantId, String appId, String kbId) {
+        seedChunkWithScope(content, tenantId, appId, kbId, "PUBLIC", "true");
+    }
+
+    /** 可指定 visibility/docEnabled 的种子（检索条件为等值判断，种子必须写全键）。 */
+    private void seedChunkWithScope(String content, String tenantId, String appId, String kbId,
+                                    String visibility, String docEnabled) {
         jdbcTemplate.update(
                 "INSERT INTO vector_store(id, content, metadata, embedding) " +
                         "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
                 content, "{\"tenantId\":\"" + tenantId + "\",\"appId\":\"" + appId
-                        + "\",\"knowledgeBaseId\":\"" + kbId + "\"}");
+                        + "\",\"knowledgeBaseId\":\"" + kbId + "\",\"visibility\":\"" + visibility
+                        + "\",\"docEnabled\":\"" + docEnabled + "\"}");
     }
 
     @AfterEach
@@ -88,5 +96,29 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
                 10);
 
         assertThat(hits).hasSize(2);
+    }
+
+    @Test
+    void PUBLIC级_检不到INTERNAL文档chunk() {
+        seedChunkWithScope("公开知识 产品型号XP-1111", T1, "80001", "901", "PUBLIC", "true");
+        seedChunkWithScope("内部知识 产品型号XP-1111", T1, "80001", "901", "INTERNAL", "true");
+
+        List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
+                "产品型号",
+                new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.PUBLIC),
+                10);
+
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).content()).contains("公开知识");
+    }
+
+    @Test
+    void 禁用文档chunk_任何级别都不命中() {
+        seedChunkWithScope("已禁用 产品型号XP-2222", T1, "80001", "901", "PUBLIC", "false");
+
+        assertThat(keywordSearchDao.search(
+                "产品型号",
+                new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
+                10)).isEmpty();
     }
 }
