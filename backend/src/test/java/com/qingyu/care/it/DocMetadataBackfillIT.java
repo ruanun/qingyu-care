@@ -34,6 +34,8 @@ class DocMetadataBackfillIT extends AbstractPostgresIT {
     void cleanup() {
         jdbcTemplate.update("DELETE FROM vector_store WHERE metadata->>'tenantId' = ?", TID);
         jdbcTemplate.update("DELETE FROM document WHERE tenant_id = ?", Long.valueOf(TID));
+        // 孤儿用例的 document 行 tenant_id 为 NULL，按 tenantId 删不掉，用独特名字兜底删
+        jdbcTemplate.update("DELETE FROM document WHERE name = '回填孤儿文档'");
         jdbcTemplate.update("DELETE FROM knowledge_base WHERE tenant_id = ?", Long.valueOf(TID));
     }
 
@@ -81,5 +83,36 @@ class DocMetadataBackfillIT extends AbstractPostgresIT {
                 "SELECT metadata->>'appId' FROM vector_store WHERE metadata->>'documentId' = ?",
                 String.class, String.valueOf(docId));
         assertThat(appId).isEqualTo("62002");
+    }
+
+    @Test
+    void document行tenantId为NULL_chunk保持原样不被置空() {
+        // 防回归：jsonb_set(..., to_jsonb(NULL::text)) 返回 NULL，若不防 tenant_id NULL
+        // 会把整行 metadata 静默置空且不可自愈（documentId 键也没了）
+        jdbcTemplate.update(
+                "INSERT INTO knowledge_base(name, enabled, tenant_id, app_id) VALUES ('回填库', true, ?, ?)",
+                Long.valueOf(TID), 62002L);
+        Long kbId = jdbcTemplate.queryForObject(
+                "SELECT id FROM knowledge_base WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
+                Long.class, Long.valueOf(TID));
+        // 造 tenant_id 为 NULL、app_id 有值的 document 行（历史脏数据形态）
+        jdbcTemplate.update(
+                "INSERT INTO document(name, document_type, status, chunk_count, knowledge_base_id, tenant_id, app_id) "
+                        + "VALUES ('回填孤儿文档', 'TEXT', 'COMPLETED', 1, ?, NULL, ?)",
+                kbId, 62002L);
+        Long docId = jdbcTemplate.queryForObject(
+                "SELECT id FROM document WHERE name = '回填孤儿文档' ORDER BY id DESC LIMIT 1", Long.class);
+        // 对应 chunk：appId 空串（metadata 带 tenantId=TID，便于既有 cleanup 覆盖）
+        seedRaw("{\"tenantId\":\"" + TID + "\",\"appId\":\"\",\"documentId\":\"" + docId
+                + "\",\"knowledgeBaseId\":\"" + kbId + "\"}");
+
+        runner.run(null);
+
+        // metadata 原样保留：appId 仍是空串、documentId 键还在（未被 jsonb_set NULL 置空）
+        var row = jdbcTemplate.queryForMap(
+                "SELECT metadata->>'appId' AS a, metadata->>'documentId' AS d "
+                        + "FROM vector_store WHERE metadata->>'documentId' = ?", String.valueOf(docId));
+        assertThat(row.get("a")).isEqualTo("");
+        assertThat(row.get("d")).isEqualTo(String.valueOf(docId));
     }
 }

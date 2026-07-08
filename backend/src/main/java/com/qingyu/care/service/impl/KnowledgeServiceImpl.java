@@ -207,9 +207,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         "tenantId", tenantId != null ? tenantId.toString() : "",
                         "appId", appId != null ? appId.toString() : "",
                         "source", doc.getName(),
-                        // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）
+                        // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）；
+                        // docEnabled 取文档实际状态（硬编码 true 会让重新处理已禁用文档时静默重新启用）
                         "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
-                        "docEnabled", "true"
+                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true"
                 ));
             }
             

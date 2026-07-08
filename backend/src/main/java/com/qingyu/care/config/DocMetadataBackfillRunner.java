@@ -36,6 +36,8 @@ public class DocMetadataBackfillRunner implements ApplicationRunner {
             int e = jdbcTemplate.update("""
                     UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{docEnabled}', '"true"')
                     WHERE metadata ->> 'docEnabled' IS NULL""");
+            // 注意：jsonb_set 第三参为 NULL 时整个结果为 NULL——若不排除 tenant_id/app_id 为 NULL
+            // 的 document 行，会把 chunk 的整行 metadata 静默置空且不可自愈，两列都必须防
             int a = jdbcTemplate.update("""
                     UPDATE vector_store v
                     SET metadata = jsonb_set(jsonb_set(v.metadata::jsonb, '{appId}', to_jsonb(d.app_id::text)),
@@ -43,8 +45,16 @@ public class DocMetadataBackfillRunner implements ApplicationRunner {
                     FROM document d
                     WHERE (v.metadata ->> 'appId' = '' OR v.metadata ->> 'appId' IS NULL)
                       AND v.metadata ->> 'documentId' = d.id::text
-                      AND d.app_id IS NOT NULL""");
+                      AND d.app_id IS NOT NULL
+                      AND d.tenant_id IS NOT NULL""");
             log.info("文档 metadata 回填完成：visibility={} 行, docEnabled={} 行, appId 历史债={} 行", v, e, a);
+            // 设计要求：反查不到（或 document 行缺 tenant/app）的孤儿 chunk 保持原样并记 warn 数量
+            Integer orphans = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM vector_store v
+                    WHERE (v.metadata ->> 'appId' = '' OR v.metadata ->> 'appId' IS NULL)""", Integer.class);
+            if (orphans != null && orphans > 0) {
+                log.warn("仍有 {} 个 chunk 的 appId 无法回填（documentId 反查不到或 document 行缺 tenant/app），保持原样", orphans);
+            }
         } catch (Exception ex) {
             log.warn("文档 metadata 回填失败（不阻断启动，下次启动重试）", ex);
         }
