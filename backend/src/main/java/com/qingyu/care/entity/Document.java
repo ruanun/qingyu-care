@@ -3,6 +3,7 @@ package com.qingyu.care.entity;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentType;
+import com.qingyu.care.enums.DocumentVisibility;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -82,6 +83,19 @@ public class Document extends BaseTenantEntity {
      */
     @Column(columnDefinition = "TEXT")
     private String content;
+
+    /**
+     * 可见性级别（null 视为 PUBLIC，存量零迁移）
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private DocumentVisibility visibility = DocumentVisibility.PUBLIC;
+
+    /**
+     * 是否参与检索（null 视为启用；禁用不删 chunk，重新启用免重嵌入）
+     */
+    @Column(name = "enabled")
+    private Boolean enabled = true;
 
     /**
      * 切片数量
