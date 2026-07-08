@@ -111,7 +111,7 @@ Spring AI filter 表达式（及关键词路 SQL）里对 metadata 缺键行做 
 | `repository/VectorStoreRepository.java` | 加两个 jsonb_set native update |
 | `service/impl/KnowledgeServiceImpl.java` + `service/KnowledgeService.java` | 摄取写新键；更新可见性/启用方法 |
 | `config/DocMetadataBackfillRunner.java` | **新增**：幂等回填（含 appId 历史债） |
-| `controller/KnowledgeController.java` | PATCH 接口 |
+| `controller/KnowledgeController.java` | 两个 PUT 端点（含 @AuditLog） |
 | `frontend/src/pages/KnowledgePage.tsx`、`frontend/src/api/knowledge.ts`、`frontend/src/types/index.ts` | 可见性切换 + 启用开关 |
 | 既有 IT 种子（3 个文件） | **适配**：metadata 补 `visibility`/`docEnabled` 键 |
 
