@@ -81,7 +81,7 @@ Spring AI filter 表达式（及关键词路 SQL）里对 metadata 缺键行做 
 2. `appId` 空串/缺失 → 按 `metadata->>'documentId'` 反查 `document` 表回填 `appId`/`tenantId`（历史债收尾；反查不到的孤儿 chunk 保持原样并记 warn 数量）。
 
 ### 4.6 管理入口
-- 后端 `KnowledgeController`：两个独立端点 `PATCH /knowledge/documents/{id}/visibility` 与 `PATCH /knowledge/documents/{id}/enabled`（各自语义单一、审计粒度清晰）。
+- 后端 `KnowledgeController`：两个独立端点 `PUT /knowledge/documents/{id}/visibility` 与 `PUT /knowledge/documents/{id}/enabled`（PUT 对齐既有 `PUT /{id}/enabled` 知识库开关惯例；各自语义单一、审计粒度清晰）。
 - 前端 `KnowledgePage` 文档列表：可见性徽章切换（PUBLIC/INTERNAL）+ 启用开关；`api/knowledge.ts` 加对应方法。
 
 ### 4.7 数据流
