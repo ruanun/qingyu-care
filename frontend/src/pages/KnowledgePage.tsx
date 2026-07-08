@@ -125,6 +125,7 @@ const KnowledgePage: React.FC = () => {
             const response = await knowledgeService.updateDocumentVisibility(doc.id, next);
             if (response.code === 200) {
                 setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, visibility: next } : d)));
+                toast({ title: next === 'INTERNAL' ? '文档已设为内部（仅受信渠道可检索）' : '文档已设为公开' });
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -138,6 +139,7 @@ const KnowledgePage: React.FC = () => {
             const response = await knowledgeService.setDocumentEnabled(doc.id, next);
             if (response.code === 200) {
                 setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, enabled: next } : d)));
+                toast({ title: next ? '文档已启用检索' : '文档已停用检索' });
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
