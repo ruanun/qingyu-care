@@ -2,7 +2,7 @@
 title: 文档权限控制（可见性分级 + 文档开关）设计
 author: ruan
 date: 2026-07-08
-status: 已评审
+status: 已实现
 ---
 
 # 文档权限控制（可见性分级 + 文档开关）设计
@@ -145,3 +145,34 @@ Spring AI filter 表达式（及关键词路 SQL）里对 metadata 缺键行做 
 - 存量 chunk 经启动回填后具备全键；appId 空串历史 chunk 被回填（孤儿除外）。
 - 存量部署升级后默认行为无变化。
 - `mvn test` / `mvn verify` 全绿，前端构建与 lint 通过。
+
+## 10. 实现结论（2026-07-08 落地）
+
+Task 1-9 全部完成，`mvn verify` 全绿（Surefire 单测 **109**、Failsafe IT **54**，合计 **163**，0 失败 0 错误）。提交序列：
+
+`1d3e431`（枚举+Document 字段+TenantContext 级别）→ `d1f2dd9`（RetrievalScope 4 组件+等值条件；顺带 Resolver 占位与 KeywordSearchDaoIT 编译适配）→ `9945576`（级别按鉴权路径写入）→ `77e54fc`（关键词路条件+三 IT 种子补键）→ `e00fcad`+`6854122`（摄取全键+回填 runner；评审修复见下）→ `e7eee5c`（管理端接口）→ `1e770da`（DocVisibilityRetrievalIT 4 用例）→ `b5610ef`+`a23e494`（前端入口+toast）→ `fd4cec9`（本次收尾：拦截器访问级别单测）。
+
+### 10.1 与设计的偏差/实现发现
+
+1. **`vector_store.metadata` 列实为 `json` 而非 `jsonb`**（反编译 Spring AI M4 jar 证实；`schema.sql` 注释误写 JSONB）——所有 `jsonb_set` 必须 `metadata::jsonb` 显式转换；Task 5 踩坑并修正，Task 6 预防性应用。
+2. **评审抓到的 Critical**：回填 runner 的 appId 反查最初只防 `d.app_id IS NOT NULL` 未防 `tenant_id`——psql 实测 `jsonb_set` 第三参 NULL 会把**整行 metadata 置空且不可自愈**（`documentId` 也没了）。已补对称防护 + 防回归 IT 用例。教训：**对 json/jsonb 列做 `jsonb_set` 时，凡 new_value 可能为 NULL 的来源列都必须显式 `IS NOT NULL` 防护**。
+3. `docEnabled` 摄取从设计的硬编码 `"true"` 改为读 `doc.getEnabled()` null 安全——否则「重新处理已禁用文档」会静默重新启用（`reprocessDocument` 复用 `processDocument`）。
+4. 回填 runner 按设计补了孤儿 chunk 统计 warn。
+5. IT 用 `DocumentType.TEXT`（枚举无 TXT）。
+6. 拦截器访问级别分支的单测由本收尾提交补上（评审指出的缺口）：`backend/src/test/java/com/qingyu/care/config/OpenApiAuthInterceptorAccessLevelTest.java` 三用例（apiKey→INTERNAL、Origin→PUBLIC、鉴权失败不留级别）全绿。`TenantInterceptor` 的登录分支（`StpUtil.isLogin()` 决定是否写 INTERNAL）**未做单测**——并非缺 `mockStatic` 能力（项目里 `TenantDataAspectTest` 已用 `mockStatic(StpUtil.class)` 验证过该能力可用），而是本次收尾任务的显式交付范围只列了 `OpenApiAuthInterceptorAccessLevelTest` 一个文件；`TenantInterceptor` 覆盖留作后续可选补项。
+
+### 10.2 遗留观察（评审留档，不阻塞）
+
+- `TenantInterceptor` 注册在 `/**` 且早于 `OpenApiAuthInterceptor`——`/open/v1/**` 上两者叠加的正确性隐式依赖注册顺序（当前无漏洞：开放拦截器两分支都无条件覆盖级别，失败则整体 clear）；后续可把 `/open/v1/**` 从 `TenantInterceptor` 排除或补顺序回归测试。
+- `KnowledgeServiceImpl` 两个同步方法未记录受影响 chunk 行数日志；`getDocument` 沿用裸 `RuntimeException`（404 场景返 500）——均为既有惯例延续。
+- 前端连点无防抖（管理后台低频操作，可接受）。
+
+### 10.3 实测验证
+
+- `mvn test`：Surefire **109** 个测试，0 失败 0 错误，BUILD SUCCESS。
+- `mvn verify`：Surefire **109** + Failsafe **54**，合计 **163**，0 失败 0 错误，BUILD SUCCESS。日志中出现的向量检索 `401`（DASHSCOPE 凭据在测试环境未配置）触发 `HybridRetrievalServiceImpl` 向量路 fail-soft 退化为关键词/空、`RateLimitService`/`QuotaService` 因 Redis/DB 不可达时的 fail-open 放行、`RetrievalScopeResolver` 查询异常 fail-soft 为空范围等 WARN，均为既有 fail-soft/fail-open 设计的预期行为，非测试缺陷。`DocVisibilityRetrievalIT` 4 个用例全部通过（其中 3 个用例内部的向量检索因同样原因退化为关键词路，属预期，不影响可见性过滤断言）。
+
+### 10.4 行为变化提示
+
+- 存量/新文档默认 PUBLIC+启用，升级后行为不变；显式标 INTERNAL 后 Widget 匿名渠道立即不可检索。
+- 禁用文档两路（向量/关键词）立即隐身，重新启用免重嵌入立即恢复。
