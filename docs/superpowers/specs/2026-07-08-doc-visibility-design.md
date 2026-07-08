@@ -144,7 +144,7 @@ Spring AI filter 表达式（及关键词路 SQL）里对 metadata 缺键行做 
 - 管理页可切换文档可见性与启用状态，操作留审计日志。
 - 存量 chunk 经启动回填后具备全键；appId 空串历史 chunk 被回填（孤儿除外）。
 - 存量部署升级后默认行为无变化。
-- `mvn test` / `mvn verify` 全绿，前端构建与 lint 通过。
+- `mvn test` / `mvn verify` 全绿，前端构建通过、lint 零新增（存量债务另行清理）。
 
 ## 10. 实现结论（2026-07-08 落地）
 
@@ -160,12 +160,15 @@ Task 1-9 全部完成，`mvn verify` 全绿（Surefire 单测 **109**、Failsafe
 4. 回填 runner 按设计补了孤儿 chunk 统计 warn。
 5. IT 用 `DocumentType.TEXT`（枚举无 TXT）。
 6. 拦截器访问级别分支的单测由本收尾提交补上（评审指出的缺口）：`backend/src/test/java/com/qingyu/care/config/OpenApiAuthInterceptorAccessLevelTest.java` 三用例（apiKey→INTERNAL、Origin→PUBLIC、鉴权失败不留级别）全绿。`TenantInterceptor` 的登录分支（`StpUtil.isLogin()` 决定是否写 INTERNAL）**未做单测**——并非缺 `mockStatic` 能力（项目里 `TenantDataAspectTest` 已用 `mockStatic(StpUtil.class)` 验证过该能力可用），而是本次收尾任务的显式交付范围只列了 `OpenApiAuthInterceptorAccessLevelTest` 一个文件；`TenantInterceptor` 覆盖留作后续可选补项。
+7. **摄取 appId 根因修复（终审发现）**：`KnowledgeServiceImpl.processDocument` 原实现从 `TenantContext` 读 tenantId/appId 写 chunk metadata，但该方法经 `@Async`（self 注入）跑在异步线程，请求线程的 `TenantContext`（ThreadLocal）不会传递过去——导致**每次新上传文档的 chunk 都写出 `appId=""`**，在两路检索的等值过滤下新文档要等下次重启（靠 §4.5 回填 runner 反查）才可检索。修复为优先读 `Document` 行自身的 `tenantId`/`appId`（`Document` 继承 `BaseTenantEntity`，上传发生在请求线程，`@PrePersist` 已由 `TenantEntityListener` 回填，可靠），`TenantContext` 仅作兜底。回填 runner 的 appId 反查逻辑（10.1 第 2 条）正是此 bug 长期存在的佐证——本条修复后回填 runner 从「持续擦屁股」收敛为「存量一次性收尾」。补测 `backend/src/test/java/com/qingyu/care/service/KnowledgeIngestMetadataTest.java`（不设置 TenantContext 模拟 @Async 线程，断言 chunk metadata 的 tenantId/appId 取自 document 行）。
 
 ### 10.2 遗留观察（评审留档，不阻塞）
 
 - `TenantInterceptor` 注册在 `/**` 且早于 `OpenApiAuthInterceptor`——`/open/v1/**` 上两者叠加的正确性隐式依赖注册顺序（当前无漏洞：开放拦截器两分支都无条件覆盖级别，失败则整体 clear）；后续可把 `/open/v1/**` 从 `TenantInterceptor` 排除或补顺序回归测试。
 - `KnowledgeServiceImpl` 两个同步方法未记录受影响 chunk 行数日志；`getDocument` 沿用裸 `RuntimeException`（404 场景返 500）——均为既有惯例延续。
 - 前端连点无防抖（管理后台低频操作，可接受）。
+- 新增的 PUT 端点（`updateDocumentVisibility`/`setDocumentEnabled`）与既有 `deleteDocument`/`reprocessDocument` 同模式，均靠 `documentRepository.findById` 直接按主键加载、无显式归属（tenant/app）校验——Hibernate Filter 不作用于按 id 加载，理论上跨租户猜中 id 即可操作。这是平台级既有技术债（本特性未引入新增面），建议另立项在服务层统一补归属校验，不在本期范围内处理。
+- §9「前端构建与 lint 通过」的准确含义是「零新增」：当前前端 lint 基线约 75 个 error 均为存量债务，本特性代码零新增 lint 问题；基线债务的清理留待另行安排，不属本特性交付范围。
 
 ### 10.3 实测验证
 

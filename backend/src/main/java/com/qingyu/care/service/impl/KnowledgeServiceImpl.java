@@ -198,9 +198,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             TokenTextSplitter splitter = new TokenTextSplitter(chunkSize, chunkOverlap, 5, 10000, true);
             List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
             
-            // 添加元数据（包含租户隔离信息）
-            Long tenantId = com.qingyu.care.config.TenantContext.getTenantId();
-            Long appId = com.qingyu.care.config.TenantContext.getAppId();
+            // 添加元数据（包含租户隔离信息）——
+            // 租户/应用取自 document 行自身（@PrePersist 在请求线程已回填）：
+            // processDocument 跑在 @Async 线程，无 TenantContext，直接读上下文会写出 appId 空串（历史债根因）
+            Long tenantId = doc.getTenantId() != null ? doc.getTenantId() : com.qingyu.care.config.TenantContext.getTenantId();
+            Long appId = doc.getAppId() != null ? doc.getAppId() : com.qingyu.care.config.TenantContext.getAppId();
             for (org.springframework.ai.document.Document chunk : chunks) {
                 chunk.getMetadata().putAll(Map.of(
                         "documentId", documentId.toString(),
