@@ -206,7 +206,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         "knowledgeBaseId", doc.getKnowledgeBase().getId().toString(),
                         "tenantId", tenantId != null ? tenantId.toString() : "",
                         "appId", appId != null ? appId.toString() : "",
-                        "source", doc.getName()
+                        "source", doc.getName(),
+                        // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）
+                        "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
+                        "docEnabled", "true"
                 ));
             }
             
