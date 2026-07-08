@@ -48,4 +48,12 @@ export const knowledgeService = {
     // 重新处理文档
     reprocessDocument: (docId: number): Promise<ApiResponse<void>> =>
         api.post(`/knowledge/documents/${docId}/reprocess`),
+
+    // 更新文档可见性
+    updateDocumentVisibility: (docId: number, visibility: 'PUBLIC' | 'INTERNAL'): Promise<ApiResponse<Document>> =>
+        api.put(`/knowledge/documents/${docId}/visibility?visibility=${visibility}`),
+
+    // 设置文档启用状态
+    setDocumentEnabled: (docId: number, enabled: boolean): Promise<ApiResponse<Document>> =>
+        api.put(`/knowledge/documents/${docId}/enabled?enabled=${enabled}`),
 };

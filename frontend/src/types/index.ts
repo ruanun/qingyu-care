@@ -54,6 +54,8 @@ export interface Document {
     chunkCount?: number;
     errorMessage?: string;
     createdAt: string;
+    visibility?: 'PUBLIC' | 'INTERNAL';   // 缺省视为 PUBLIC
+    enabled?: boolean;                     // 缺省视为启用
 }
 
 export interface DocumentStatusDTO {

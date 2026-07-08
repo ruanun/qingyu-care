@@ -119,6 +119,32 @@ const KnowledgePage: React.FC = () => {
         }
     };
 
+    const handleToggleVisibility = async (doc: Document) => {
+        const next = doc.visibility === 'INTERNAL' ? 'PUBLIC' : 'INTERNAL';
+        try {
+            const response = await knowledgeService.updateDocumentVisibility(doc.id, next);
+            if (response.code === 200) {
+                setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, visibility: next } : d)));
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: "destructive", title: "切换可见性失败", description: message });
+        }
+    };
+
+    const handleToggleEnabled = async (doc: Document) => {
+        const next = !(doc.enabled ?? true);
+        try {
+            const response = await knowledgeService.setDocumentEnabled(doc.id, next);
+            if (response.code === 200) {
+                setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, enabled: next } : d)));
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: "destructive", title: "切换启用状态失败", description: message });
+        }
+    };
+
     const getStatusIcon = (status: string) => {
         switch (status) {
             case 'COMPLETED': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
@@ -272,7 +298,29 @@ const KnowledgePage: React.FC = () => {
                                                         <p className="text-[10px] text-red-500 mt-1">{doc.errorMessage}</p>
                                                     )}
                                                 </div>
-                                                <div className="flex gap-1">
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        onClick={() => handleToggleVisibility(doc)}
+                                                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                                            doc.visibility === 'INTERNAL'
+                                                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        }`}
+                                                        title="点击切换可见性（公开=所有渠道可检索；内部=仅 API Key/后台可检索）"
+                                                    >
+                                                        {doc.visibility === 'INTERNAL' ? '内部' : '公开'}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleToggleEnabled(doc)}
+                                                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                                            (doc.enabled ?? true)
+                                                                ? 'bg-primary/10 text-primary border-primary/20'
+                                                                : 'bg-muted text-muted-foreground border-border line-through'
+                                                        }`}
+                                                        title="点击切换是否参与检索（禁用不删向量，重新启用免重嵌入）"
+                                                    >
+                                                        {(doc.enabled ?? true) ? '检索中' : '已停用'}
+                                                    </button>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
