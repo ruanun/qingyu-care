@@ -1,10 +1,12 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.KnowledgeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -103,6 +105,26 @@ public class KnowledgeController {
         return ApiResponse.success(doc);
     }
     
+    @PutMapping("/documents/{documentId}/visibility")
+    @Operation(summary = "更新文档可见性", description = "PUBLIC 对所有渠道可见；INTERNAL 仅受信调用（API Key/后台）可见")
+    @AuditLog(action = "DOC_VISIBILITY_UPDATE", targetType = "Document")
+    public ApiResponse<Document> updateDocumentVisibility(
+            @PathVariable Long documentId,
+            @RequestParam DocumentVisibility visibility) {
+        Document doc = knowledgeService.updateDocumentVisibility(documentId, visibility);
+        return ApiResponse.success("文档可见性已更新为 " + visibility, doc);
+    }
+
+    @PutMapping("/documents/{documentId}/enabled")
+    @Operation(summary = "设置文档启用状态", description = "禁用的文档不参与检索；不删向量，重新启用免重嵌入")
+    @AuditLog(action = "DOC_ENABLED_UPDATE", targetType = "Document")
+    public ApiResponse<Document> setDocumentEnabled(
+            @PathVariable Long documentId,
+            @RequestParam boolean enabled) {
+        Document doc = knowledgeService.setDocumentEnabled(documentId, enabled);
+        return ApiResponse.success(enabled ? "文档已启用" : "文档已禁用", doc);
+    }
+
     @GetMapping("/documents/{documentId}/status")
     @Operation(summary = "获取文档处理状态", description = "轻量级端点，仅返回处理状态和进度")
     public ApiResponse<DocumentStatusDTO> getDocumentStatus(@PathVariable Long documentId) {

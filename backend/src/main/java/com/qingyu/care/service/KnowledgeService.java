@@ -84,5 +84,15 @@ public interface KnowledgeService {
      * 设置知识库启用状态
      */
     KnowledgeBase setKnowledgeBaseEnabled(Long id, boolean enabled);
+
+    /**
+     * 更新文档可见性（同步 chunk metadata）
+     */
+    Document updateDocumentVisibility(Long documentId, com.qingyu.care.enums.DocumentVisibility visibility);
+
+    /**
+     * 设置文档启用状态（同步 chunk metadata；禁用不删 chunk）
+     */
+    Document setDocumentEnabled(Long documentId, boolean enabled);
 }
 

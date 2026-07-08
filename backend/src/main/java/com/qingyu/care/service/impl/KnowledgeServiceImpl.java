@@ -5,6 +5,7 @@ import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentType;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import com.qingyu.care.service.FileService;
@@ -281,7 +282,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         kb.setEnabled(enabled);
         return knowledgeBaseRepository.save(kb);
     }
-    
+
+    @Override
+    @Transactional
+    public Document updateDocumentVisibility(Long documentId, DocumentVisibility visibility) {
+        Document doc = getDocument(documentId);
+        doc.setVisibility(visibility);
+        Document saved = documentRepository.save(doc);
+        // 与文档行同事务同步 chunk 标记，保证不出现行与 metadata 不一致的静默状态
+        vectorStoreRepository.updateVisibilityByDocumentId(documentId.toString(), visibility.name());
+        return saved;
+    }
+
+    @Override
+    @Transactional
+    public Document setDocumentEnabled(Long documentId, boolean enabled) {
+        Document doc = getDocument(documentId);
+        doc.setEnabled(enabled);
+        Document saved = documentRepository.save(doc);
+        vectorStoreRepository.updateDocEnabledByDocumentId(documentId.toString(), String.valueOf(enabled));
+        return saved;
+    }
+
     /**
      * 转换为轻量级状态 DTO
      */

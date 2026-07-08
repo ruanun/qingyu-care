@@ -34,4 +34,16 @@ public interface VectorStoreRepository extends JpaRepository<VectorStoreEntity, 
      */
     @Query(value = "SELECT COUNT(*) FROM vector_store WHERE metadata->>'documentId' = :documentId", nativeQuery = true)
     long countByDocumentId(@Param("documentId") String documentId);
+
+    /** 按 documentId 同步 chunk 的可见性标记（与文档行更新同事务）。metadata 列是 json 类型，须先转 jsonb。 */
+    @Modifying
+    @Query(value = "UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{visibility}', to_jsonb(:visibility)) "
+            + "WHERE metadata->>'documentId' = :documentId", nativeQuery = true)
+    int updateVisibilityByDocumentId(@Param("documentId") String documentId, @Param("visibility") String visibility);
+
+    /** 按 documentId 同步 chunk 的启用标记（禁用不删 chunk，重新启用免重嵌入）。 */
+    @Modifying
+    @Query(value = "UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{docEnabled}', to_jsonb(:enabled)) "
+            + "WHERE metadata->>'documentId' = :documentId", nativeQuery = true)
+    int updateDocEnabledByDocumentId(@Param("documentId") String documentId, @Param("enabled") String enabled);
 }
