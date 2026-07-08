@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.entity.ChatStrategy;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.impl.ChatServiceImpl;
@@ -54,7 +55,7 @@ class ChatServiceSearchScopeTest {
     void 非空范围_hybrid开_scope传给混合检索() {
         ChatStrategy strategy = new ChatStrategy();   // hybridEnabled=null → 视为开启
         when(chatStrategyService.getActiveStrategy("default")).thenReturn(strategy);
-        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L));
+        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL);
         when(retrievalScopeResolver.resolve()).thenReturn(scope);
         when(hybridRetrievalService.search("有什么产品", scope, strategy)).thenReturn(List.of());
 
@@ -68,7 +69,7 @@ class ChatServiceSearchScopeTest {
         ChatStrategy strategy = new ChatStrategy();
         strategy.setHybridEnabled(false);   // 显式关闭混合检索 → 走纯向量路
         when(chatStrategyService.getActiveStrategy("default")).thenReturn(strategy);
-        when(retrievalScopeResolver.resolve()).thenReturn(new RetrievalScope(1L, 2L, List.of(10L)));
+        when(retrievalScopeResolver.resolve()).thenReturn(new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL));
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
 
         chatService.searchKnowledge("有什么产品");

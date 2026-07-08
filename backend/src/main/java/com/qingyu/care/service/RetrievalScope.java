@@ -1,19 +1,22 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.enums.DocumentVisibility;
+
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 检索范围值对象：当前请求合法可检索的（租户、应用、enabled 知识库集合）。
+ * 检索范围值对象：当前请求合法可检索的（租户、应用、enabled 知识库集合、调用方访问级别）。
  * isEmpty() 为真表示无合法范围（无应用上下文 / 无启用知识库），检索应短路返回空。
+ * accessLevel：PUBLIC=只见公开文档，INTERNAL=全见（按鉴权路径判定，见 RetrievalScopeResolver）。
  *
  * @author ruan
  */
-public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds) {
+public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds, DocumentVisibility accessLevel) {
 
-    /** 空范围（保留 tenantId 便于日志排查）。 */
+    /** 空范围（保留 tenantId 便于日志排查；accessLevel 无意义置 null）。 */
     public static RetrievalScope empty(Long tenantId) {
-        return new RetrievalScope(tenantId, null, List.of());
+        return new RetrievalScope(tenantId, null, List.of(), null);
     }
 
     public boolean isEmpty() {
@@ -22,9 +25,9 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds) {
 
     /**
      * 拼接 Spring AI 向量路 filterExpression：
-     * tenantId == 'T' && appId == 'A' && knowledgeBaseId in ['1','2']
-     * （metadata 值摄取时均为字符串；tenantId 为 null 时省略该子句，同既有语义）
-     * 仅在非空范围下调用，空范围调用抛 IllegalStateException。
+     * tenantId == 'T' && appId == 'A' && knowledgeBaseId in ['1','2'] && docEnabled == 'true' [&& visibility == 'PUBLIC']
+     * 一律等值条件（metadata 缺键行做 != 判断时 SQL 为 NULL→false 会静默筛掉，故靠摄取写全键+启动回填保证键存在）。
+     * 仅在非空范围下调用，空范围抛 IllegalStateException。
      */
     public String toFilterExpression() {
         if (isEmpty()) {
@@ -38,6 +41,10 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds) {
         sb.append(" && knowledgeBaseId in [")
           .append(kbIds.stream().map(id -> "'" + id + "'").collect(Collectors.joining(",")))
           .append("]");
+        sb.append(" && docEnabled == 'true'");
+        if (accessLevel == DocumentVisibility.PUBLIC) {
+            sb.append(" && visibility == 'PUBLIC'");
+        }
         return sb.toString();
     }
 }

@@ -1,5 +1,6 @@
 package com.qingyu.care.it;
 
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.KeywordSearchDao;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.support.AbstractPostgresIT;
@@ -45,7 +46,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
 
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
-                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
                 10);
 
         assertThat(hits).hasSize(1);
@@ -57,7 +58,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         seedChunkWithScope("完全不相关的文本", T1, "80001", "901");
         assertThat(keywordSearchDao.search(
                 "量子纠缠",
-                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
                 10)).isEmpty();
     }
 
@@ -69,7 +70,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
 
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
-                new RetrievalScope(70001L, 80001L, List.of(901L)),
+                new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
                 10);
 
         assertThat(hits).hasSize(1);
@@ -83,7 +84,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
 
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
-                new RetrievalScope(70001L, 80001L, List.of(901L, 902L)),
+                new RetrievalScope(70001L, 80001L, List.of(901L, 902L), DocumentVisibility.INTERNAL),
                 10);
 
         assertThat(hits).hasSize(2);

@@ -37,7 +37,7 @@ class HybridRetrievalServiceTest {
     }
 
     private RetrievalScope scope() {
-        return new RetrievalScope(1L, 2L, List.of(10L));
+        return new RetrievalScope(1L, 2L, List.of(10L), com.qingyu.care.enums.DocumentVisibility.INTERNAL);
     }
 
     private Document vecDoc(String id) {

@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.enums.DocumentVisibility;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -11,24 +12,25 @@ class RetrievalScopeTest {
 
     @Test
     void 拼接filterExpression_含tenant与多库IN() {
-        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L, 11L));
+        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L, 11L), DocumentVisibility.INTERNAL);
         assertThat(scope.toFilterExpression())
-                .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10','11']");
+                .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10','11']"
+                        + " && docEnabled == 'true'");
     }
 
     @Test
     void 拼接filterExpression_无tenant省略子句() {
-        RetrievalScope scope = new RetrievalScope(null, 2L, List.of(10L));
+        RetrievalScope scope = new RetrievalScope(null, 2L, List.of(10L), DocumentVisibility.INTERNAL);
         assertThat(scope.toFilterExpression())
-                .isEqualTo("appId == '2' && knowledgeBaseId in ['10']");
+                .isEqualTo("appId == '2' && knowledgeBaseId in ['10'] && docEnabled == 'true'");
     }
 
     @Test
     void isEmpty_无app或无库为真() {
-        assertThat(new RetrievalScope(1L, null, List.of(10L)).isEmpty()).isTrue();
-        assertThat(new RetrievalScope(1L, 2L, List.of()).isEmpty()).isTrue();
-        assertThat(new RetrievalScope(1L, 2L, null).isEmpty()).isTrue();
-        assertThat(new RetrievalScope(1L, 2L, List.of(10L)).isEmpty()).isFalse();
+        assertThat(new RetrievalScope(1L, null, List.of(10L), DocumentVisibility.INTERNAL).isEmpty()).isTrue();
+        assertThat(new RetrievalScope(1L, 2L, List.of(), DocumentVisibility.INTERNAL).isEmpty()).isTrue();
+        assertThat(new RetrievalScope(1L, 2L, null, DocumentVisibility.INTERNAL).isEmpty()).isTrue();
+        assertThat(new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL).isEmpty()).isFalse();
     }
 
     @Test
@@ -42,5 +44,21 @@ class RetrievalScopeTest {
         RetrievalScope scope = RetrievalScope.empty(1L);
         assertThat(scope.isEmpty()).isTrue();
         assertThat(scope.tenantId()).isEqualTo(1L);
+    }
+
+    @Test
+    void 拼接filterExpression_INTERNAL级_只加docEnabled条件() {
+        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL);
+        assertThat(scope.toFilterExpression())
+                .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10']"
+                        + " && docEnabled == 'true'");
+    }
+
+    @Test
+    void 拼接filterExpression_PUBLIC级_再加visibility条件() {
+        RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.PUBLIC);
+        assertThat(scope.toFilterExpression())
+                .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10']"
+                        + " && docEnabled == 'true' && visibility == 'PUBLIC'");
     }
 }

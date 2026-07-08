@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +36,8 @@ public class RetrievalScopeResolver {
         try {
             List<Long> kbIds = knowledgeBaseRepository.findByAppIdAndEnabledTrue(appId)
                     .stream().map(KnowledgeBase::getId).toList();
-            return new RetrievalScope(tenantId, appId, kbIds);
+            // 访问级别兜底 PUBLIC（最小权限）；由鉴权拦截器按路径写入 TenantContext 的接线在 Task 3 完成
+            return new RetrievalScope(tenantId, appId, kbIds, DocumentVisibility.PUBLIC);
         } catch (Exception e) {
             log.warn("检索范围解析失败，fail-soft 为空范围 appId={}", appId, e);
             return RetrievalScope.empty(tenantId);
