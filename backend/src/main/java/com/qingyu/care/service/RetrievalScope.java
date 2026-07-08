@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
  * 检索范围值对象：当前请求合法可检索的（租户、应用、enabled 知识库集合、调用方访问级别）。
  * isEmpty() 为真表示无合法范围（无应用上下文 / 无启用知识库），检索应短路返回空。
  * accessLevel：PUBLIC=只见公开文档，INTERNAL=全见（按鉴权路径判定，见 RetrievalScopeResolver）。
+ * accessLevel 为 null 时不加 visibility 条件（仅出现在直接构造的测试场景；生产路径由 Resolver 兜底 PUBLIC）。
  *
  * @author ruan
  */

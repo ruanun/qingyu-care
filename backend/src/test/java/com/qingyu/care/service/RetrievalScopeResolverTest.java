@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,18 @@ class RetrievalScopeResolverTest {
         assertThat(scope.tenantId()).isEqualTo(1L);
         assertThat(scope.appId()).isEqualTo(2L);
         assertThat(scope.kbIds()).containsExactly(10L, 11L);
+        assertThat(scope.accessLevel()).isEqualTo(DocumentVisibility.PUBLIC);   // 未设上下文 → 兜底 PUBLIC
+    }
+
+    @Test
+    void 上下文有访问级别_原样传导() {
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+        TenantContext.setAccessLevel(DocumentVisibility.INTERNAL);
+        when(knowledgeBaseRepository.findByAppIdAndEnabledTrue(2L))
+                .thenReturn(List.of(KnowledgeBase.builder().id(10L).name("库A").enabled(true).build()));
+
+        assertThat(resolver.resolve().accessLevel()).isEqualTo(DocumentVisibility.INTERNAL);
     }
 
     @Test

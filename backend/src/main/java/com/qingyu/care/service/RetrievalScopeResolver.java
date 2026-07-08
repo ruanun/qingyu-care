@@ -33,11 +33,13 @@ public class RetrievalScopeResolver {
             log.debug("无应用上下文，检索范围为空 tenantId={}", tenantId);
             return RetrievalScope.empty(tenantId);
         }
+        // 访问级别缺省按 PUBLIC 兜底（最小权限）；由鉴权拦截器按路径写入，不接受请求参数
+        DocumentVisibility accessLevel = TenantContext.getAccessLevel() != null
+                ? TenantContext.getAccessLevel() : DocumentVisibility.PUBLIC;
         try {
             List<Long> kbIds = knowledgeBaseRepository.findByAppIdAndEnabledTrue(appId)
                     .stream().map(KnowledgeBase::getId).toList();
-            // 访问级别兜底 PUBLIC（最小权限）；由鉴权拦截器按路径写入 TenantContext 的接线在 Task 3 完成
-            return new RetrievalScope(tenantId, appId, kbIds, DocumentVisibility.PUBLIC);
+            return new RetrievalScope(tenantId, appId, kbIds, accessLevel);
         } catch (Exception e) {
             log.warn("检索范围解析失败，fail-soft 为空范围 appId={}", appId, e);
             return RetrievalScope.empty(tenantId);

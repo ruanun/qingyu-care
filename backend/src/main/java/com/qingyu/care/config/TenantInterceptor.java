@@ -1,6 +1,7 @@
 package com.qingyu.care.config;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.enums.UserRole;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -22,7 +23,10 @@ public class TenantInterceptor implements HandlerInterceptor {
         if (StpUtil.isLogin()) {
             Long userId = StpUtil.getLoginIdAsLong();
             TenantContext.setUserId(userId);
-            
+
+            // 管理后台已登录成员：受信，全见（含 INTERNAL 文档）
+            TenantContext.setAccessLevel(DocumentVisibility.INTERNAL);
+
             Object tenantId = StpUtil.getSession().get("tenantId");
             if (tenantId != null) {
                 TenantContext.setTenantId(Long.valueOf(tenantId.toString()));

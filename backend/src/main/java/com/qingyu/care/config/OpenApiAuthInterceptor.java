@@ -3,6 +3,7 @@ package com.qingyu.care.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.dto.open.OpenErrorResponse;
 import com.qingyu.care.entity.Application;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.entity.SysAuditLog;
 import com.qingyu.care.service.AuditLogService;
@@ -53,11 +54,13 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
             String apiKey = request.getHeader("X-Api-Key");
             Application app;
             if (apiKey != null && !apiKey.isBlank()) {
-                // 服务端到服务端：appKey + secret
+                // 服务端到服务端：appKey + secret（持密钥即受信，可见 INTERNAL 文档）
                 app = openApiAuthService.authenticate(appId, apiKey);
+                TenantContext.setAccessLevel(DocumentVisibility.INTERNAL);
             } else {
-                // 浏览器 Widget：appKey + Origin 白名单（浏览器强制带 Origin，不可被页面脚本伪造）
+                // 浏览器 Widget：appKey + Origin 白名单（匿名访客，仅见 PUBLIC 文档）
                 app = openApiAuthService.authenticateByOrigin(appId, resolveOrigin(request));
+                TenantContext.setAccessLevel(DocumentVisibility.PUBLIC);
             }
             TenantContext.setTenantId(app.getTenant().getId());
             TenantContext.setAppId(app.getId());
