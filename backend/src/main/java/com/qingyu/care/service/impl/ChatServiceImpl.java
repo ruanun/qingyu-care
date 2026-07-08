@@ -117,10 +117,10 @@ public class ChatServiceImpl implements ChatService {
         // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         
-        // 计算置信度
-        double maxScore = relevantDocs.isEmpty() ? 0.0 : 
+        // 计算置信度（M4 PgVectorStore 写入的是 "distance" 键，须换算，见 resolveConfidenceScore）
+        double maxScore = relevantDocs.isEmpty() ? 0.0 :
             relevantDocs.stream()
-                .mapToDouble(doc -> (Double) doc.getMetadata().getOrDefault("score", 0.0))
+                .mapToDouble(ChatServiceImpl::resolveConfidenceScore)
                 .max()
                 .orElse(0.0);
         
@@ -167,7 +167,7 @@ public class ChatServiceImpl implements ChatService {
                 .knowledgeHits(relevantDocs.stream()
                         .map(doc -> ChatResponse.KnowledgeHit.builder()
                                 .content(truncateContent(doc.getContent(), 100))
-                                .score((Double) doc.getMetadata().getOrDefault("score", 0.0))
+                                .score(resolveConfidenceScore(doc))
                                 .source((String) doc.getMetadata().getOrDefault("source", "unknown"))
                                 .build())
                         .collect(Collectors.toList()))
@@ -217,6 +217,27 @@ public class ChatServiceImpl implements ChatService {
                 .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
                         ? cr.getResult().getOutput().getContent() : null)
                 .doFinally(sig -> onTokensUsed.accept(tokens.get()));
+    }
+
+    /**
+     * 纯方法：从检索命中的 metadata 解析置信度（static，免容器单测，与 meterContentStream 同惯例）。
+     *
+     * M4 说明：PgVectorStore 的 DocumentRowMapper 把余弦距离写入键 "distance"（Float 类型），
+     * 从不写 "score"——历史代码读 "score" 导致置信度恒 0、默认低置信规则（threshold 0.3）恒触发转人工。
+     * 换算：score = 1 - distance（COSINE_DISTANCE 语义，与 similarityThreshold 自洽），钳位 [0,1]。
+     * "score" 键存在时优先（兼容自定义写入）；两键皆无（如关键词路命中）返回 0——关键词命中的
+     * 置信度语义未知，为已知局限。一律按 Number 读取，防 Float/Double 强转 CCE。
+     */
+    public static double resolveConfidenceScore(Document doc) {
+        Object score = doc.getMetadata().get("score");
+        if (score instanceof Number n) {
+            return n.doubleValue();
+        }
+        Object distance = doc.getMetadata().get("distance");
+        if (distance instanceof Number n) {
+            return Math.max(0.0, Math.min(1.0, 1.0 - n.doubleValue()));
+        }
+        return 0.0;
     }
 
     @Override
