@@ -6,7 +6,8 @@ import { Loader2, Target, FileSearch, FileX } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { analyticsService } from '@/api/analytics';
-import type { CoverageAnalytics, MissPage } from '@/api/analytics';
+import type { CoverageAnalytics, MissedQuestion } from '@/api/analytics';
+import type { PageResponse } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 
 interface Props { days: number; appId?: number }
@@ -14,10 +15,18 @@ interface Props { days: number; appId?: number }
 /** 知识覆盖率 Tab：命中率趋势 + 文档命中排行 + 零命中文档 + 未命中提问明细 */
 const CoverageTab: React.FC<Props> = ({ days, appId }) => {
     const [data, setData] = useState<CoverageAnalytics | null>(null);
-    const [misses, setMisses] = useState<MissPage | null>(null);
+    const [misses, setMisses] = useState<PageResponse<MissedQuestion> | null>(null);
     const [missPage, setMissPage] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
     const { toast } = useToast();
+
+    // days/appId 变化时在渲染期同步重置页码（避免 set-state-in-effect 反模式与旧页码多余请求）
+    const [prevScopeKey, setPrevScopeKey] = useState(`${days}|${appId ?? ''}`);
+    const scopeKey = `${days}|${appId ?? ''}`;
+    if (scopeKey !== prevScopeKey) {
+        setPrevScopeKey(scopeKey);
+        setMissPage(0);
+    }
 
     const fetchData = useCallback(async () => {
         setIsLoading(true);
@@ -41,8 +50,6 @@ const CoverageTab: React.FC<Props> = ({ days, appId }) => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
     useEffect(() => { fetchMisses(); }, [fetchMisses]);
-    // days/appId 变化时回到第 0 页
-    useEffect(() => { setMissPage(0); }, [days, appId]);
 
     if (isLoading && !data) {
         return <div className="flex h-64 items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;

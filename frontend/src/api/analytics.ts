@@ -1,5 +1,5 @@
 import api from './client';
-import type { ApiResponse } from '../types';
+import type { ApiResponse, PageResponse } from '../types';
 
 export interface UsageSummary {
     totalCalls: number;
@@ -82,11 +82,6 @@ export interface CoverageAnalytics {
 }
 
 export interface MissedQuestion { content: string; createdAt: string; sessionId: string }
-export interface MissPage {
-    content: MissedQuestion[];
-    totalPages: number;
-    totalElements: number;
-}
 
 export const analyticsService = {
     // 获取用量统计（days ∈ 7/30/90；appId 仅租户视角有效）
@@ -106,7 +101,7 @@ export const analyticsService = {
         api.get('/analytics/coverage', { params: { days, ...(appId ? { appId } : {}) } }),
 
     // 未命中提问明细（分页）
-    getMisses: (days: number, page: number, appId?: number): Promise<ApiResponse<MissPage>> =>
+    getMisses: (days: number, page: number, appId?: number): Promise<ApiResponse<PageResponse<MissedQuestion>>> =>
         api.get('/analytics/coverage/misses', {
             params: { days, page, size: 20, ...(appId ? { appId } : {}) },
         }),
