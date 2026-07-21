@@ -78,4 +78,14 @@ class AnalyticsRollupServiceTest {
         assertThatThrownBy(() -> service.backfill(LocalDate.of(2024, 1, 1), LocalDate.of(2026, 7, 1)))
                 .isInstanceOf(BusinessException.class);
     }
+
+    @Test
+    void 回填_区间边界_366天放行_367天拒绝() {
+        LocalDate from = LocalDate.of(2026, 1, 1);
+        // 闭区间 366 天（between=365）应放行
+        assertThat(service.backfill(from, from.plusDays(365))).isEqualTo(366);
+        // 闭区间 367 天（between=366）应拒绝
+        assertThatThrownBy(() -> service.backfill(from, from.plusDays(366)))
+                .isInstanceOf(BusinessException.class);
+    }
 }

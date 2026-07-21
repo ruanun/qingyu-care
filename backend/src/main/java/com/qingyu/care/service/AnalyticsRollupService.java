@@ -48,7 +48,8 @@ public class AnalyticsRollupService {
         if (from == null || to == null || from.isAfter(to)) {
             throw new BusinessException("回填区间非法：from 须早于等于 to");
         }
-        if (ChronoUnit.DAYS.between(from, to) > 366) {
+        // 闭区间天数 = DAYS.between + 1，上限 366 天（含闰年一整年）即 between 最多 365
+        if (ChronoUnit.DAYS.between(from, to) > 365) {
             throw new BusinessException("回填区间过长（最多 366 天）");
         }
         int ok = 0;
