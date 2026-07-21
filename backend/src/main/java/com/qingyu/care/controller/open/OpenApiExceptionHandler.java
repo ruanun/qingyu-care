@@ -1,6 +1,7 @@
 package com.qingyu.care.controller.open;
 
 import com.qingyu.care.dto.open.OpenErrorResponse;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,17 @@ public class OpenApiExceptionHandler {
     public ResponseEntity<OpenErrorResponse> handleNotFound(ResourceNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(OpenErrorResponse.of(404, e.getMessage()));
+    }
+
+    /**
+     * 业务校验异常（如反馈值非法）：GlobalExceptionHandler 把它封装成 200+body-code，
+     * 但本处理器专为开放 API 走真实 HTTP 状态码——BusinessException 自带的 code 本身
+     * 就是合法 HTTP 状态码（见其构造用法，默认 400），直接复用，不落到下方通用 500 兜底。
+     */
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<OpenErrorResponse> handleBusiness(BusinessException e) {
+        return ResponseEntity.status(e.getCode())
+                .body(OpenErrorResponse.of(e.getCode(), e.getMessage()));
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, IllegalArgumentException.class})
