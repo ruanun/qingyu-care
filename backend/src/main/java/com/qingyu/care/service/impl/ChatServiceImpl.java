@@ -188,17 +188,33 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public Flux<String> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed) {
+        return streamChat(request, onTokensUsed, id -> { });
+    }
+
+    @Override
+    public Flux<String> streamChat(ChatRequest request,
+                                   java.util.function.IntConsumer onTokensUsed,
+                                   java.util.function.LongConsumer onAiMessageSaved) {
+        // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索）；
+        // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
         ChatSession session = getOrCreateSession(request);
         ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         String context = buildContext(relevantDocs);
         List<Message> messages = buildMessages(session, request.getMessage(), context);
 
+        double maxScore = relevantDocs.isEmpty() ? 0.0 :
+                relevantDocs.stream().mapToDouble(ChatServiceImpl::resolveConfidenceScore).max().orElse(0.0);
+        String hitDocumentIds = extractHitDocumentIds(relevantDocs);
+        String userMessage = request.getMessage();
+
         ChatClient chatClient = modelRouterService.getDefaultChatClient();
         // stream().chatResponse() 返回 Flux<org.springframework.ai.chat.model.ChatResponse>
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 chatClient.prompt().messages(messages).stream().chatResponse();
-        return meterContentStream(source, onTokensUsed);
+        return withStreamPersistence(meterContentStream(source, onTokensUsed),
+                full -> persistStreamedMessages(session, userMessage, full, maxScore,
+                        hitDocumentIds, onAiMessageSaved));
     }
 
     /**
@@ -223,6 +239,39 @@ public class ChatServiceImpl implements ChatService {
                 .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
                         ? cr.getResult().getOutput().getContent() : null)
                 .doFinally(sig -> onTokensUsed.accept(tokens.get()));
+    }
+
+    /**
+     * 纯方法：透传内容流并累积完整文本，仅 onComplete 时回调（error/cancel 不回调——
+     * 客户端中断的半截回复不落库）。static 免容器单测，同 meterContentStream 惯例。
+     */
+    static Flux<String> withStreamPersistence(Flux<String> content,
+                                              java.util.function.Consumer<String> onCompleteFull) {
+        StringBuilder acc = new StringBuilder();
+        return content
+                .doOnNext(acc::append)
+                .doOnComplete(() -> onCompleteFull.accept(acc.toString()));
+    }
+
+    /**
+     * 流式补落库（Reactor 线程执行：ChatMessage 不继承 BaseTenantEntity，persist 不依赖租户过滤器）。
+     * fail-soft：落库失败仅告警，不影响已送达的回复；回调必达（失败/空回复回 -1）。
+     * 已知取舍：流式 AI 消息不落 tokenUsage（消息级 token 仅非流式；用量计量仍走 onTokensUsed → SysApiUsage）。
+     */
+    private void persistStreamedMessages(ChatSession session, String userMessage, String aiResponse,
+                                         double confidence, String hitDocumentIds,
+                                         java.util.function.LongConsumer onAiMessageSaved) {
+        long savedId = -1L;
+        try {
+            if (aiResponse != null && !aiResponse.isEmpty()) {
+                ChatMessage aiMsg = saveMessages(session, userMessage, aiResponse,
+                        confidence, hitDocumentIds, null, false);
+                savedId = aiMsg.getId();
+            }
+        } catch (Exception e) {
+            log.warn("流式消息落库失败 sessionId={}: {}", session.getSessionId(), e.getMessage());
+        }
+        onAiMessageSaved.accept(savedId);
     }
 
     /**

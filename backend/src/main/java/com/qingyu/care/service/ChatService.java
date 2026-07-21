@@ -33,7 +33,15 @@ public interface ChatService {
      */
     reactor.core.publisher.Flux<String> streamChat(com.qingyu.care.dto.ChatRequest request,
                                                    java.util.function.IntConsumer onTokensUsed);
-    
+
+    /**
+     * 流式聊天（计量 + 落库回调）。onAiMessageSaved 在流正常完成、消息落库后以 AI 消息 ID 回调；
+     * 落库失败或空回复以 -1 回调（回调必达，SSE meta 事件不悬挂）。error/cancel 不落库不回调。
+     */
+    reactor.core.publisher.Flux<String> streamChat(com.qingyu.care.dto.ChatRequest request,
+                                                   java.util.function.IntConsumer onTokensUsed,
+                                                   java.util.function.LongConsumer onAiMessageSaved);
+
     /**
      * 获取会话信息
      */
