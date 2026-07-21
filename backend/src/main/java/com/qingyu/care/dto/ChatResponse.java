@@ -20,7 +20,12 @@ public class ChatResponse {
      * 会话ID
      */
     private String sessionId;
-    
+
+    /**
+     * 落库后的 AI 消息 ID（供反馈接口定位；静默/转人工提示等未落 AI 消息的路径为 null）
+     */
+    private Long messageId;
+
     /**
      * AI回复内容
      */

@@ -124,10 +124,13 @@ public class ChatServiceImpl implements ChatService {
                 .max()
                 .orElse(0.0);
         
-        // 如果知识库未命中且不允许自由发挥
+        // 如果知识库未命中且不允许自由发挥（兜底回复也落库：fallback 标记 + messageId 回传）
         if (relevantDocs.isEmpty() && Boolean.FALSE.equals(strategy.getAllowNoKnowledge())) {
+            ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
+                    strategy.getFallbackMessage(), 0.0, null, null, true);
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
+                    .messageId(fallbackMsg.getId())
                     .content(strategy.getFallbackMessage())
                     .confidenceScore(0.0)
                     .suggestHandover(false)
@@ -154,12 +157,15 @@ public class ChatServiceImpl implements ChatService {
                 ? aiResp.getMetadata().getUsage().getTotalTokens().intValue()
                 : null;
 
-        // 保存消息
-        saveMessages(session, request.getMessage(), response, maxScore);
+        // 保存消息（埋点：命中文档 + token 用量）
+        String hitDocumentIds = extractHitDocumentIds(relevantDocs);
+        ChatMessage aiMsg = saveMessages(session, request.getMessage(), response, maxScore,
+                hitDocumentIds, tokenUsage, false);
 
         // 构建响应（tokenUsage 由开放控制器用于计量；内部对话同样填入供前端展示）
         return ChatResponse.builder()
                 .sessionId(session.getSessionId())
+                .messageId(aiMsg.getId())
                 .content(response)
                 .confidenceScore(maxScore)
                 .tokenUsage(tokenUsage)
@@ -238,6 +244,27 @@ public class ChatServiceImpl implements ChatService {
             return Math.max(0.0, Math.min(1.0, 1.0 - n.doubleValue()));
         }
         return 0.0;
+    }
+
+    /**
+     * 纯方法：从检索命中 metadata 提取去重升序的 documentId，序列化为 JSON 数组（如 "[3,12]"）。
+     * 空命中返回 null（覆盖率口径：hit_document_ids 非空即命中）。static 免容器单测，同 meterContentStream 惯例。
+     */
+    static String extractHitDocumentIds(List<Document> docs) {
+        List<Long> ids = docs.stream()
+                .map(d -> d.getMetadata().get("documentId"))
+                .filter(java.util.Objects::nonNull)
+                .map(Object::toString)
+                .filter(s -> !s.isEmpty() && s.chars().allMatch(Character::isDigit))
+                .map(Long::parseLong)
+                .distinct()
+                .sorted()
+                .toList();
+        if (ids.isEmpty()) {
+            return null;
+        }
+        return ids.stream().map(String::valueOf)
+                .collect(Collectors.joining(",", "[", "]"));
     }
 
     @Override
@@ -414,7 +441,13 @@ public class ChatServiceImpl implements ChatService {
         return messages;
     }
     
-    private void saveMessages(ChatSession session, String userMessage, String aiResponse, double confidence) {
+    /**
+     * 保存一轮问答（用户消息 + AI 回复），返回 AI 消息（供响应回传 messageId）。
+     * fallback 只在兜底时置 TRUE（其余 null 避免 FALSE 噪声；rollup 按 = TRUE 统计）。
+     */
+    private ChatMessage saveMessages(ChatSession session, String userMessage, String aiResponse,
+                                     double confidence, String hitDocumentIds,
+                                     Integer tokenUsage, boolean fallback) {
         // 保存用户消息
         ChatMessage userMsg = ChatMessage.builder()
                 .session(session)
@@ -422,15 +455,18 @@ public class ChatServiceImpl implements ChatService {
                 .content(userMessage)
                 .build();
         messageRepository.save(userMsg);
-        
-        // 保存AI回复
+
+        // 保存AI回复（埋点：命中文档 + token + 兜底标记）
         ChatMessage aiMsg = ChatMessage.builder()
                 .session(session)
                 .role(MessageRole.ASSISTANT)
                 .content(aiResponse)
                 .confidenceScore(confidence)
+                .hitDocumentIds(hitDocumentIds)
+                .tokenUsage(tokenUsage)
+                .fallback(fallback ? Boolean.TRUE : null)
                 .build();
-        messageRepository.save(aiMsg);
+        return messageRepository.save(aiMsg);
     }
     
     /**

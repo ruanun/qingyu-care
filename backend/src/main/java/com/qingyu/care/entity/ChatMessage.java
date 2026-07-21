@@ -65,6 +65,24 @@ public class ChatMessage {
     private Integer tokenUsage;
 
     /**
+     * 命中的知识文档 IDs（JSON 数组，如 [3,12]；null = 未命中/未检索。覆盖率口径：非空即命中）
+     */
+    @Column(name = "hit_document_ids", length = 1000)
+    private String hitDocumentIds;
+
+    /**
+     * 用户反馈：1=赞 / -1=踩 / null=未评价（重复提交覆盖）
+     */
+    @Column(name = "feedback")
+    private Integer feedback;
+
+    /**
+     * 兜底回复标记（知识未命中且策略不允许自由发挥时返回 fallbackMessage 的 AI 消息为 TRUE，其余为 null）
+     */
+    @Column(name = "fallback")
+    private Boolean fallback;
+
+    /**
      * 是否已读
      */
     @Column(name = "is_read")

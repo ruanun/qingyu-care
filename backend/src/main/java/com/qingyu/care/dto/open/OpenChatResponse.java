@@ -19,6 +19,11 @@ public class OpenChatResponse {
     private String sessionId;
 
     /**
+     * AI 消息 ID（提交赞/踩反馈时使用）
+     */
+    private Long messageId;
+
+    /**
      * AI 回复内容
      */
     private String reply;
@@ -34,6 +39,7 @@ public class OpenChatResponse {
     public static OpenChatResponse from(ChatResponse r) {
         return OpenChatResponse.builder()
                 .sessionId(r.getSessionId())
+                .messageId(r.getMessageId())
                 .reply(r.getContent())
                 .handoverSuggested(r.isSuggestHandover())
                 .build();
