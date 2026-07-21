@@ -17,7 +17,7 @@ Phase 4.4「分析与优化」的前三个子项，一个 spec 闭环（共享�
 - **对话质量评估**：规则指标（置信度分布、兜底回复率、转人工率、AI 解决率）+ 消息级用户反馈（赞/踩，Widget/开放 API/管理后台三入口）。
 - **热点问题统计**：zhparser 关键词词频 TopN + 高频原始问句 TopN。
 - **知识覆盖率**：问题侧（提问命中率趋势 + 未命中问题清单=知识缺口）+ 文档侧（文档命中排行 + 零命中文档=死知识）。
-- **配套改进（前置）**：流式对话（`streamChat`）补消息落库——Widget 与开放 API SSE 走的都是流式，不补则全部缺席统计；AI 消息落 `hit_document_ids` 与 `tokenUsage` 埋点。
+- **配套改进（前置）**：流式对话（`streamChat`）补消息落库——开放 API SSE（`/open/v1/chat/stream`）与后台流式端点均不落消息，不补则流式对话缺席统计（注：Widget 当前走同步 `completions`，不受此项影响）；AI 消息落 `hit_document_ids` 与 `tokenUsage` 埋点。
 
 **非目标（YAGNI）**：
 - A/B 测试（独立 spec）。
@@ -63,8 +63,8 @@ SSE 目前是 `Flux<String>` 纯 data 事件，客户端拿不到落库后的 me
 
 ### 4.2 反馈链路
 - 开放 API：`POST /open/v1/chat/feedback`，body `{sessionId, messageId, feedback}`（feedback ∈ {1, -1}；可重复提交，覆盖语义）。校验 messageId 归属该 sessionId 且 session 归属当前 app（防跨会话/跨租户投毒）。
-- 管理后台：`POST /v1/sessions/{sessionId}/messages/{messageId}/feedback`（会话详情页人工标注）。
-- Widget：每条 AI 回复完成后（收到 meta 事件）渲染赞/踩按钮 → 调开放反馈端点。**改动 `widget/src/` 后必须重新 build 并提交 `widget.js`**。
+- 管理后台：`POST /v1/chat/session/{sessionId}/message/{messageId}/feedback`（沿用 ChatController 既有路径惯例，会话详情页人工标注）。
+- Widget：当前走同步 `completions`，直接用响应新增的 `messageId` 在每条 AI 回复下渲染赞/踩按钮 → 调开放反馈端点（meta 事件仅服务第三方 SSE 接入方）。**改动 `widget/src/` 后必须重新 build 并提交 `widget.js`**。
 
 ### 4.3 rollup 预聚合（三张日粒度表）
 
