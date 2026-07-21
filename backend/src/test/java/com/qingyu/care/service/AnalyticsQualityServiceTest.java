@@ -22,6 +22,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -102,5 +104,21 @@ class AnalyticsQualityServiceTest {
 
         assertThat(dto.scope()).isEqualTo("PLATFORM");
         verify(qualityRepository).aggregateDaily(any(), isNull(), isNull());
+    }
+
+    @Test
+    void 热点问句实时窗口_从今日起算_热词窗口_从昨日截止推算() {
+        when(authService.isPlatformAdmin()).thenReturn(true);
+        when(hotKeywordRepository.topKeywords(any(), isNull(), isNull(), any())).thenReturn(List.of());
+        when(messageRepository.topQuestions(any(), isNull(), isNull(), anyInt())).thenReturn(List.of());
+
+        service.getHotTopics(7, null);
+
+        LocalDate cutoff = LocalDate.now().minusDays(1);
+        // 热词（rollup）窗口：[cutoff-6, cutoff] 共 7 天
+        verify(hotKeywordRepository).topKeywords(eq(cutoff.minusDays(6)), isNull(), isNull(), any());
+        // 高频问句（实时）窗口：[今日-6, 今日] 共 7 天，不复用 rollup 起点
+        verify(messageRepository).topQuestions(eq(LocalDate.now().minusDays(6).atStartOfDay()),
+                isNull(), isNull(), anyInt());
     }
 }

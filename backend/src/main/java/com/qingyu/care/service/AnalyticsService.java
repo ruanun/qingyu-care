@@ -55,6 +55,12 @@ public class AnalyticsService {
     /** 排行榜展示条数上限 */
     private static final int TOP_N = 10;
 
+    /** 热词展示条数 */
+    private static final int HOT_KEYWORD_TOP_N = 20;
+
+    /** 高频问句展示条数 */
+    private static final int HOT_QUESTION_TOP_N = 10;
+
     private final SysApiUsageRepository usageRepository;
     private final ChatSessionRepository sessionRepository;
     private final TenantRepository tenantRepository;
@@ -239,11 +245,14 @@ public class AnalyticsService {
         Scope sc = resolveScope(appIdFilter);
 
         List<HotTopicsDTO.KeywordItem> keywords = hotKeywordRepository
-                .topKeywords(from, sc.tenantId(), sc.appId(), PageRequest.of(0, 20)).stream()
+                .topKeywords(from, sc.tenantId(), sc.appId(), PageRequest.of(0, HOT_KEYWORD_TOP_N)).stream()
                 .map(r -> new HotTopicsDTO.KeywordItem(r.getKeyword(), r.getFreq()))
                 .toList();
+        // 高频问句为实时明细（含今日）：窗口独立按今日起算 span 天，与 misses 口径一致
+        //（rollup 的 from 以昨日为截止推算，直接复用会多含 1 天）
+        LocalDateTime realtimeFrom = LocalDate.now().minusDays(span - 1L).atStartOfDay();
         List<HotTopicsDTO.QuestionItem> questions = messageRepository
-                .topQuestions(from.atStartOfDay(), sc.tenantId(), sc.appId(), 10).stream()
+                .topQuestions(realtimeFrom, sc.tenantId(), sc.appId(), HOT_QUESTION_TOP_N).stream()
                 .map(r -> new HotTopicsDTO.QuestionItem(r.getContent(), r.getCnt()))
                 .toList();
         return new HotTopicsDTO(keywords, questions, sc.platform() ? "PLATFORM" : "TENANT", cutoff);
