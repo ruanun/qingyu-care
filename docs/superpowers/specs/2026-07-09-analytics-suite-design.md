@@ -2,7 +2,7 @@
 title: 分析三件套（对话质量评估 + 热点问题统计 + 知识覆盖率）设计
 author: ruan
 date: 2026-07-09
-status: 设计完成，待实现
+status: 已实现
 ---
 
 # 分析三件套（对话质量评估 + 热点问题统计 + 知识覆盖率）设计
@@ -131,3 +131,24 @@ SSE 目前是 `Flux<String>` 纯 data 事件，客户端拿不到落库后的 me
 - rollup 为 T+1：看板不含当日数据，页面明示统计截止日期。
 - 高频问句按内容精确归组，改一个字就算两句——配合关键词词频互补使用。
 - 反馈可被端用户重复覆盖（同一 messageId 最新值生效），不做防刷（消息归属校验已挡跨会话投毒，单会话内刷自己消息的动机弱）。
+
+## 8. 实施偏差与口径澄清记录
+
+Task 1-8 实施与验收过程中发现的、与本 spec 字面描述有出入或需要补充澄清的四点，逐条记录以便后续维护对齐：
+
+1. **错误语义澄清**：反馈接口（开放 `POST /open/v1/chat/feedback`、后台 `POST /v1/chat/session/{sessionId}/message/{messageId}/feedback`）的错误分两类——
+   - **404**：归属越权，覆盖「消息不存在」「messageId 与 sessionId 不匹配」「跨应用」三种情况，统一按 404 处理、不区分具体原因，避免向调用方泄露消息是否存在（`ChatFeedbackService.submitFeedback` 三处 `ResourceNotFoundException` 均传入相同的「消息」+ messageId 措辞）；
+   - **400**：业务非法，覆盖「`feedback` 不在 `{1, -1}` 值域」「目标消息非 `ASSISTANT` 角色（不可评价用户自己的提问）」两种情况，均抛 `BusinessException`（默认 code=400）。
+
+   两类异常在管理端与开放 API 两条链路上的 HTTP 语义不同：`BusinessException` 经 `GlobalExceptionHandler.handleBusinessException` 处理时不带 `@ResponseStatus`，返回 **HTTP 200 + body `{code:400,...}`**（管理后台前端按 body code 判断）；经 `OpenApiExceptionHandler.handleBusiness` 处理时直接 `ResponseEntity.status(e.getCode())`，返回**真实 HTTP 400**。`ResourceNotFoundException` 在两条链路下均返回真实 HTTP 404（`GlobalExceptionHandler` 用了 `@ResponseStatus(NOT_FOUND)`，`OpenApiExceptionHandler` 显式 `status(404)`）。详见第 3 条对 `OpenApiExceptionHandler` 缺口的记录——此差异正是该缺口暴露的诱因。
+
+2. **质量指标归因口径**：`stat_quality_daily` 的 `session_count`/`handover_count`/`resolved_count`/`ended_count` 四列由 `AnalyticsRollupDao.insertQuality` 的会话侧子查询按 **`chat_session.created_at`（会话创建日）**归因，而非会话状态变化（转人工/结束）实际发生的日期——即一个会话若创建于 D 日、次日才转人工或结束，`handover_count`/`ended_count` 仍计入 D 日而非次日。这一口径带来两个连带影响：
+   - `AnalyticsRollupScheduler` 每日定时任务固定重跑「昨日 + 前日」两天（近 2 天），用于吸收创建日与状态变化日相邻的短期漂移；但会话若创建后超过 2 天才终态化（长尾），对应 D 日的 rollup 行不会被定时任务自动补算，需依赖管理员手动调用 `POST /v1/analytics/rollup/backfill?from=&to=` 重跑该日；
+   - `AnalyticsRollupService.backfill` 未对 `to` 做「不得晚于今日」的上界校验（仅校验 `from<=to` 与区间跨度 ≤366 天），因此理论上可以传入 `to=今日` 把当日尚未走完生命周期的会话提前计入 rollup——这是管理员主动触发才会发生的有意行为，非缺陷，但使用回填端点时需注意当日数据尚不完整。
+
+3. **实施中发现并修复的生产缺陷**：`OpenApiExceptionHandler`（`controller/open/OpenApiExceptionHandler.java`，`@RestControllerAdvice(basePackages="com.qingyu.care.controller.open")` + `@Order(HIGHEST_PRECEDENCE)`，仅作用于开放 API 包、优先级高于全局的 `GlobalExceptionHandler`）在 Task 6 集成测试补齐前**未显式处理 `BusinessException`**，导致该异常落入其兜底的 `Exception.class` 处理器，被误判并返回 HTTP 500——具体表现为开放反馈端点 `feedback` 值非法（不在 `{1,-1}`）或对非 `ASSISTANT` 消息评价时，本应返回 400 却返回 500。已在 Task 6（commit `c5816e0`）补 `handleBusiness(BusinessException)` handler，按 `e.getCode()` 映射真实 HTTP 状态码（该 code 本身即合法 HTTP 状态码，`BusinessException` 默认构造为 400），并配 `OpenApiExceptionHandlerTest` 单测覆盖回归。
+
+4. **流式已知取舍（Task 2 落地时确认）**：
+   - 流式 AI 消息落库时 `tokenUsage` 固定为 `null`——Spring AI 流式响应逐 chunk 到达，不像同步响应那样在末尾附带完整 usage 统计，本轮未额外接入流式 token 计数管线，故流式对话不贡献 token 用量到分析指标（不影响开放 API 的计量口径，计量走独立的 `onTokensUsed` 回调，与本 spec 的落库统计是两条链路）；
+   - 流式响应过程中若客户端主动取消（cancel）或链路中途出错（error），已产生的半截 AI 回复内容**不落库**——`withStreamPersistence`（`ChatServiceImpl`）用 `doOnComplete` 而非 `doFinally` 挂落库回调，只有流正常完成才触发，异常/取消场景不会执行，避免半截、误导性的回复污染统计与会话历史；
+   - 流式落库使用 `TransactionTemplate` 显式管理事务边界（而非 `@Transactional`，因回调运行在 Reactor 线程、脱离原始请求线程的代理调用链），保证「用户提问 + AI 完整回复」两条消息落库的原子性——要么都成功、要么都不写，不出现只落用户提问缺 AI 回复的半截会话。
