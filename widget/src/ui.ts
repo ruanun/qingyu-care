@@ -6,9 +6,13 @@ export interface UiHandlers {
   onHandover: () => void;
 }
 
+export interface BotFeedback {
+  onFeedback: (value: 1 | -1) => void;
+}
+
 export interface WidgetUi {
   addUserMessage: (text: string) => void;
-  addBotMessage: (text: string) => void;
+  addBotMessage: (text: string, feedback?: BotFeedback) => void;
   setTyping: (on: boolean) => void;
   setInputEnabled: (on: boolean) => void;
 }
@@ -92,8 +96,32 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   function addUserMessage(text: string) {
     appendMsg(text, 'user');
   }
-  function addBotMessage(text: string) {
-    appendMsg(text, 'bot');
+  function addBotMessage(text: string, feedback?: BotFeedback) {
+    const row = appendMsg(text, 'bot');
+    if (feedback) {
+      const bar = document.createElement('div');
+      bar.className = 'qy-feedback';
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.textContent = '👍';
+      up.setAttribute('aria-label', '有帮助');
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.textContent = '👎';
+      down.setAttribute('aria-label', '没帮助');
+      const pick = (value: 1 | -1, chosen: HTMLButtonElement) => {
+        feedback.onFeedback(value);
+        up.disabled = true;
+        down.disabled = true;
+        chosen.classList.add('active');
+      };
+      up.addEventListener('click', () => pick(1, up));
+      down.addEventListener('click', () => pick(-1, down));
+      bar.appendChild(up);
+      bar.appendChild(down);
+      row.appendChild(bar);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
   }
 
   let typingRow: HTMLDivElement | null = null;

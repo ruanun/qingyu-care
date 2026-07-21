@@ -52,4 +52,18 @@ describe('api', () => {
     expect(brand.appName).toBe('A');
     expect(f.mock.calls[0][0]).toBe('https://host/api/open/v1/widget/config');
   });
+
+  it('feedback 提交到开放反馈端点', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createApi(cfg);
+    await api.feedback('s-1', 42, 1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/open/v1/chat/feedback'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 's-1', messageId: 42, feedback: 1 }),
+      }),
+    );
+  });
 });

@@ -19,6 +19,8 @@ export interface ChatReply {
   sessionId: string;
   reply: string;
   handoverSuggested: boolean;
+  /** AI 消息 ID（提交赞/踩时使用；后端旧版本可能缺省） */
+  messageId?: number;
 }
 
 export function createApi(cfg: WidgetConfig) {
@@ -50,6 +52,15 @@ export function createApi(cfg: WidgetConfig) {
       await fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}/handover`, {
         method: 'POST',
         headers: headers(),
+      });
+    },
+
+    /** 消息反馈（1=赞 / -1=踩）；失败静默（不干扰对话） */
+    async feedback(sessionId: string, messageId: number, value: 1 | -1): Promise<void> {
+      await fetch(`${cfg.apiBase}/open/v1/chat/feedback`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ sessionId, messageId, feedback: value }),
       });
     },
   };

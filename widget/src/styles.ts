@@ -38,6 +38,13 @@ export function buildStyles(themeColor: string): string {
       border: none; background: ${themeColor}; color: #fff; padding: 0 16px; cursor: pointer;
     }
     .qy-input button:disabled { opacity: .5; cursor: not-allowed; }
+    .qy-msg .qy-feedback { display: flex; gap: 4px; margin-top: 4px; }
+    .qy-msg.bot .qy-feedback { justify-content: flex-start; }
+    .qy-feedback button { background: none; border: 1px solid #e5e7eb; border-radius: 10px;
+      cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 8px; opacity: .7; }
+    .qy-feedback button:hover { opacity: 1; }
+    .qy-feedback button:disabled { cursor: default; opacity: .4; }
+    .qy-feedback button.active { opacity: 1; border-color: currentColor; }
     @media (max-width: 480px) {
       .qy-panel { right: 0; bottom: 0; width: 100vw; height: 100vh; border-radius: 0; }
     }

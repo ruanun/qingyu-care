@@ -31,7 +31,13 @@ async function init(): Promise<void> {
     try {
       const reply = await sendWithRetry(message);
       ui.setTyping(false);
-      ui.addBotMessage(reply.reply);
+      const mid = reply.messageId;
+      ui.addBotMessage(
+        reply.reply,
+        mid
+          ? { onFeedback: (v) => void api.feedback(reply.sessionId, mid, v) }
+          : undefined,
+      );
     } catch (e) {
       ui.setTyping(false);
       ui.addBotMessage('抱歉，服务暂时不可用，请稍后再试。');
