@@ -28,8 +28,8 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
             await chatService.submitFeedback(sessionId, msg.id, value);
             setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, feedback: value } : m)));
         } catch (err) {
-            const msg_text = err instanceof Error ? err.message : String(err);
-            toast({ variant: 'destructive', title: '评价失败', description: msg_text });
+            const errMsg = err instanceof Error ? err.message : String(err);
+            toast({ variant: 'destructive', title: '评价失败', description: errMsg });
         }
     };
 

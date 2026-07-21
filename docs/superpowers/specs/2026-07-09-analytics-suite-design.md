@@ -152,3 +152,5 @@ Task 1-8 实施与验收过程中发现的、与本 spec 字面描述有出入�
    - 流式 AI 消息落库时 `tokenUsage` 固定为 `null`——Spring AI 流式响应逐 chunk 到达，不像同步响应那样在末尾附带完整 usage 统计，本轮未额外接入流式 token 计数管线，故流式对话不贡献 token 用量到分析指标（不影响开放 API 的计量口径，计量走独立的 `onTokensUsed` 回调，与本 spec 的落库统计是两条链路）；
    - 流式响应过程中若客户端主动取消（cancel）或链路中途出错（error），已产生的半截 AI 回复内容**不落库**——`withStreamPersistence`（`ChatServiceImpl`）用 `doOnComplete` 而非 `doFinally` 挂落库回调，只有流正常完成才触发，异常/取消场景不会执行，避免半截、误导性的回复污染统计与会话历史；
    - 流式落库使用 `TransactionTemplate` 显式管理事务边界（而非 `@Transactional`，因回调运行在 Reactor 线程、脱离原始请求线程的代理调用链），保证「用户提问 + AI 完整回复」两条消息落库的原子性——要么都成功、要么都不写，不出现只落用户提问缺 AI 回复的半截会话。
+
+5. **覆盖率命中率分母口径变更**：spec 4.3 原写「`hit_question_count / question_count`」；实现改为 `hit_question_count / ai_msg_count`（DTO 字段名 `answeredCount`）——存在转人工/AI 静默时用户提问无对应 AI 回复，分子分母同取「AI 回复事件」口径才自洽。`question_count` 列仍聚合入库但暂无消费方，留作后续展示扩展。

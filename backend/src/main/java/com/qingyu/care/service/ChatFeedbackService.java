@@ -43,6 +43,15 @@ public class ChatFeedbackService {
         if (ctxAppId != null && session.getAppId() != null && !ctxAppId.equals(session.getAppId())) {
             throw new ResourceNotFoundException("消息", String.valueOf(messageId));
         }
+        // 对称的租户校验：管理后台路径下用户未选应用时 ctxAppId 为 null，上面的 appId 校验会被短路，
+        // 此时仍需按 tenantId 兜底，防止登录用户跨租户对他人 (sessionId, messageId) 提交反馈。
+        // 已核实：平台管理员（AuthService.init 创建时不绑定 Tenant）登录后 StpUtil session 里没有
+        // "tenantId" 键，TenantInterceptor 因此不会调用 TenantContext.setTenantId(...)，
+        // 故平台管理员的 ctxTenantId 恒为 null——下面这行天然对平台管理员豁免，无需额外判断角色。
+        Long ctxTenantId = TenantContext.getTenantId();
+        if (ctxTenantId != null && session.getTenantId() != null && !ctxTenantId.equals(session.getTenantId())) {
+            throw new ResourceNotFoundException("消息", String.valueOf(messageId));
+        }
         if (msg.getRole() != MessageRole.ASSISTANT) {
             throw new BusinessException("仅可评价 AI 回复消息");
         }

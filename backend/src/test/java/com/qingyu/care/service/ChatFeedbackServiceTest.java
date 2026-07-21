@@ -114,4 +114,24 @@ class ChatFeedbackServiceTest {
         service.submitFeedback("s-1", 10L, 1);
         assertThat(msg.getFeedback()).isEqualTo(1);
     }
+
+    @Test
+    void 跨租户上下文_按404处理() {
+        ChatMessage msg = aiMessage("s-1", 100L);
+        msg.getSession().setTenantId(7L);
+        when(messageRepository.findById(10L)).thenReturn(Optional.of(msg));
+        TenantContext.setTenantId(999L);
+        assertThatThrownBy(() -> service.submitFeedback("s-1", 10L, 1))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void 同租户上下文_放行() {
+        ChatMessage msg = aiMessage("s-1", 100L);
+        msg.getSession().setTenantId(7L);
+        when(messageRepository.findById(10L)).thenReturn(Optional.of(msg));
+        TenantContext.setTenantId(7L);
+        service.submitFeedback("s-1", 10L, 1);
+        assertThat(msg.getFeedback()).isEqualTo(1);
+    }
 }
