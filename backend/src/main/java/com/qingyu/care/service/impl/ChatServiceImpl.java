@@ -33,6 +33,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 import com.qingyu.care.event.WebhookDomainEvent;
 
@@ -57,6 +58,7 @@ public class ChatServiceImpl implements ChatService {
     private final HybridRetrievalService hybridRetrievalService;
     private final RetrievalScopeResolver retrievalScopeResolver;
     private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     @Override
     @Transactional
@@ -257,15 +259,18 @@ public class ChatServiceImpl implements ChatService {
      * 流式补落库（Reactor 线程执行：ChatMessage 不继承 BaseTenantEntity，persist 不依赖租户过滤器）。
      * fail-soft：落库失败仅告警，不影响已送达的回复；回调必达（失败/空回复回 -1）。
      * 已知取舍：流式 AI 消息不落 tokenUsage（消息级 token 仅非流式；用量计量仍走 onTokensUsed → SysApiUsage）。
+     * 事务原子性：与 chat() 对齐（同批用户消息+AI消息同提交/同回滚）——Reactor 线程无代理事务生效，
+     * 须显式用 TransactionTemplate 包裹 saveMessages；异常捕获仍留在事务外层，保证回调必达语义不变。
+     * package-private 便于同包单测（同 meterContentStream 惯例）。
      */
-    private void persistStreamedMessages(ChatSession session, String userMessage, String aiResponse,
-                                         double confidence, String hitDocumentIds,
-                                         java.util.function.LongConsumer onAiMessageSaved) {
+    void persistStreamedMessages(ChatSession session, String userMessage, String aiResponse,
+                                 double confidence, String hitDocumentIds,
+                                 java.util.function.LongConsumer onAiMessageSaved) {
         long savedId = -1L;
         try {
-            if (aiResponse != null && !aiResponse.isEmpty()) {
-                ChatMessage aiMsg = saveMessages(session, userMessage, aiResponse,
-                        confidence, hitDocumentIds, null, false);
+            if (!aiResponse.isEmpty()) {
+                ChatMessage aiMsg = transactionTemplate.execute(status ->
+                        saveMessages(session, userMessage, aiResponse, confidence, hitDocumentIds, null, false));
                 savedId = aiMsg.getId();
             }
         } catch (Exception e) {
