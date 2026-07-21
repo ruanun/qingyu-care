@@ -99,6 +99,8 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   function addBotMessage(text: string, feedback?: BotFeedback) {
     const row = appendMsg(text, 'bot');
     if (feedback) {
+      // 竖排：气泡在上、反馈按钮在下方左对齐；不影响无反馈消息的横排布局
+      row.classList.add('has-feedback');
       const bar = document.createElement('div');
       bar.className = 'qy-feedback';
       const up = document.createElement('button');

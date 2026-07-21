@@ -38,6 +38,7 @@ export function buildStyles(themeColor: string): string {
       border: none; background: ${themeColor}; color: #fff; padding: 0 16px; cursor: pointer;
     }
     .qy-input button:disabled { opacity: .5; cursor: not-allowed; }
+    .qy-msg.has-feedback { flex-direction: column; align-items: flex-start; }
     .qy-msg .qy-feedback { display: flex; gap: 4px; margin-top: 4px; }
     .qy-msg.bot .qy-feedback { justify-content: flex-start; }
     .qy-feedback button { background: none; border: 1px solid #e5e7eb; border-radius: 10px;
