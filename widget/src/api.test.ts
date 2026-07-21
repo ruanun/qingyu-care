@@ -66,4 +66,10 @@ describe('api', () => {
       }),
     );
   });
+
+  it('feedback 网络失败静默不抛', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network error')));
+
+    await expect(createApi(cfg).feedback('s-1', 42, -1)).resolves.toBeUndefined();
+  });
 });

@@ -57,11 +57,15 @@ export function createApi(cfg: WidgetConfig) {
 
     /** 消息反馈（1=赞 / -1=踩）；失败静默（不干扰对话） */
     async feedback(sessionId: string, messageId: number, value: 1 | -1): Promise<void> {
-      await fetch(`${cfg.apiBase}/open/v1/chat/feedback`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ sessionId, messageId, feedback: value }),
-      });
+      try {
+        await fetch(`${cfg.apiBase}/open/v1/chat/feedback`, {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ sessionId, messageId, feedback: value }),
+        });
+      } catch {
+        // 反馈失败静默：不打断对话、不产生未捕获 rejection
+      }
     },
   };
 }
