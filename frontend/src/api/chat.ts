@@ -41,4 +41,8 @@ export const chatService = {
     // 获取会话消息历史
     getSessionMessages: (sessionId: string): Promise<ApiResponse<any[]>> =>
         api.get(`/chat/session/${sessionId}/messages`),
+
+    // 消息反馈（1=赞 / -1=踩，重复提交覆盖）
+    submitFeedback: (sessionId: string, messageId: number, feedback: 1 | -1): Promise<ApiResponse<void>> =>
+        api.post(`/chat/session/${sessionId}/message/${messageId}/feedback`, null, { params: { feedback } }),
 };

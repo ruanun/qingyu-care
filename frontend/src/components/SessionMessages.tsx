@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { User, Bot, Loader2 } from 'lucide-react';
+import { User, Bot, Loader2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { chatService } from '@/api/chat';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/hooks/use-toast';
 
 interface Message {
     id: number;
     role: string;
     content: string;
     createdAt: string;
+    feedback?: number | null;
 }
 
 interface SessionMessagesProps {
@@ -19,6 +21,16 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const { toast } = useToast();
+
+    const handleFeedback = async (msg: Message, value: 1 | -1) => {
+        try {
+            await chatService.submitFeedback(sessionId, msg.id, value);
+            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, feedback: value } : m)));
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: '评价失败', description: err.message });
+        }
+    };
 
     useEffect(() => {
         const fetchMessages = async () => {
@@ -104,6 +116,26 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
                             )}>
                                 {new Date(msg.createdAt).toLocaleTimeString()}
                             </p>
+                            {msg.role !== 'USER' && (
+                                <div className="flex gap-1 justify-end mt-1">
+                                    <button
+                                        onClick={() => handleFeedback(msg, 1)}
+                                        className={cn('p-0.5 rounded hover:opacity-100',
+                                            msg.feedback === 1 ? 'opacity-100' : 'opacity-40')}
+                                        aria-label="赞"
+                                    >
+                                        <ThumbsUp className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                        onClick={() => handleFeedback(msg, -1)}
+                                        className={cn('p-0.5 rounded hover:opacity-100',
+                                            msg.feedback === -1 ? 'opacity-100' : 'opacity-40')}
+                                        aria-label="踩"
+                                    >
+                                        <ThumbsDown className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}

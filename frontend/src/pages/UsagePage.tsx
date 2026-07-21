@@ -17,17 +17,27 @@ import type { Application } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { billingService } from '@/api/billing';
 import type { QuotaView } from '@/api/billing';
+import QualityTab from '@/pages/analytics/QualityTab';
+import HotTopicsTab from '@/pages/analytics/HotTopicsTab';
+import CoverageTab from '@/pages/analytics/CoverageTab';
 
 const DAY_OPTIONS = [
     { value: '7', label: '近 7 天' },
     { value: '30', label: '近 30 天' },
     { value: '90', label: '近 90 天' },
 ];
+const SECTION_TABS = [
+    { value: 'usage', label: '用量' },
+    { value: 'quality', label: '质量' },
+    { value: 'hot', label: '热点' },
+    { value: 'coverage', label: '覆盖率' },
+];
 const ALL_APPS = '__all__';
 
 const UsagePage: React.FC = () => {
     const [days, setDays] = useState('30');
     const [appId, setAppId] = useState(ALL_APPS);
+    const [section, setSection] = useState('usage');
     const [data, setData] = useState<UsageAnalytics | null>(null);
     const [apps, setApps] = useState<Application[]>([]);
     const [quota, setQuota] = useState<QuotaView | null>(null);
@@ -90,13 +100,20 @@ const UsagePage: React.FC = () => {
         <div className="p-8 max-w-6xl mx-auto space-y-6 h-full overflow-y-auto">
             <div className="flex justify-between items-end flex-wrap gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">用量统计</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">数据分析</h1>
                     <p className="text-muted-foreground mt-2">
                         开放 API 调用与会话效果概览。
                         <span className="text-xs">（用量 = 开放 API 接入；会话 = 全部渠道，含后台测试对话，二者口径不同）</span>
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
+                    <Tabs value={section} onValueChange={setSection}>
+                        <TabsList>
+                            {SECTION_TABS.map((t) => (
+                                <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>
+                            ))}
+                        </TabsList>
+                    </Tabs>
                     {isTenant && (
                         <Select value={appId} onValueChange={setAppId}>
                             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
@@ -121,6 +138,7 @@ const UsagePage: React.FC = () => {
                 </div>
             </div>
 
+            {section === 'usage' && (<>
             {/* 汇总卡片 */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <StatCard icon={<Phone className="w-4 h-4 text-primary" />} label="调用数" value={s?.totalCalls ?? 0} />
@@ -208,6 +226,17 @@ const UsagePage: React.FC = () => {
                     )}
                 </CardContent>
             </Card>
+            </>)}
+
+            {section === 'quality' && (
+                <QualityTab days={Number(days)} appId={appId === ALL_APPS ? undefined : Number(appId)} />
+            )}
+            {section === 'hot' && (
+                <HotTopicsTab days={Number(days)} appId={appId === ALL_APPS ? undefined : Number(appId)} />
+            )}
+            {section === 'coverage' && (
+                <CoverageTab days={Number(days)} appId={appId === ALL_APPS ? undefined : Number(appId)} />
+            )}
         </div>
     );
 };
