@@ -18,6 +18,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -86,5 +87,31 @@ class ChatFeedbackServiceTest {
         when(messageRepository.findById(11L)).thenReturn(Optional.of(userMsg));
         assertThatThrownBy(() -> service.submitFeedback("s-1", 11L, -1))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void 消息不存在_按404处理() {
+        when(messageRepository.findById(404L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.submitFeedback("s-1", 404L, 1))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void 重复提交_覆盖旧值() {
+        ChatMessage msg = aiMessage("s-1", 100L);
+        when(messageRepository.findById(10L)).thenReturn(Optional.of(msg));
+        service.submitFeedback("s-1", 10L, 1);
+        service.submitFeedback("s-1", 10L, -1);
+        assertThat(msg.getFeedback()).isEqualTo(-1);
+        verify(messageRepository, times(2)).save(msg);
+    }
+
+    @Test
+    void 应用上下文与会话一致_放行() {
+        ChatMessage msg = aiMessage("s-1", 100L);
+        when(messageRepository.findById(10L)).thenReturn(Optional.of(msg));
+        TenantContext.setAppId(100L);
+        service.submitFeedback("s-1", 10L, 1);
+        assertThat(msg.getFeedback()).isEqualTo(1);
     }
 }
