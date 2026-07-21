@@ -9,6 +9,7 @@ import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
+import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,7 +32,8 @@ import reactor.core.publisher.Flux;
 public class ChatController {
     
     private final ChatService chatService;
-    
+    private final ChatFeedbackService chatFeedbackService;
+
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
@@ -144,6 +146,16 @@ public class ChatController {
     public ApiResponse<java.util.List<ChatMessage>> getSessionMessages(
             @PathVariable String sessionId) {
         return ApiResponse.success(chatService.getSessionMessages(sessionId));
+    }
+
+    @PostMapping("/session/{sessionId}/message/{messageId}/feedback")
+    @Operation(summary = "评价消息", description = "对 AI 回复打赞/踩（feedback ∈ {1,-1}，重复提交覆盖）")
+    public ApiResponse<Void> feedback(
+            @PathVariable String sessionId,
+            @PathVariable Long messageId,
+            @RequestParam int feedback) {
+        chatFeedbackService.submitFeedback(sessionId, messageId, feedback);
+        return ApiResponse.success("反馈已记录", null);
     }
 }
 

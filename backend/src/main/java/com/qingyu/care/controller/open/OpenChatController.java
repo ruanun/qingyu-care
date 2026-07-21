@@ -5,8 +5,10 @@ import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.open.OpenChatRequest;
 import com.qingyu.care.dto.open.OpenChatResponse;
+import com.qingyu.care.dto.open.OpenFeedbackRequest;
 import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.service.ApiUsageService;
+import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ public class OpenChatController {
 
     private final ChatService chatService;
     private final ApiUsageService apiUsageService;
+    private final ChatFeedbackService chatFeedbackService;
 
     /**
      * 普通对话（同步）。
@@ -78,6 +81,15 @@ public class OpenChatController {
                 .map(id -> ServerSentEvent.<String>builder("{\"messageId\":" + id + "}")
                         .event("meta").build());
         return Flux.concat(body, meta);
+    }
+
+    /**
+     * 消息反馈（赞/踩，重复提交覆盖）。POST /open/v1/chat/feedback
+     */
+    @PostMapping("/feedback")
+    public java.util.Map<String, Object> feedback(@Valid @RequestBody OpenFeedbackRequest req) {
+        chatFeedbackService.submitFeedback(req.getSessionId(), req.getMessageId(), req.getFeedback());
+        return java.util.Map.of("success", true);
     }
 
     /**
