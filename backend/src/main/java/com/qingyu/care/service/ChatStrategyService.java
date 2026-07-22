@@ -1,7 +1,10 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.entity.ChatStrategy;
+import com.qingyu.care.enums.ExperimentStatus;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
+import com.qingyu.care.repository.AbExperimentRepository;
 import com.qingyu.care.repository.ChatStrategyRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +24,7 @@ import java.util.Optional;
 public class ChatStrategyService {
 
     private final ChatStrategyRepository repository;
+    private final AbExperimentRepository abExperimentRepository;
 
     /**
      * 初始化默认策略
@@ -124,6 +128,9 @@ public class ChatStrategyService {
         ChatStrategy strategy = getById(id);
         if (Boolean.TRUE.equals(strategy.getIsDefault()) && strategy.getScenario().equals("default")) {
             throw new RuntimeException("不能删除系统唯一的默认场景策略");
+        }
+        if (abExperimentRepository.existsByStatusAndVariants_StrategyId(ExperimentStatus.RUNNING, id)) {
+            throw new BusinessException("该策略正被运行中的 A/B 实验引用，无法删除");
         }
         repository.deleteById(id);
     }
