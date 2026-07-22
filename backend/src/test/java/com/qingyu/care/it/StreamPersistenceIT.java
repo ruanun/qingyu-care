@@ -49,7 +49,8 @@ class StreamPersistenceIT extends AbstractPostgresIT {
                         .stream().chatResponse())
                 .thenReturn(Flux.just(SpringAiResponses.of("你好", 5),
                         SpringAiResponses.of("！", 7)));
-        Mockito.when(modelRouterService.getDefaultChatClient()).thenReturn(client);
+        // 流式路径按租户配置解析模型场景（tenant.default.model.scenario，缺省 default）
+        Mockito.when(modelRouterService.getChatClientForScenario("default")).thenReturn(client);
 
         MvcResult mvcResult = mockMvc.perform(post("/open/v1/chat/stream")
                         .header("X-App-Id", app.getAppKey())

@@ -31,6 +31,10 @@ export const platformService = {
   // 系统概览
   getOverview: (): Promise<ApiResponse<PlatformOverview>> =>
     api.get('/platform/overview'),
+
+  // 系统公告（任意登录用户可读，空串表示无公告）
+  getAnnouncement: (): Promise<ApiResponse<string>> =>
+    api.get('/platform/config/announcement'),
 };
 
 export const tenantConfigService = {

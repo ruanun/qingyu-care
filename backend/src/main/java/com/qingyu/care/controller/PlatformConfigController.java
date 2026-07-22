@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.ConfigService;
@@ -28,5 +29,15 @@ public class PlatformConfigController {
         SecurityUtil.requirePlatformAdmin();
         configService.setAll(OwnerScope.PLATFORM, null, values);
         return ApiResponse.success("平台配置已更新", null);
+    }
+
+    /**
+     * 系统公告（platform.announcement）：任意登录用户可读，供管理后台顶部横幅展示；
+     * 空串表示无公告。
+     */
+    @GetMapping("/announcement")
+    public ApiResponse<String> announcement() {
+        StpUtil.checkLogin();
+        return ApiResponse.success(configService.get(OwnerScope.PLATFORM, null, "platform.announcement", ""));
     }
 }

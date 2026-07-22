@@ -53,6 +53,26 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
     List<ChatSession> findTimeoutSessions(
             @Param("activeStatuses") List<SessionStatus> activeStatuses,
             @Param("timeout") LocalDateTime timeout);
+
+    /**
+     * 查找指定租户的超时活跃会话（配置了租户级超时覆盖 tenant.session.timeout.minutes 时使用）
+     */
+    @Query("SELECT s FROM ChatSession s WHERE s.status IN :activeStatuses AND s.updatedAt < :timeout "
+            + "AND s.tenantId = :tenantId")
+    List<ChatSession> findTimeoutSessionsForTenant(
+            @Param("activeStatuses") List<SessionStatus> activeStatuses,
+            @Param("timeout") LocalDateTime timeout,
+            @Param("tenantId") Long tenantId);
+
+    /**
+     * 查找超时活跃会话，但排除有租户级超时覆盖的租户（它们由 findTimeoutSessionsForTenant 单独按各自阈值扫描）
+     */
+    @Query("SELECT s FROM ChatSession s WHERE s.status IN :activeStatuses AND s.updatedAt < :timeout "
+            + "AND (s.tenantId IS NULL OR s.tenantId NOT IN :excludedTenantIds)")
+    List<ChatSession> findTimeoutSessionsExcludingTenants(
+            @Param("activeStatuses") List<SessionStatus> activeStatuses,
+            @Param("timeout") LocalDateTime timeout,
+            @Param("excludedTenantIds") List<Long> excludedTenantIds);
     
     /**
      * 批量更新会话状态为超时关闭

@@ -241,13 +241,21 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取默认场景的 ChatClient（简单场景使用）
+     * 获取指定场景的 ChatClient（取该场景优先级最高的模型；
+     * 场景无模型时 getModelsForScenario 已内置回退 default 场景）
      */
-    public ChatClient getDefaultChatClient() {
-        List<AiModelConfig> models = getModelsForScenario("default");
+    public ChatClient getChatClientForScenario(String scenario) {
+        List<AiModelConfig> models = getModelsForScenario(scenario);
         if (models.isEmpty()) {
             throw new RuntimeException("没有配置默认 AI 模型");
         }
         return createChatClient(models.get(0));
+    }
+
+    /**
+     * 获取默认场景的 ChatClient（简单场景使用）
+     */
+    public ChatClient getDefaultChatClient() {
+        return getChatClientForScenario("default");
     }
 }
