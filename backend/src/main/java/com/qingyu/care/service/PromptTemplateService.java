@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.PromptTemplate;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.PromptTemplateRepository;
@@ -71,8 +72,13 @@ public class PromptTemplateService {
      * 获取指定模板
      */
     public PromptTemplate getById(Long id) {
-        return repository.findById(id)
+        PromptTemplate template = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Prompt 模板", id.toString()));
+        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测
+        if (!TenantOwnershipGuard.belongsToCurrentContext(template.getTenantId(), template.getAppId())) {
+            throw new ResourceNotFoundException("Prompt 模板", id.toString());
+        }
+        return template;
     }
 
     /**
