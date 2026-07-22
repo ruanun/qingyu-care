@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.dto.AbTestReportDTO;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
 import com.qingyu.care.entity.ChatStrategy;
@@ -7,6 +8,7 @@ import com.qingyu.care.enums.ExperimentStatus;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AbExperimentRepository;
+import com.qingyu.care.repository.AbTestReportDao;
 import com.qingyu.care.repository.ChatStrategyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,7 @@ public class AbTestService {
 
     private final AbExperimentRepository repository;
     private final ChatStrategyRepository strategyRepository;
+    private final AbTestReportDao reportDao;
 
     public List<AbExperiment> list() {
         return repository.findAllByOrderByCreatedAtDesc();
@@ -195,5 +198,49 @@ public class AbTestService {
                 throw new BusinessException("变体必须绑定一条问答策略");
             }
         }
+    }
+
+    /** 实验对比报表：先 JPA 取实验（租户/应用过滤校验归属），再 native 按变体聚合 */
+    public AbTestReportDTO getReport(Long id) {
+        AbExperiment exp = getById(id);
+        var sessionRows = reportDao.aggregateSessions(id).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        AbTestReportDao.SessionRow::variantName, r -> r));
+        var messageRows = reportDao.aggregateMessages(id).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        AbTestReportDao.MessageRow::variantName, r -> r));
+        List<AbTestReportDTO.VariantReport> variants = exp.getVariants().stream().map(v -> {
+            var s = sessionRows.get(v.getName());
+            var m = messageRows.get(v.getName());
+            long sessionCount = s != null ? s.sessionCount() : 0;
+            long handover = s != null ? s.handoverCount() : 0;
+            long resolved = s != null ? s.resolvedCount() : 0;
+            long ended = s != null ? s.endedCount() : 0;
+            long question = m != null ? m.questionCount() : 0;
+            long aiMsg = m != null ? m.aiMsgCount() : 0;
+            long up = m != null ? m.feedbackUp() : 0;
+            long down = m != null ? m.feedbackDown() : 0;
+            return new AbTestReportDTO.VariantReport(
+                    v.getName(), v.getWeight(),
+                    sessionCount, question, aiMsg,
+                    m != null ? m.avgConfidence() : null,
+                    up, down,
+                    rate(up, up + down),
+                    rate(m != null ? m.fallbackCount() : 0, aiMsg),
+                    rate(m != null ? m.lowConfidenceCount() : 0, aiMsg),
+                    rate(m != null ? m.hitCount() : 0, aiMsg),
+                    rate(handover, sessionCount),
+                    rate(resolved, ended));
+        }).toList();
+        return new AbTestReportDTO(exp.getId(), exp.getName(), exp.getStatus().name(),
+                exp.getStartedAt(), exp.getEndedAt(), variants);
+    }
+
+    /** 纯函数：比率保留 4 位小数；分母 0 → null（static 免容器单测） */
+    static Double rate(long numerator, long denominator) {
+        if (denominator == 0) {
+            return null;
+        }
+        return Math.round(numerator * 10000.0 / denominator) / 10000.0;
     }
 }

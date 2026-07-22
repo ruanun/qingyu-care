@@ -6,6 +6,7 @@ import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.ExperimentStatus;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.AbExperimentRepository;
+import com.qingyu.care.repository.AbTestReportDao;
 import com.qingyu.care.repository.ChatStrategyRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,7 @@ class AbTestServiceTest {
 
     @Mock AbExperimentRepository repository;
     @Mock ChatStrategyRepository strategyRepository;
+    @Mock AbTestReportDao reportDao;
     @InjectMocks AbTestService service;
 
     private AbExperiment draft(AbVariant... variants) {
