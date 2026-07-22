@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.HandoverRuleRepository;
 import jakarta.annotation.PostConstruct;
@@ -100,6 +101,11 @@ public class HandoverRuleService {
     @Transactional
     public HandoverRule updateRule(Long id, Boolean enabled, String config) {
         HandoverRule rule = getById(id);
+        // 写路径守卫：平台默认规则（tenant_id IS NULL 种子行）仅平台管理员可改，
+        // 否则租户可枚举 id 篡改平台默认触发条件，殃及全部租户
+        if (!TenantOwnershipGuard.mutableInCurrentContext(rule.getTenantId(), rule.getAppId())) {
+            throw new BusinessException(403, "平台默认规则仅平台管理员可修改");
+        }
         if (enabled != null) {
             rule.setEnabled(enabled);
         }

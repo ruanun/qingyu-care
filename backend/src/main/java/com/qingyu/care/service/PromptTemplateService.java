@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.PromptTemplate;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.PromptTemplateRepository;
 import lombok.RequiredArgsConstructor;
@@ -106,14 +107,23 @@ public class PromptTemplateService {
     @Transactional
     public PromptTemplate activateVersion(Long id) {
         PromptTemplate template = getById(id);
-        
-        // 先将所有模板设为非激活
-        repository.deactivateAll();
-        
+        // 写路径守卫：平台默认模板（tenant_id IS NULL 种子行）仅平台管理员可操作
+        if (!TenantOwnershipGuard.mutableInCurrentContext(template.getTenantId(), template.getAppId())) {
+            throw new BusinessException(403, "平台默认模板仅平台管理员可操作");
+        }
+
+        // 先取消同范围内其他模板的激活位。范围锚定目标模板自身的租户/应用维度——
+        // bulk UPDATE 不受 @Filter 保护，若不显式限定范围会清掉全库（含平台默认与其他租户）的激活位
+        if (template.getTenantId() == null) {
+            repository.deactivateAllPlatform();
+        } else {
+            repository.deactivateAllForTenant(template.getTenantId(), template.getAppId());
+        }
+
         // 激活指定模板
         template.setIsActive(true);
         log.info("Activated prompt template version {} (id={})", template.getVersion(), id);
-        
+
         return repository.save(template);
     }
 
@@ -123,6 +133,10 @@ public class PromptTemplateService {
     @Transactional
     public void deleteVersion(Long id) {
         PromptTemplate template = getById(id);
+        // 写路径守卫：平台默认模板仅平台管理员可删（读放行是为保多级回退，删除必须收紧）
+        if (!TenantOwnershipGuard.mutableInCurrentContext(template.getTenantId(), template.getAppId())) {
+            throw new BusinessException(403, "平台默认模板仅平台管理员可删除");
+        }
         if (template.getIsActive()) {
             throw new com.qingyu.care.exception.InvalidOperationException("不能删除激活中的模板");
         }

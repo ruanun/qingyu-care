@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.PromptTemplate;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.PromptTemplateRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -15,6 +16,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -63,5 +67,56 @@ class PromptTemplateOwnershipTest {
         TenantContext.setTenantId(2L);
 
         assertThat(service.getById(1L)).isNotNull();
+    }
+
+    // ---- 写路径守卫：读放行平台行是为保多级回退，激活/删除必须收紧 ----
+
+    @Test
+    void activateVersion_租户激活平台模板_拒绝() {
+        when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
+        TenantContext.setTenantId(2L);
+
+        assertThatThrownBy(() -> service.activateVersion(1L))
+                .isInstanceOf(BusinessException.class);
+        verify(repository, never()).deactivateAllPlatform();
+        verify(repository, never()).deactivateAllForTenant(any(), any());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void deleteVersion_租户删平台模板_拒绝() {
+        when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
+        TenantContext.setTenantId(2L);
+
+        assertThatThrownBy(() -> service.deleteVersion(1L))
+                .isInstanceOf(BusinessException.class);
+        verify(repository, never()).delete(any());
+    }
+
+    @Test
+    void activateVersion_租户激活自有模板_只清本租户应用范围() {
+        // bulk UPDATE 不受 @Filter 保护：激活前的「取消旧激活位」必须显式限定租户/应用范围，
+        // 否则会把全库（含平台默认与其他租户）的激活模板一并置为非激活
+        PromptTemplate own = ownedBy(2L);
+        own.setAppId(10L);
+        when(repository.findById(1L)).thenReturn(Optional.of(own));
+        TenantContext.setTenantId(2L);
+        TenantContext.setAppId(10L);
+
+        service.activateVersion(1L);
+
+        verify(repository).deactivateAllForTenant(2L, 10L);
+        verify(repository, never()).deactivateAllPlatform();
+        assertThat(own.getIsActive()).isTrue();
+    }
+
+    @Test
+    void activateVersion_平台管理员激活平台模板_只清平台范围() {
+        when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
+
+        service.activateVersion(1L);
+
+        verify(repository).deactivateAllPlatform();
+        verify(repository, never()).deactivateAllForTenant(any(), any());
     }
 }

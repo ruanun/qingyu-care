@@ -12,6 +12,7 @@ import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentType;
 import com.qingyu.care.enums.HandoverRuleType;
 import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiModelConfigRepository;
 import com.qingyu.care.repository.ChatStrategyRepository;
@@ -131,6 +132,80 @@ class TenantOwnershipGuardIT extends AbstractPostgresIT {
         assertThatThrownBy(() -> withTenantContext(appB, () -> handoverRuleService.getById(id)))
                 .isInstanceOf(ResourceNotFoundException.class);
         assertThat(withTenantContext(appA, () -> handoverRuleService.getById(id))).isNotNull();
+    }
+
+    @Test
+    void 平台共享模型_租户按id读取拒绝_平台上下文可读() {
+        // 实体含明文 apiKey，读路径用写级守卫：租户继承共享模型走场景查询，无需按 id 读平台行
+        Application appA = seedApp("guard-pm-" + System.nanoTime(), "http://pm.example.com");
+        AiModelConfig cfg = AiModelConfig.builder()
+                .name("平台共享模型").provider("openai").modelId("gpt-4o").endpoint("http://x")
+                .apiKey("sk-platform-secret").scenario("default").priority(1)
+                .enabled(true).scope(OwnerScope.PLATFORM).build();
+        Long id = modelConfigRepository.saveAndFlush(cfg).getId(); // 无上下文播种 → tenant_id IS NULL
+
+        assertThatThrownBy(() -> withTenantContext(appA, () -> modelRouterService.getById(id)))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(modelRouterService.getById(id).getApiKey()).isEqualTo("sk-platform-secret");
+    }
+
+    @Test
+    void 平台默认策略_租户改删被拒_行保持不变() {
+        // 读放行平台行是为保多级回退；写路径若同样放行，租户即可篡改/删除平台默认，殃及全部租户
+        Application appA = seedApp("guard-ps-" + System.nanoTime(), "http://ps.example.com");
+        ChatStrategy platform = ChatStrategy.builder()
+                .name("平台默认策略").scenario("guard-plat-" + System.nanoTime())
+                .topK(5).similarityThreshold(0.7).allowNoKnowledge(true)
+                .enabled(true).isDefault(false).build();
+        Long id = strategyRepository.saveAndFlush(platform).getId(); // 无上下文播种 → tenant_id IS NULL
+
+        // 读可见（回退语义）
+        assertThat(withTenantContext(appA, () -> chatStrategyService.getById(id))).isNotNull();
+        // 改被拒
+        assertThatThrownBy(() -> withTenantContext(appA, () -> {
+            ChatStrategy loaded = chatStrategyService.getById(id);
+            loaded.setTopK(99);
+            return chatStrategyService.saveStrategy(loaded);
+        })).isInstanceOf(BusinessException.class);
+        // 删被拒
+        assertThatThrownBy(() -> withTenantContext(appA, () -> {
+            chatStrategyService.deleteStrategy(id);
+            return null;
+        })).isInstanceOf(BusinessException.class);
+        // 行仍在且未被篡改
+        assertThat(strategyRepository.findById(id).orElseThrow().getTopK()).isEqualTo(5);
+    }
+
+    @Test
+    void 激活模板_只影响本租户应用范围() {
+        // deactivate 是 bulk UPDATE，不受 @Filter 保护——必须显式范围化，
+        // 否则任一租户激活模板会清掉全库（含平台默认与其他租户）的激活位
+        Application appA = seedApp("guard-pa-" + System.nanoTime(), "http://pa.example.com");
+        Application appB = seedApp("guard-pb-" + System.nanoTime(), "http://pb.example.com");
+
+        PromptTemplate oldA = PromptTemplate.builder()
+                .name("A旧激活").content("c").version(101).isActive(true).build();
+        ownBy(oldA, appA);
+        PromptTemplate freshA = PromptTemplate.builder()
+                .name("A新版本").content("c").version(102).isActive(false).build();
+        ownBy(freshA, appA);
+        PromptTemplate activeB = PromptTemplate.builder()
+                .name("B激活中").content("c").version(103).isActive(true).build();
+        ownBy(activeB, appB);
+        PromptTemplate platformT = PromptTemplate.builder()
+                .name("平台默认激活").content("c").version(104).isActive(true).build(); // 无上下文 → tenant NULL
+        Long oldAId = promptTemplateRepository.saveAndFlush(oldA).getId();
+        Long freshAId = promptTemplateRepository.saveAndFlush(freshA).getId();
+        Long activeBId = promptTemplateRepository.saveAndFlush(activeB).getId();
+        Long platformId = promptTemplateRepository.saveAndFlush(platformT).getId();
+
+        withTenantContext(appA, () -> promptTemplateService.activateVersion(freshAId));
+
+        assertThat(promptTemplateRepository.findById(freshAId).orElseThrow().getIsActive()).isTrue();
+        assertThat(promptTemplateRepository.findById(oldAId).orElseThrow().getIsActive()).isFalse();
+        // B 租户与平台默认的激活位不受殃及
+        assertThat(promptTemplateRepository.findById(activeBId).orElseThrow().getIsActive()).isTrue();
+        assertThat(promptTemplateRepository.findById(platformId).orElseThrow().getIsActive()).isTrue();
     }
 
     @Test
