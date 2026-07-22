@@ -94,6 +94,7 @@ qingyu-care/
 │   └── src/{api,pages,components,layouts,stores,...}
 ├── widget/                           # 可嵌入网页的 Widget SDK（独立 Vite 子项目，产物 widget.js）
 ├── docker/                           # 基础设施 docker-compose 与初始化脚本
+├── docs/                             # 部署文档、开发流程文档与各功能 spec/plan
 ├── SaaS平台规划.md                   # 产品与技术路线图
 └── README.md
 ```
@@ -177,6 +178,14 @@ pnpm dev
 | `spring.ai.vectorstore.pgvector.dimensions` | 1024 | 向量维度（需与 embedding 模型匹配） |
 
 > 注意：TopK 与相似度阈值等检索参数已改为数据库动态配置（`chat_strategy` 表 / 问答策略页面）。
+
+## 📚 文档
+
+| 文档 | 说明 |
+|------|------|
+| [部署文档](./docs/部署文档.md) | 从零部署（基础设施 / 后端 / 前端 / Widget）、生产安全清单、备份升级与排障 |
+| [开发流程文档](./docs/开发流程文档.md) | 环境搭建、分支与提交规范、测试体系、多租户开发注意事项 |
+| [SaaS 平台规划](./SaaS平台规划.md) | 产品与技术路线图（Phase 1–4） |
 
 ## 📊 开发路线图
 
