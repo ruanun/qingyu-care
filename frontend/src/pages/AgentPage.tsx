@@ -27,7 +27,7 @@ const AgentPage: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const fetchWaitingSessions = async () => {
+    async function fetchWaitingSessions() {
         try {
             const response = await agentService.getWaitingAgentSessions(0, 50);
             if (response.code === 200) {

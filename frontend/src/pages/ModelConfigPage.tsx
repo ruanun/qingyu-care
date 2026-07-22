@@ -49,6 +49,7 @@ const ModelConfigPage: React.FC = () => {
 
     useEffect(() => {
         fetchModels();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleToggleEnabled = async (model: AiModelConfig) => {

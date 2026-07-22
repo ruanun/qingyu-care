@@ -43,9 +43,10 @@ const ApplicationListPage: React.FC = () => {
 
     useEffect(() => {
         fetchApps();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const fetchApps = async () => {
+    async function fetchApps() {
         setIsLoading(true);
         try {
             const response = await applicationService.list();

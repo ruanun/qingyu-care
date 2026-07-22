@@ -38,11 +38,21 @@ const KnowledgePage: React.FC = () => {
     const [deleteDocId, setDeleteDocId] = useState<number | null>(null);
     const { toast } = useToast();
 
-    useEffect(() => {
-        fetchKnowledgeBases();
-    }, []);
+    const fetchDocuments = useCallback(async (kbId: number) => {
+        setIsDocLoading(true);
+        try {
+            const response = await knowledgeService.getDocuments(kbId);
+            if (response.code === 200) {
+                setDocuments(response.data);
+            }
+        } catch (error: any) {
+            toast({ variant: "destructive", title: "获取文档失败", description: error.message });
+        } finally {
+            setIsDocLoading(false);
+        }
+    }, [toast]);
 
-    const fetchKnowledgeBases = async () => {
+    async function fetchKnowledgeBases() {
         setIsLoading(true);
         try {
             const response = await knowledgeService.getKnowledgeBases();
@@ -59,21 +69,14 @@ const KnowledgePage: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    };
+    }
 
-    const fetchDocuments = useCallback(async (kbId: number) => {
-        setIsDocLoading(true);
-        try {
-            const response = await knowledgeService.getDocuments(kbId);
-            if (response.code === 200) {
-                setDocuments(response.data);
-            }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "获取文档失败", description: error.message });
-        } finally {
-            setIsDocLoading(false);
-        }
-    }, [toast]);
+    useEffect(() => {
+        // 挂载仅拉取一次；set-state 属预期（mount 数据加载，非级联渲染）
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        fetchKnowledgeBases();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleSelectKb = (kb: KnowledgeBase) => {
         setSelectedKb(kb);

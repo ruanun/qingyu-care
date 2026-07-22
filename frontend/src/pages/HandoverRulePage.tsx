@@ -32,6 +32,7 @@ const HandoverRulePage: React.FC = () => {
 
     useEffect(() => {
         fetchRules();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleToggleEnabled = async (rule: HandoverRule) => {

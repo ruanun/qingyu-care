@@ -38,7 +38,7 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ title, fields, load, save }) =>
       })
       .catch((e) => toast({ title: '加载失败', description: e.message, variant: 'destructive' }))
       .finally(() => setLoading(false));
-  }, [load, fields]);
+  }, [load, fields, toast]);
 
   const setValue = (k: string, v: string) => setValues((prev) => ({ ...prev, [k]: v }));
 

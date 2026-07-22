@@ -68,9 +68,10 @@ const SessionPage: React.FC = () => {
 
     useEffect(() => {
         fetchSessions();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [statusFilter, page]);
 
-    const fetchSessions = async () => {
+    async function fetchSessions() {
         setIsLoading(true);
         try {
             const status = statusFilter === 'ALL' ? undefined : statusFilter;

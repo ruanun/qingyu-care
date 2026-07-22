@@ -17,9 +17,10 @@ const DashboardPage: React.FC = () => {
 
     useEffect(() => {
         fetchData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const fetchData = async () => {
+    async function fetchData() {
         setIsLoading(true);
         try {
             const [statsRes, sessionsRes] = await Promise.all([
@@ -33,7 +34,7 @@ const DashboardPage: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    };
+    }
 
     const getStatusBadge = (status: string) => {
         switch (status) {
