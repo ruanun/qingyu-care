@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.AbTestReportDTO;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
@@ -19,8 +20,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * A/B 实验服务：生命周期管理（本类）+ 分桶/变体解析/报表（后续任务追加）。
- * 实验实体继承 BaseTenantEntity，list/getById 等查询天然限定当前租户/应用范围。
+ * A/B 实验服务：生命周期管理（创建/编辑/启动/结束/删除）+ 开放路径分桶（{@link #assignForNewSession}）+
+ * 对话时变体策略解析（{@link #resolveVariantStrategy}）+ 变体对比报表（{@link #getReport}）。
+ * 实验实体继承 BaseTenantEntity，list 等派生查询天然限定当前租户/应用范围；但 {@link #getById}
+ * 走 {@code findById}，Hibernate 6 的 {@code @Filter} 不拦截主键加载，需显式补归属校验（见该方法注释）。
  *
  * @author ruan
  */
@@ -37,9 +40,35 @@ public class AbTestService {
         return repository.findAllByOrderByCreatedAtDesc();
     }
 
+    /**
+     * 按 id 取实验。Hibernate 6 的 {@code @Filter} 只拦截查询（HQL/派生查询），不拦截
+     * {@code findById}（未设 {@code applyToLoadByKey}）——因此这里必须显式校验归属，
+     * 否则已登录租户可枚举 id 跨租户读到他人实验（含经 {@link #getReport} 泄露的会话/消息聚合数据）。
+     * 校验范式同 86f6892（ChatFeedbackService）：租户/应用两组对称空容忍比对，不匹配按「不存在」
+     * 处理，与查不到同语义防枚举探测。平台管理员登录后 TenantContext 的 tenantId 恒为 null，
+     * {@link #belongsToCurrentContext} 天然对其豁免，无需额外判断角色。
+     */
     public AbExperiment getById(Long id) {
-        return repository.findById(id)
+        AbExperiment exp = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("A/B 实验", id.toString()));
+        if (!belongsToCurrentContext(exp.getTenantId(), exp.getAppId())) {
+            throw new ResourceNotFoundException("A/B 实验", id.toString());
+        }
+        return exp;
+    }
+
+    /**
+     * 归属校验：ctx 非空且实体字段非空且不相等 → 不属于当前上下文（越权），返回 false；
+     * 否则视为放行（含 ctx 为 null 的平台管理员场景、字段为 null 的平台共享资源场景）。
+     * 对称空容忍语义同 86f6892（ChatFeedbackService），供 getById / start / resolveVariantStrategy 复用。
+     */
+    private boolean belongsToCurrentContext(Long entityTenantId, Long entityAppId) {
+        Long ctxTenantId = TenantContext.getTenantId();
+        if (ctxTenantId != null && entityTenantId != null && !ctxTenantId.equals(entityTenantId)) {
+            return false;
+        }
+        Long ctxAppId = TenantContext.getAppId();
+        return ctxAppId == null || entityAppId == null || ctxAppId.equals(entityAppId);
     }
 
     /** 创建：强制 DRAFT，清空运行时字段；变体只做基础校验（和=100 延迟到 start 强校验） */
@@ -93,6 +122,12 @@ public class AbTestService {
             ChatStrategy s = strategyRepository.findById(v.getStrategyId())
                     .orElseThrow(() -> new BusinessException(
                             "变体 " + v.getName() + " 绑定的策略不存在（id=" + v.getStrategyId() + "）"));
+            // 同 getById：findById 不受 @Filter 保护，显式校验策略归属，与「不存在」同文案防探测。
+            // 平台共享策略 tenantId 为 null，belongsToCurrentContext 天然放行，这是正确语义（平台默认策略租户可绑定）。
+            if (!belongsToCurrentContext(s.getTenantId(), s.getAppId())) {
+                throw new BusinessException(
+                        "变体 " + v.getName() + " 绑定的策略不存在（id=" + v.getStrategyId() + "）");
+            }
             if (!Boolean.TRUE.equals(s.getEnabled())) {
                 throw new BusinessException("变体 " + v.getName() + " 绑定的策略未启用");
             }
@@ -167,6 +202,8 @@ public class AbTestService {
     /**
      * 对话时解析变体策略。empty = 走默认策略（未参与实验 / 实验已结束或被删 /
      * 策略被禁用或删除 / 异常，全部 fail-soft）。
+     * 纵深防御：findById 不受 @Filter 保护，补实验与策略各自的归属校验（对称空容忍同 belongsToCurrentContext）；
+     * 不匹配一律走既有 empty→默认策略路径，保持 fail-soft，不额外抛异常。
      */
     public java.util.Optional<ChatStrategy> resolveVariantStrategy(Long experimentId, Long variantStrategyId) {
         if (experimentId == null || variantStrategyId == null) {
@@ -175,7 +212,9 @@ public class AbTestService {
         try {
             return repository.findById(experimentId)
                     .filter(e -> e.getStatus() == ExperimentStatus.RUNNING)
+                    .filter(e -> belongsToCurrentContext(e.getTenantId(), e.getAppId()))
                     .flatMap(e -> strategyRepository.findById(variantStrategyId))
+                    .filter(s -> belongsToCurrentContext(s.getTenantId(), s.getAppId()))
                     .filter(s -> Boolean.TRUE.equals(s.getEnabled()));
         } catch (Exception e) {
             log.warn("解析变体策略失败，回退默认策略: {}", e.getMessage());
@@ -203,7 +242,7 @@ public class AbTestService {
         }
     }
 
-    /** 实验对比报表：先 JPA 取实验（租户/应用过滤校验归属），再 native 按变体聚合 */
+    /** 实验对比报表：先 getById 取实验（显式归属校验），再 native 按变体聚合 */
     public AbTestReportDTO getReport(Long id) {
         AbExperiment exp = getById(id);
         var sessionRows = reportDao.aggregateSessions(id).stream()

@@ -85,5 +85,6 @@ class ChatServiceAbWiringTest {
 
         assertThat(session.getExperimentId()).isNull();
         assertThat(session.getVariantName()).isNull();
+        assertThat(session.getVariantStrategyId()).isNull();
     }
 }

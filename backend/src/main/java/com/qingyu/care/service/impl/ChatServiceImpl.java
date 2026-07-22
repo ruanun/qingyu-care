@@ -420,7 +420,7 @@ public class ChatServiceImpl implements ChatService {
                 return promptTemplateService.getById(strategy.getPromptTemplateId()).getContent();
             } catch (Exception e) {
                 log.warn("策略绑定的 Prompt 模板不可用（id={}），回退全局激活模板: {}",
-                        strategy.getPromptTemplateId(), e.getMessage());
+                        strategy.getPromptTemplateId(), e.getMessage(), e);
             }
         }
         return promptTemplateService.getActiveTemplateContent();

@@ -7,6 +7,7 @@ import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.ExperimentStatus;
+import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AbExperimentRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.ChatStrategyRepository;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -189,5 +191,21 @@ class AbTestFlowIT extends AbstractPostgresIT {
         ChatSession session = withTenantContext(appB, () ->
                 sessionRepository.findBySessionId(sessionId).orElseThrow());
         assertThat(session.getExperimentId()).isNull();
+    }
+
+    @Test
+    void 跨租户按id访问_他租户实验不可见() {
+        Application appA = seedApp("abx1" + System.nanoTime(), "http://x1.example.com");
+        Application appB = seedApp("abx2" + System.nanoTime(), "http://x2.example.com");
+        ChatStrategy sA = seedStrategy(appA, "A策略", true, null);
+        ChatStrategy sB = seedStrategy(appA, "B策略", false, "A租户兜底");
+        AbExperiment expA = seedRunningExperiment(appA, sA.getId(), sB.getId());
+
+        // Hibernate 6 @Filter 不作用于 findById（未设 applyToLoadByKey），
+        // 若服务层未补显式归属校验，此处会越权读到 A 租户实验（含报表聚合数据）。
+        assertThatThrownBy(() -> withTenantContext(appB, () -> abTestService.getReport(expA.getId())))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> withTenantContext(appB, () -> abTestService.getById(expA.getId())))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 }

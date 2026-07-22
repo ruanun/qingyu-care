@@ -1,10 +1,12 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.ExperimentStatus;
 import com.qingyu.care.exception.BusinessException;
+import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AbExperimentRepository;
 import com.qingyu.care.repository.AbTestReportDao;
 import com.qingyu.care.repository.ChatStrategyRepository;
@@ -68,6 +70,36 @@ class AbTestServiceTest {
         assertThat(saved.getStartedAt()).isNull();
         assertThat(saved.getTenantId()).isNull();
         assertThat(saved.getAppId()).isNull();
+    }
+
+    @Test
+    void getById_他租户实验_按不存在处理() {
+        AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
+        exp.setTenantId(1L);
+        when(repository.findById(1L)).thenReturn(Optional.of(exp));
+        TenantContext.setTenantId(2L);
+        try {
+            assertThatThrownBy(() -> service.getById(1L))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void start_变体绑他租户策略_拒绝() {
+        AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
+        when(repository.findById(1L)).thenReturn(Optional.of(exp));
+        ChatStrategy otherTenantStrategy = enabledStrategy(1L);
+        otherTenantStrategy.setTenantId(9L);
+        when(strategyRepository.findById(1L)).thenReturn(Optional.of(otherTenantStrategy));
+        TenantContext.setTenantId(2L);
+        try {
+            assertThatThrownBy(() -> service.start(1L))
+                    .isInstanceOf(BusinessException.class).hasMessageContaining("不存在");
+        } finally {
+            TenantContext.clear();
+        }
     }
 
     @Test

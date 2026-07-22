@@ -55,7 +55,7 @@ Phase 4.4 的最后一项。为应用提供「问答策略 / Prompt 实验对比
 **启动校验**（服务层，失败抛 `BusinessException`）：
 - ≥2 个变体，变体名不重复；
 - 权重为 0~100 的整数、和恰为 100（**允许单个变体权重为 0**——该变体不接流量，用于软下线与 IT 确定性断言）；
-- 每个 `strategyId` 对应策略存在且 `enabled`（走 JPA 查询，租户过滤天然限定本租户可见范围）;
+- 每个 `strategyId` 对应策略存在且 `enabled`（走 JPA 查询 + 服务层显式归属校验，86f6892 同款对称校验；Hibernate 6 `findById` 不走 `@Filter`）;
 - 当前应用范围内无其他 RUNNING 实验。
 
 ### 3.2 `ChatSession` 增加三个可空字段
@@ -93,6 +93,8 @@ Phase 4.4 的最后一项。为应用提供「问答策略 / Prompt 实验对比
 
 此接线对非实验流量同样生效（策略绑了模板就用），语义与字段注释一致，属修复而非行为破坏。
 
+注意：本接线对存量策略同样生效——若历史数据中策略已设 `promptTemplateId`，升级后其对话将改用绑定模板（原先该字段被忽略）。
+
 ### 4.4 策略删除保护
 
 `ChatStrategyService.deleteStrategy()` 增加校验：被 RUNNING 实验引用的策略拒绝删除（`BusinessException`）。DRAFT 实验引用的策略可删，启动校验会兜住。
@@ -100,8 +102,8 @@ Phase 4.4 的最后一项。为应用提供「问答策略 / Prompt 实验对比
 ## 5. 报表口径
 
 `AbTestService.getReport(experimentId)`：
-1. 先 JPA `getById(experimentId)`——租户过滤天然校验归属（越权看不到，404）；
-2. 再 native SQL 按 `variant_name` 分组聚合（native 不受 Hibernate 过滤器保护，但入参 `experiment_id` 已经 JPA 校验过归属，安全）：
+1. 先 `getById(experimentId)`——服务层显式归属校验（86f6892 同款对称校验；Hibernate 6 `findById` 不走 `@Filter`，越权看不到，404）；
+2. 再 native SQL 按 `variant_name` 分组聚合（native 不受 Hibernate 过滤器保护，但入参 `experiment_id` 已经 `getById` 校验过归属，安全）：
 
 **会话级**（`chat_session where experiment_id = ?`）：
 - 会话数、转人工数（`handover_time` 非空）、AI 解决数（`ENDED` 且 `agent_id` 为 null）、已结束数。
@@ -172,3 +174,5 @@ Phase 4.4 的最后一项。为应用提供「问答策略 / Prompt 实验对比
 3. **前端调用点加固**：管理页 `AbTestPage.tsx` 与报表视图六处调用点统一按 `res.code === 200` 判断业务成功（而非仅依赖 HTTP 状态码），并对创建/编辑对话框的单行权重输入补了整数区间校验——评审阶段发现并修复，避免误报成功或静默失败。
 4. **IT 防御性写法**：`AbTestFlowIT` 中读取消息关联 id 时用 `Number` 接收再转换，防止 JSON 数字类型自动拆箱异常——良性防御性写法，不影响业务语义。
 5. **遗留技术债备忘**（Task 8 评审记录）：裸实体绑定导致的跨租户写入面并非本特性独有，`ChatStrategyController` 等既有控制器存在同类存量问题，本特性仅加固了自身新增的 `AbTestController`/`AbTestService`，未扩面处理存量控制器，留待后续统一治理。
+6. **随机源未做构造器注入**：§4.1 原计划"随机源可注入（构造器注入 `Random` 或 supplier），单测可控"，实际实现改为 `ThreadLocalRandom.current()` 内联调用 + `pickVariant` 抽成 `static` 纯函数直测边界（roll 值直接传参覆盖 0/100/区间落点）——免注入即可控测，优于原设计，无需额外构造器参数。
+7. **终审发现并修复：`findById` 不受 Hibernate 过滤器保护**（2026-07-22 终审）：`Hibernate 6` 的 `@Filter` 只拦截查询（HQL/派生查询），不拦截 `findById`（未设 `applyToLoadByKey`）。`AbTestService.getById`（`getReport`/`start`/`end`/`delete`/`update` 均经它）与 `start()`/`resolveVariantStrategy()` 里的 `strategyRepository.findById` 因此均不受租户过滤器保护——已登录租户可枚举 id 跨租户读他人实验、经 `getReport` 泄露他租户会话/消息聚合数据。修复：`getById` 补对称归属校验（不匹配按「不存在」处理，防枚举探测）；`start()` 策略校验循环补同款校验（不匹配按「策略不存在」同文案处理）；`resolveVariantStrategy()` 纵深防御补两处 `.filter(...)`（不匹配走既有 empty→默认策略路径，fail-soft 不变）。校验范式复用 86f6892（`ChatFeedbackService`）。全库同类 `getById`（未逐一排查）留作独立技术债。
