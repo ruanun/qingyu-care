@@ -92,11 +92,12 @@
             <artifactId>x-file-storage-spring</artifactId>
             <version>2.3.0</version>
         </dependency>
-        <!-- AWS S3 SDK (x-file-storage 的 S3 支持) -->
+        <!-- AWS S3 SDK v2 (x-file-storage 的 amazon-s3-v2 平台)。
+             SDK v1 已于 2025-12-31 终止支持，改用 v2。x-file-storage-core 以 provided 声明，需显式引入。 -->
         <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-s3</artifactId>
-            <version>1.12.429</version>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.46.7</version>
         </dependency>
         
         <!-- Database -->
