@@ -99,4 +99,16 @@ public class ChatSession extends BaseTenantEntity {
      */
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
+
+    /** 参与的 A/B 实验 ID（null = 未参与实验） */
+    @Column(name = "experiment_id")
+    private Long experimentId;
+
+    /** A/B 变体名（报表分组键） */
+    @Column(name = "variant_name", length = 50)
+    private String variantName;
+
+    /** 变体绑定的策略 ID（对话取策略免 join 实验定义） */
+    @Column(name = "variant_strategy_id")
+    private Long variantStrategyId;
 }
