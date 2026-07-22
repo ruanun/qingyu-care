@@ -20,6 +20,7 @@ import TenantConfigPage from './pages/TenantConfigPage';
 import AuditLogPage from './pages/AuditLogPage';
 import IntegrationPage from './pages/IntegrationPage';
 import UsagePage from './pages/UsagePage';
+import AbTestPage from './pages/AbTestPage';
 import RequireApp from './components/RequireApp';
 import { Toaster } from './components/ui/toaster';
 import { useAuthStore } from './stores/authStore';
@@ -60,6 +61,7 @@ function App() {
           <Route path="ai-models" element={<RequireApp><ModelConfigPage /></RequireApp>} />
           <Route path="handover-rules" element={<RequireApp><HandoverRulePage /></RequireApp>} />
           <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
+          <Route path="ab-tests" element={<RequireApp><AbTestPage /></RequireApp>} />
           {/* 管理 */}
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="usage" element={<UsagePage />} />

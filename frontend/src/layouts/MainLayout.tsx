@@ -4,7 +4,8 @@ import {
     MessageSquare, Database, UserPen, LayoutDashboard,
     History, FileText, Layers, Settings, Bot,
     LogOut, User as UserIcon, Shield, Users, Smartphone, Building,
-    Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3
+    Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3,
+    FlaskConical
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -49,6 +50,7 @@ const sections: NavSection[] = [
             { label: '知识库', path: '/knowledge', icon: Database },
             { label: 'Prompt 管理', path: '/prompts', icon: FileText },
             { label: '问答策略', path: '/strategies', icon: Layers },
+            { label: 'A/B 实验', path: '/ab-tests', icon: FlaskConical },
             { label: 'AI 模型', path: '/ai-models', icon: Bot },
             { label: '转人工规则', path: '/handover-rules', icon: Settings },
             { label: '接入配置', path: '/integration', icon: Plug },
