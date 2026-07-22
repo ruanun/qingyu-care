@@ -37,6 +37,7 @@ import {
 import { abTestService, type AbExperiment, type AbVariant, type ExperimentStatus } from '@/api/abtest';
 import { chatStrategyService, type ChatStrategy } from '@/api/strategy';
 import { useToast } from '@/hooks/use-toast';
+import ReportDialog from '@/pages/abtest/ReportDialog';
 
 interface ExperimentForm {
     name: string;
@@ -69,6 +70,7 @@ const AbTestPage: React.FC = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editing, setEditing] = useState<AbExperiment | null>(null);
     const [form, setForm] = useState<ExperimentForm>(buildEmptyForm());
+    const [reportId, setReportId] = useState<number | null>(null);
     const { toast } = useToast();
 
     const fetchData = async () => {
@@ -232,9 +234,6 @@ const AbTestPage: React.FC = () => {
         runAction(() => abTestService.delete(id), '实验已删除', '删除失败');
     };
 
-    // 报表视图占位，Task 11 接线
-    const handleViewReport = () => {};
-
     return (
         <div className="p-8 h-full overflow-y-auto bg-slate-50/50">
             <div className="max-w-6xl mx-auto space-y-6">
@@ -321,7 +320,7 @@ const AbTestPage: React.FC = () => {
                                                             <Square className="w-3 h-3 mr-1" />
                                                             结束
                                                         </Button>
-                                                        <Button variant="outline" size="sm" onClick={handleViewReport}>
+                                                        <Button variant="outline" size="sm" onClick={() => setReportId(experiment.id)}>
                                                             <BarChart3 className="w-3 h-3 mr-1" />
                                                             查看报表
                                                         </Button>
@@ -329,7 +328,7 @@ const AbTestPage: React.FC = () => {
                                                 )}
                                                 {experiment.status === 'ENDED' && (
                                                     <>
-                                                        <Button variant="outline" size="sm" onClick={handleViewReport}>
+                                                        <Button variant="outline" size="sm" onClick={() => setReportId(experiment.id)}>
                                                             <BarChart3 className="w-3 h-3 mr-1" />
                                                             查看报表
                                                         </Button>
@@ -446,6 +445,8 @@ const AbTestPage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <ReportDialog experimentId={reportId} onClose={() => setReportId(null)} />
         </div>
     );
 };
