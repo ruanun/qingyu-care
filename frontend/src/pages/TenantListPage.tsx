@@ -51,9 +51,10 @@ const TenantListPage: React.FC = () => {
 
     useEffect(() => {
         fetchTenants();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const fetchTenants = async () => {
+    async function fetchTenants() {
         setIsLoading(true);
         try {
             const response = await tenantService.list();

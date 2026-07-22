@@ -62,7 +62,7 @@ const UserListPage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const fetchUsers = async () => {
+    async function fetchUsers() {
         setIsLoading(true);
         try {
             const response = await userService.list();
@@ -76,7 +76,7 @@ const UserListPage: React.FC = () => {
         }
     };
 
-    const fetchTenants = async () => {
+    async function fetchTenants() {
         try {
             const response = await tenantService.list();
             if (response.code === 200) setTenants(response.data);

@@ -55,6 +55,7 @@ const PromptPage: React.FC = () => {
 
     useEffect(() => {
         fetchTemplates();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleCreate = async () => {
