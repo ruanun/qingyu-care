@@ -20,7 +20,7 @@ public class TenantInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         // 如果用户已登录，设置租户上下文
-        if (StpUtil.isLogin()) {
+        if (isLoggedIn()) {
             Long userId = StpUtil.getLoginIdAsLong();
             TenantContext.setUserId(userId);
 
@@ -45,7 +45,19 @@ public class TenantInterceptor implements HandlerInterceptor {
         
         return true;
     }
-    
+
+    /**
+     * Sa-Token 是否已登录；上下文未初始化等异常一律按未登录处理（与 TenantDataAspect 同款守卫）。
+     * Sa-Token 1.42+ 的上下文过滤器只覆盖 REQUEST 分发，SSE 等 ASYNC 二次分发没有上下文。
+     */
+    private boolean isLoggedIn() {
+        try {
+            return StpUtil.isLogin();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         // 清理 ThreadLocal，避免内存泄漏

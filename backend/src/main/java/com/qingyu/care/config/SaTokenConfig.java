@@ -1,8 +1,12 @@
 package com.qingyu.care.config;
 
+import cn.dev33.satoken.filter.SaTokenContextFilterForJakartaServlet;
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
+import jakarta.servlet.DispatcherType;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -12,7 +16,24 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  */
 @Configuration
 public class SaTokenConfig implements WebMvcConfigurer {
-    
+
+    /**
+     * Sa-Token 1.42+ 改用 ThreadLocal 上下文模型，由 SaTokenContextFilterForJakartaServlet 初始化，
+     * 但默认只注册 REQUEST 分发——SSE 流式接口的 ASYNC 二次分发会因无上下文抛 SaTokenContextException。
+     * 这里显式包装同一个过滤器 bean，把分发类型扩展到 ASYNC/FORWARD/ERROR（Boot 检测到已有
+     * FilterRegistrationBean 后会跳过原 bean 的默认注册，不会重复过滤）。
+     */
+    @Bean
+    public FilterRegistrationBean<SaTokenContextFilterForJakartaServlet> saTokenContextFilterRegistration(
+            SaTokenContextFilterForJakartaServlet filter) {
+        FilterRegistrationBean<SaTokenContextFilterForJakartaServlet> registration = new FilterRegistrationBean<>(filter);
+        registration.setDispatcherTypes(DispatcherType.REQUEST, DispatcherType.ASYNC,
+                DispatcherType.FORWARD, DispatcherType.ERROR);
+        registration.setOrder(-104); // 与过滤器自身 @Order(-104) 保持一致
+        return registration;
+    }
+
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // 注册 Sa-Token 拦截器
