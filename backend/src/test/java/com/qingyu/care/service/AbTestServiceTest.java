@@ -57,6 +57,8 @@ class AbTestServiceTest {
         AbExperiment input = AbExperiment.builder().id(99L).name("新实验")
                 .status(ExperimentStatus.RUNNING)
                 .variants(new ArrayList<>(List.of(v("A", 1L, 50), v("B", 2L, 50)))).build();
+        input.setTenantId(999L);
+        input.setAppId(888L);
         when(repository.save(any(AbExperiment.class))).thenAnswer(inv -> inv.getArgument(0));
 
         AbExperiment saved = service.create(input);
@@ -64,6 +66,8 @@ class AbTestServiceTest {
         assertThat(saved.getId()).isNull();
         assertThat(saved.getStatus()).isEqualTo(ExperimentStatus.DRAFT);
         assertThat(saved.getStartedAt()).isNull();
+        assertThat(saved.getTenantId()).isNull();
+        assertThat(saved.getAppId()).isNull();
     }
 
     @Test

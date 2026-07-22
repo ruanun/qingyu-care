@@ -46,6 +46,9 @@ public class AbTestService {
     @Transactional
     public AbExperiment create(AbExperiment input) {
         input.setId(null);
+        // 归属字段清空后交由 TenantEntityListener 按当前上下文回填（防请求体带入他租户归属）
+        input.setTenantId(null);
+        input.setAppId(null);
         input.setStatus(ExperimentStatus.DRAFT);
         input.setStartedAt(null);
         input.setEndedAt(null);
