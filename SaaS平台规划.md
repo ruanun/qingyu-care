@@ -177,7 +177,7 @@
 | 状态管理 | Zustand |
 | Widget SDK | 独立 Vite + TypeScript 项目（`widget/`，Shadow DOM 隔离） |
 | 限流 | Bucket4j + Lettuce Redis（应用级可配，故障 fail-open） |
-| 消息队列 | RabbitMQ / Redis Stream (待实现) |
+| 消息队列 | Redis Stream（Webhook 投递队列：XADD + 消费组，故障回退 @Async 直投，DB 重试兜底） |
 | 文件存储 | RustFS (S3 兼容) |
 
 ---

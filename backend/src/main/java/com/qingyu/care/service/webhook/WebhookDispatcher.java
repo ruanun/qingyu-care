@@ -32,7 +32,7 @@ public class WebhookDispatcher {
     private final ApplicationRepository applicationRepository;
     private final WebhookDeliveryRepository deliveryRepository;
     private final WebhookPayloadBuilder payloadBuilder;
-    private final WebhookSender sender;
+    private final WebhookQueue queue;
 
     // AFTER_COMMIT 阶段原事务已提交，此处的落库必须开启独立新事务（REQUIRES_NEW），
     // 否则会并入已完成的事务而不再提交——PENDING 行拿不到 id、也不落库，异步投递认领不到（历史 bug）。
@@ -71,7 +71,8 @@ public class WebhookDispatcher {
                 String.valueOf(delivery.getId()), event.getEventType(), event.getOccurredAt(), data));
         deliveryRepository.save(delivery);
 
-        sender.deliverAsync(delivery.getId());
+        // 首投走队列（Redis Stream；队列关闭或故障时内部回退直投）
+        queue.dispatch(delivery.getId());
     }
 
     /** 逗号拆分、trim 后精确匹配事件类型。 */

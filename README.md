@@ -26,7 +26,7 @@
 - ✅ **共享模型池** - 平台级共享模型，租户可继承或自建覆盖
 - ✅ **操作审计日志** - 关键写操作自动记录（`@AuditLog` + AOP 异步落库、敏感字段脱敏）
 - ✅ **系统概览** - 系统健康状态与租户/应用/用户/会话关键指标
-- ✅ **对外接入** - 开放 REST API（`/open/v1/**`，服务端 `X-Api-Key` / 浏览器 Origin 白名单双路径鉴权，限流 + 用量计量）、JS Widget 一行嵌入（Shadow DOM 隔离）、Webhook 事件推送（HMAC-SHA256 签名 + 退避重试）
+- ✅ **对外接入** - 开放 REST API（`/open/v1/**`，服务端 `X-Api-Key` / 浏览器 Origin 白名单双路径鉴权，限流 + 用量计量）、JS Widget 一行嵌入（Shadow DOM 隔离）、Webhook 事件推送（Redis Stream 队列投递 + HMAC-SHA256 签名 + 退避重试，Redis 故障回退直投）
 - ✅ **用量统计看板** - 开放 API 调用次数 / token 消耗趋势与聚合（按角色自适应平台 / 租户 / 应用视角）
 - ✅ **计费与套餐额度** - 套餐额度映射（FREE/PRO/ENTERPRISE），调用 + token 双维度月度额度，超额 403 与近阈值告警，月度自然重置
 - ✅ **高级 RAG** - 多知识库联合检索、混合检索（向量 + zhparser 中文关键词 FTS，RRF 融合）、文档权限控制（PUBLIC/INTERNAL 按鉴权路径定级）
@@ -65,7 +65,7 @@
 | React Router | 7 | 路由 |
 
 ### 基础设施（`docker/docker-compose.yml`）
-PostgreSQL 17（自定义镜像 `qingyu/pgvector-zhparser:pg17`，pgvector 向量检索 + zhparser 中文分词） · RustFS（S3 兼容对象存储） · Redis 7（限流/缓存）
+PostgreSQL 17（自定义镜像 `qingyu/pgvector-zhparser:pg17`，pgvector 向量检索 + zhparser 中文分词） · RustFS（S3 兼容对象存储） · Redis 7（限流 / Webhook 投递队列 Redis Stream / 缓存）
 
 ## 📁 项目结构
 

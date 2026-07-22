@@ -13,8 +13,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 定时扫描到期待重试的投递并交给 WebhookSender。
- * 首投失败后的兜底；间隔由 qingyu.care.webhook.retry-scan-interval-ms 控制。
+ * 定时扫描到期待重试的投递并重新派发（经 WebhookQueue：队列优先、故障直投）。
+ * 首投失败与队列消息丢失的双重兜底；间隔由 qingyu.care.webhook.retry-scan-interval-ms 控制。
  *
  * @author ruan
  */
@@ -24,7 +24,7 @@ import java.util.List;
 public class WebhookRetryScheduler {
 
     private final WebhookDeliveryRepository deliveryRepository;
-    private final WebhookSender sender;
+    private final WebhookQueue queue;
 
     @Scheduled(fixedDelayString = "${qingyu.care.webhook.retry-scan-interval-ms:30000}")
     public void scanAndRetry() {
@@ -35,7 +35,7 @@ public class WebhookRetryScheduler {
         }
         log.debug("Webhook 重试扫描：{} 条待投递", due.size());
         for (WebhookDelivery d : due) {
-            sender.deliverAsync(d.getId());
+            queue.dispatch(d.getId());
         }
     }
 }
