@@ -38,4 +38,31 @@ public final class TenantOwnershipGuard {
         Long ctxAppId = TenantContext.getAppId();
         return ctxAppId == null || entityAppId == null || ctxAppId.equals(entityAppId);
     }
+
+    /**
+     * 校验实体是否可在当前上下文中被修改/删除（写路径守卫）。
+     *
+     * <p>与 {@link #belongsToCurrentContext} 只差一点：平台共享行（tenant_id IS NULL）
+     * 仅平台上下文（ctxTenantId 为空——平台管理员或系统内部线程）可写。读路径为保
+     * 多级回退语义放行平台行，但写路径若同样放行，租户即可枚举 id 篡改/删除平台
+     * 共享模型、平台默认策略/模板/规则，殃及全部租户。
+     *
+     * <p>含密钥的资源（如 AiModelConfig 的明文 apiKey）读路径也应使用本守卫，
+     * 否则租户可经按 id 读取拿到平台凭据。
+     *
+     * @param entityTenantId 实体的 tenant_id（可空）
+     * @param entityAppId    实体的 app_id（可空）
+     * @return 当前上下文可写该实体时 true
+     */
+    public static boolean mutableInCurrentContext(Long entityTenantId, Long entityAppId) {
+        Long ctxTenantId = TenantContext.getTenantId();
+        if (ctxTenantId == null) {
+            return true;
+        }
+        if (entityTenantId == null || !ctxTenantId.equals(entityTenantId)) {
+            return false;
+        }
+        Long ctxAppId = TenantContext.getAppId();
+        return ctxAppId == null || entityAppId == null || ctxAppId.equals(entityAppId);
+    }
 }

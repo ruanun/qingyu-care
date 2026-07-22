@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.HandoverRuleRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -17,6 +18,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -67,5 +71,26 @@ class HandoverRuleOwnershipTest {
         TenantContext.setTenantId(2L);
 
         assertThat(service.getById(1L)).isNotNull();
+    }
+
+    // ---- 写路径守卫：读放行平台行是为保多级回退，修改必须收紧 ----
+
+    @Test
+    void updateRule_租户改平台默认规则_拒绝() {
+        when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
+        TenantContext.setTenantId(2L);
+
+        assertThatThrownBy(() -> service.updateRule(1L, false, null))
+                .isInstanceOf(BusinessException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void updateRule_平台管理员改平台默认规则_放行() {
+        HandoverRule platformRule = ownedBy(null);
+        when(repository.findById(1L)).thenReturn(Optional.of(platformRule));
+        when(repository.save(platformRule)).thenReturn(platformRule);
+
+        assertThat(service.updateRule(1L, false, null).getEnabled()).isFalse();
     }
 }

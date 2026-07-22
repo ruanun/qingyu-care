@@ -63,4 +63,49 @@ class TenantOwnershipGuardTest {
         TenantContext.setTenantId(1L);
         assertThat(TenantOwnershipGuard.belongsToCurrentContext(1L, 20L)).isTrue();
     }
+
+    // ---- 写路径守卫 mutableInCurrentContext：与读守卫唯一的差别是平台行仅平台上下文可写 ----
+
+    @Test
+    void 写守卫_租户上下文改平台行_拒绝() {
+        // 读路径放行平台行是为保多级回退；写路径必须收紧，否则租户可篡改/删除平台共享配置
+        TenantContext.setTenantId(1L);
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(null, null)).isFalse();
+    }
+
+    @Test
+    void 写守卫_平台上下文改平台行_放行() {
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(null, null)).isTrue();
+    }
+
+    @Test
+    void 写守卫_平台上下文改任意租户行_放行() {
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(2L, 3L)).isTrue();
+    }
+
+    @Test
+    void 写守卫_同租户_放行() {
+        TenantContext.setTenantId(1L);
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(1L, null)).isTrue();
+    }
+
+    @Test
+    void 写守卫_他租户_拒绝() {
+        TenantContext.setTenantId(1L);
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(2L, null)).isFalse();
+    }
+
+    @Test
+    void 写守卫_同租户不同应用_拒绝() {
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(10L);
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(1L, 20L)).isFalse();
+    }
+
+    @Test
+    void 写守卫_同租户同应用_放行() {
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(10L);
+        assertThat(TenantOwnershipGuard.mutableInCurrentContext(1L, 10L)).isTrue();
+    }
 }

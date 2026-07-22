@@ -63,12 +63,22 @@ class ModelRouterServiceOwnershipTest {
     }
 
     @Test
-    void getById_平台共享模型_租户可见() {
-        // 平台共享模型 tenant_id 为空，租户应可读（绑定平台默认模型的正常语义）
+    void getById_平台共享模型_租户按id读取拒绝_防apiKey泄露() {
+        // 实体含明文 apiKey，读路径也用写级守卫：租户对共享模型的继承走场景查询，
+        // 不需要按 id 读平台行；放行即等于把平台凭据交给租户
         when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
         TenantContext.setTenantId(2L);
 
-        assertThat(service.getById(1L)).isNotNull();
+        assertThatThrownBy(() -> service.getById(1L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void getById_平台共享模型_平台管理员可读() {
+        // 平台管理员上下文 tenantId 恒为 null，管理共享模型池（PlatformController）需经此路径
+        when(repository.findById(1L)).thenReturn(Optional.of(ownedBy(null)));
+
+        assertThat(service.getById(1L).getApiKey()).isEqualTo("sk-secret");
     }
 
     @Test

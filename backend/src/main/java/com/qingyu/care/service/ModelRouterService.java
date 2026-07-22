@@ -76,11 +76,13 @@ public class ModelRouterService {
      * 获取指定模型配置。
      * findById 不受 Hibernate @Filter 保护，显式补租户归属校验——否则已登录租户可枚举 id
      * 跨租户读到他人模型配置（含明文 apiKey）。不匹配按「不存在」处理，与查不到同语义防探测。
+     * 因实体含明文 apiKey，读路径采用写级守卫：平台共享行（tenant_id IS NULL）也仅平台
+     * 管理员可按 id 读取——租户对共享模型的继承走 getModelsForScenario 的场景查询，不经此处。
      */
     public AiModelConfig getById(Long id) {
         AiModelConfig config = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("AI模型配置", id.toString()));
-        if (!TenantOwnershipGuard.belongsToCurrentContext(config.getTenantId(), config.getAppId())) {
+        if (!TenantOwnershipGuard.mutableInCurrentContext(config.getTenantId(), config.getAppId())) {
             throw new ResourceNotFoundException("AI模型配置", id.toString());
         }
         return config;

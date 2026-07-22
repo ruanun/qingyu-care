@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.ExperimentStatus;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -114,9 +116,20 @@ public class ChatStrategyService {
      */
     @Transactional
     public ChatStrategy saveStrategy(ChatStrategy strategy) {
-        // 如果设置为默认，需要取消该场景下其他策略的默认状态
+        // 写路径守卫：平台默认策略（tenant_id IS NULL 种子行）仅平台管理员可改，
+        // 否则租户可枚举 id 篡改平台默认，殃及全部回退到它的租户
+        if (strategy.getId() != null
+                && !TenantOwnershipGuard.mutableInCurrentContext(strategy.getTenantId(), strategy.getAppId())) {
+            throw new BusinessException(403, "平台默认策略仅平台管理员可修改");
+        }
+        // 如果设置为默认，需要取消该场景下其他策略的默认状态。
+        // 平台管理员不受租户过滤器约束，findAll 会看到全库策略——必须按租户维度再过滤一次，
+        // 否则平台管理员的保存会把其他租户同场景策略的默认位也清掉。
+        // 范围锚定被保存策略自身的租户：更新取行上的 tenantId；新建时实体尚未回填，取上下文
         if (Boolean.TRUE.equals(strategy.getIsDefault())) {
+            Long scopeTenantId = strategy.getId() != null ? strategy.getTenantId() : TenantContext.getTenantId();
             repository.findAll().stream()
+                    .filter(s -> Objects.equals(s.getTenantId(), scopeTenantId))
                     .filter(s -> s.getScenario().equals(strategy.getScenario()) && !s.getId().equals(strategy.getId()))
                     .forEach(s -> {
                         s.setIsDefault(false);
@@ -132,6 +145,10 @@ public class ChatStrategyService {
     @Transactional
     public void deleteStrategy(Long id) {
         ChatStrategy strategy = getById(id);
+        // 写路径守卫：平台默认策略仅平台管理员可删（读放行是为保多级回退，删除必须收紧）
+        if (!TenantOwnershipGuard.mutableInCurrentContext(strategy.getTenantId(), strategy.getAppId())) {
+            throw new BusinessException(403, "平台默认策略仅平台管理员可删除");
+        }
         if (Boolean.TRUE.equals(strategy.getIsDefault()) && strategy.getScenario().equals("default")) {
             throw new RuntimeException("不能删除系统唯一的默认场景策略");
         }
