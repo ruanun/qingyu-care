@@ -48,6 +48,10 @@ interface ExperimentForm {
 const getErrorMessage = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
 
+// api/client.ts 不对业务 code≠200 reject（后端 BusinessException 为 HTTP 200 + code 400），
+// 调用方必须显式判断 code，此处统一提取避免各操作点判断口径不一致
+type BasicApiResult = { code: number; message: string };
+
 // 新建实验默认两个变体分组，各占 50% 流量
 const buildEmptyForm = (): ExperimentForm => ({
     name: '',
@@ -74,8 +78,16 @@ const AbTestPage: React.FC = () => {
                 abTestService.list(),
                 chatStrategyService.getAll(),
             ]);
-            if (expRes.code === 200) setExperiments(expRes.data);
-            if (stratRes.code === 200) setStrategies(stratRes.data);
+            if (expRes.code === 200) {
+                setExperiments(expRes.data);
+            } else {
+                toast({ variant: 'destructive', title: '实验列表加载失败', description: expRes.message || '操作失败' });
+            }
+            if (stratRes.code === 200) {
+                setStrategies(stratRes.data);
+            } else {
+                toast({ variant: 'destructive', title: '策略列表加载失败', description: stratRes.message || '操作失败' });
+            }
         } catch (error) {
             toast({ variant: 'destructive', title: '数据加载失败', description: getErrorMessage(error) });
         } finally {
@@ -152,6 +164,10 @@ const AbTestPage: React.FC = () => {
         if (names.some(n => !n)) return '变体名称不能为空';
         if (new Set(names).size !== names.length) return '变体名称不能重复';
         if (form.variants.some(v => !v.strategyId)) return '请为每个变体选择关联策略';
+        const hasInvalidWeight = form.variants.some(
+            v => !Number.isInteger(v.weight) || v.weight < 0 || v.weight > 100,
+        );
+        if (hasInvalidWeight) return '变体权重必须为 0~100 的整数';
         const weightSum = form.variants.reduce((sum, v) => sum + Number(v.weight || 0), 0);
         if (weightSum !== 100) return `变体权重之和须为 100（当前为 ${weightSum}）`;
         return null;
@@ -176,41 +192,44 @@ const AbTestPage: React.FC = () => {
                 toast({ title: editing ? '实验已更新' : '实验已创建' });
                 setDialogOpen(false);
                 fetchData();
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: editing ? '更新失败' : '创建失败',
+                    description: res.message || '操作失败',
+                });
             }
         } catch (error) {
             toast({ variant: 'destructive', title: '保存失败', description: getErrorMessage(error) });
         }
     };
 
-    const handleStart = async (id: number) => {
+    // 统一处理"启动/结束/删除"类操作：业务 code=200 才算成功并刷新列表，否则弹失败 toast；网络异常仍走 catch
+    const runAction = async (
+        action: () => Promise<BasicApiResult>,
+        successTitle: string,
+        failTitle: string,
+    ) => {
         try {
-            await abTestService.start(id);
-            toast({ title: '实验已启动' });
-            fetchData();
+            const res = await action();
+            if (res.code === 200) {
+                toast({ title: successTitle });
+                fetchData();
+            } else {
+                toast({ variant: 'destructive', title: failTitle, description: res.message || '操作失败' });
+            }
         } catch (error) {
-            toast({ variant: 'destructive', title: '启动失败', description: getErrorMessage(error) });
+            toast({ variant: 'destructive', title: failTitle, description: getErrorMessage(error) });
         }
     };
 
-    const handleEnd = async (id: number) => {
-        try {
-            await abTestService.end(id);
-            toast({ title: '实验已结束' });
-            fetchData();
-        } catch (error) {
-            toast({ variant: 'destructive', title: '结束失败', description: getErrorMessage(error) });
-        }
-    };
+    const handleStart = (id: number) => runAction(() => abTestService.start(id), '实验已启动', '启动失败');
 
-    const handleDelete = async (id: number) => {
+    const handleEnd = (id: number) => runAction(() => abTestService.end(id), '实验已结束', '结束失败');
+
+    const handleDelete = (id: number) => {
         if (!confirm('确定删除该实验吗？')) return;
-        try {
-            await abTestService.delete(id);
-            toast({ title: '实验已删除' });
-            fetchData();
-        } catch (error) {
-            toast({ variant: 'destructive', title: '删除失败', description: getErrorMessage(error) });
-        }
+        runAction(() => abTestService.delete(id), '实验已删除', '删除失败');
     };
 
     // 报表视图占位，Task 11 接线
