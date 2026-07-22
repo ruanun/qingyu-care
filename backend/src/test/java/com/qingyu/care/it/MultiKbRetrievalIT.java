@@ -83,7 +83,7 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
 
         List<Document> docs = search("产品型号XK-1111", APP_A);
 
-        assertThat(docs).extracting(Document::getContent)
+        assertThat(docs).extracting(Document::getText)
                 .anyMatch(c -> c.contains("知识一"))
                 .anyMatch(c -> c.contains("知识二"))
                 .noneMatch(c -> c.contains("禁用库"));
@@ -109,7 +109,7 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
 
         List<Document> docs = search("产品型号XK-5555", APP_A);
 
-        assertThat(docs).extracting(Document::getContent)
+        assertThat(docs).extracting(Document::getText)
                 .anyMatch(c -> c.contains("正常数据"))
                 .noneMatch(c -> c.contains("错标数据"));
     }

@@ -40,12 +40,14 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         // 向量路（fail-soft：异常则空列表 → 融合退化为关键词/空）
         List<RrfFuser.Item> vectorItems = new ArrayList<>();
         try {
-            SearchRequest searchRequest = SearchRequest.query(query)
-                    .withTopK(topK)
-                    .withSimilarityThreshold(threshold)
-                    .withFilterExpression(scope.toFilterExpression());
+            SearchRequest searchRequest = SearchRequest.builder()
+                    .query(query)
+                    .topK(topK)
+                    .similarityThreshold(threshold)
+                    .filterExpression(scope.toFilterExpression())
+                    .build();
             for (Document d : vectorStore.similaritySearch(searchRequest)) {
-                String content = d.getContent() != null ? d.getContent() : "";
+                String content = d.getText() != null ? d.getText() : "";
                 vectorItems.add(new RrfFuser.Item(d.getId(), content, d.getMetadata()));
             }
         } catch (Exception e) {

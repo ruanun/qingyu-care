@@ -180,18 +180,24 @@ public class ModelRouterService {
             baseUrl = getDefaultEndpoint(config.getProvider());
         }
         
-        // Spring AI 1.0.0-M4 中 OpenAiApi 的构造方式
-        OpenAiApi openAiApi = new OpenAiApi(baseUrl, config.getApiKey());
-        
-        // M4 支持 withStreamUsage(true)：让 OpenAI 兼容端点在流式末尾 chunk 携带 usage 信息，
+        // Spring AI 1.x GA 起 OpenAiApi 改用 builder 构造
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(baseUrl)
+                .apiKey(config.getApiKey())
+                .build();
+
+        // streamUsage(true)：让 OpenAI 兼容端点在流式末尾 chunk 携带 usage 信息，
         // 供 ChatServiceImpl.meterContentStream() 的 doOnNext 捕获 total_tokens。
         OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .withModel(config.getModelId())
-                .withStreamUsage(true)
+                .model(config.getModelId())
+                .streamUsage(true)
                 .build();
-        
-        OpenAiChatModel chatModel = new OpenAiChatModel(openAiApi, options);
-        
+
+        OpenAiChatModel chatModel = OpenAiChatModel.builder()
+                .openAiApi(openAiApi)
+                .defaultOptions(options)
+                .build();
+
         return ChatClient.builder(chatModel).build();
     }
 

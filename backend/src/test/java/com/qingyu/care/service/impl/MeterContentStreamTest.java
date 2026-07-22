@@ -21,7 +21,7 @@ class MeterContentStreamTest {
 
     /**
      * 正常流：末尾 chunk 携带 usage(totalTokens=99)，回调应以 99 触发；
-     * 内容应正确映射（取 getResult().getOutput().getContent()）。
+     * 内容应正确映射（取 getResult().getOutput().getText()）。
      */
     @Test
     void 正常流_回调携带末尾total_tokens() {
