@@ -28,52 +28,93 @@ interface NavItem {
     roles?: string[];
 }
 
-interface NavSection {
-    title: string;
+/** 子分组：有 title 时渲染子组小标题并缩进条目（如「应用配置」下的 RAG 知识库 / AI 模型） */
+interface NavGroup {
+    title?: string;
     items: NavItem[];
-    requireApp?: boolean;
 }
 
+interface NavSection {
+    title: string;
+    groups: NavGroup[];
+    requireApp?: boolean;
+    roles?: string[];
+}
+
+// 菜单深度分组（SaaS平台规划.md 3.4）：平台管理 → 应用管理 → 应用配置 → 客服中心 → 数据统计
 const sections: NavSection[] = [
     {
-        title: '客服中心',
-        items: [
-            { label: '智能问答', path: '/chat', icon: MessageSquare },
-            { label: '人工工作台', path: '/agent', icon: UserPen },
-            { label: '会话管理', path: '/sessions', icon: History },
-        ],
+        title: '平台管理',
+        roles: ['PLATFORM_ADMIN'],
+        groups: [{
+            items: [
+                { label: '租户列表', path: '/tenants', icon: Building },
+                { label: '系统概览', path: '/platform/overview', icon: Activity },
+                { label: '共享模型池', path: '/platform/models', icon: Boxes },
+                { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal },
+            ],
+        }],
+    },
+    {
+        title: '应用管理',
+        groups: [{
+            items: [
+                { label: '我的应用', path: '/applications', icon: Smartphone, roles: ['TENANT_ADMIN', 'PLATFORM_ADMIN'] },
+                { label: '成员管理', path: '/users', icon: Users, roles: ['TENANT_ADMIN', 'TENANT_MEMBER', 'PLATFORM_ADMIN'] },
+                { label: '租户配置', path: '/tenant/config', icon: Building2, roles: ['TENANT_ADMIN'] },
+                { label: '审计日志', path: '/audit-logs', icon: ScrollText, roles: ['PLATFORM_ADMIN', 'TENANT_ADMIN'] },
+            ],
+        }],
     },
     {
         title: '应用配置',
         requireApp: true,
-        items: [
-            { label: '知识库', path: '/knowledge', icon: Database },
-            { label: 'Prompt 管理', path: '/prompts', icon: FileText },
-            { label: '问答策略', path: '/strategies', icon: Layers },
-            { label: 'A/B 实验', path: '/ab-tests', icon: FlaskConical },
-            { label: 'AI 模型', path: '/ai-models', icon: Bot },
-            { label: '转人工规则', path: '/handover-rules', icon: Settings },
-            { label: '接入配置', path: '/integration', icon: Plug },
+        groups: [
+            {
+                title: 'RAG 知识库',
+                items: [
+                    { label: '知识库管理', path: '/knowledge', icon: Database },
+                    { label: 'Prompt 管理', path: '/prompts', icon: FileText },
+                    { label: '问答策略', path: '/strategies', icon: Layers },
+                    { label: 'A/B 实验', path: '/ab-tests', icon: FlaskConical },
+                ],
+            },
+            {
+                title: 'AI 模型',
+                items: [
+                    { label: '模型配置', path: '/ai-models', icon: Bot },
+                    { label: '转人工规则', path: '/handover-rules', icon: Settings },
+                ],
+            },
+            {
+                items: [
+                    { label: '接入配置', path: '/integration', icon: Plug },
+                ],
+            },
         ],
     },
     {
-        title: '管理',
-        items: [
-            { label: '应用管理', path: '/applications', icon: Smartphone, roles: ['TENANT_ADMIN', 'PLATFORM_ADMIN'] },
-            { label: '成员管理', path: '/users', icon: Users, roles: ['TENANT_ADMIN', 'TENANT_MEMBER', 'PLATFORM_ADMIN'] },
-            { label: '租户管理', path: '/tenants', icon: Building, roles: ['PLATFORM_ADMIN'] },
-            { label: '数据统计', path: '/dashboard', icon: LayoutDashboard },
-            { label: '用量统计', path: '/usage', icon: BarChart3, roles: ['PLATFORM_ADMIN', 'TENANT_ADMIN'] },
-            { label: '系统概览', path: '/platform/overview', icon: Activity, roles: ['PLATFORM_ADMIN'] },
-            { label: '共享模型池', path: '/platform/models', icon: Boxes, roles: ['PLATFORM_ADMIN'] },
-            { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal, roles: ['PLATFORM_ADMIN'] },
-            { label: '审计日志', path: '/audit-logs', icon: ScrollText, roles: ['PLATFORM_ADMIN', 'TENANT_ADMIN'] },
-            { label: '租户配置', path: '/tenant/config', icon: Building2, roles: ['TENANT_ADMIN'] },
-        ],
+        title: '客服中心',
+        groups: [{
+            items: [
+                { label: '智能问答', path: '/chat', icon: MessageSquare },
+                { label: '人工工作台', path: '/agent', icon: UserPen },
+                { label: '会话管理', path: '/sessions', icon: History },
+            ],
+        }],
+    },
+    {
+        title: '数据统计',
+        groups: [{
+            items: [
+                { label: '效果分析', path: '/dashboard', icon: LayoutDashboard },
+                { label: '用量统计', path: '/usage', icon: BarChart3, roles: ['PLATFORM_ADMIN', 'TENANT_ADMIN'] },
+            ],
+        }],
     },
 ];
 
-const allItems = sections.flatMap((s) => s.items);
+const allItems = sections.flatMap((s) => s.groups).flatMap((g) => g.items);
 
 const MainLayout: React.FC = () => {
     const location = useLocation();
@@ -109,8 +150,11 @@ const MainLayout: React.FC = () => {
 
                 <nav className="flex-1 p-4 space-y-6 overflow-y-auto font-sans">
                     {sections.map((section) => {
-                        const visibleItems = section.items.filter(canSee);
-                        if (visibleItems.length === 0) return null;
+                        if (section.roles && !(user?.role && section.roles.includes(user.role))) return null;
+                        const visibleGroups = section.groups
+                            .map((group) => ({ ...group, items: group.items.filter(canSee) }))
+                            .filter((group) => group.items.length > 0);
+                        if (visibleGroups.length === 0) return null;
                         const disabled = !!section.requireApp && !currentApp;
                         return (
                             <div key={section.title} className="space-y-1">
@@ -118,32 +162,45 @@ const MainLayout: React.FC = () => {
                                     {section.title}
                                     {section.requireApp && currentApp ? ` · ${currentApp.name}` : ''}
                                 </p>
-                                {visibleItems.map((item) =>
-                                    disabled ? (
-                                        <div
-                                            key={item.path}
-                                            title="请先在上方选择应用"
-                                            className="flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground/40 cursor-not-allowed"
-                                        >
-                                            <item.icon className="w-5 h-5 shrink-0" />
-                                            <span className="font-medium text-sm">{item.label}</span>
-                                        </div>
-                                    ) : (
-                                        <Link
-                                            key={item.path}
-                                            to={item.path}
-                                            className={cn(
-                                                "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200",
-                                                location.pathname === item.path
-                                                    ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                                                    : "hover:bg-muted/80 text-muted-foreground hover:text-foreground hover:translate-x-1"
-                                            )}
-                                        >
-                                            <item.icon className="w-5 h-5 shrink-0" />
-                                            <span className="font-medium text-sm">{item.label}</span>
-                                        </Link>
-                                    )
-                                )}
+                                {visibleGroups.map((group, groupIndex) => (
+                                    <div key={group.title ?? groupIndex} className="space-y-1">
+                                        {group.title && (
+                                            <p className="px-3 pt-2 text-[10px] font-medium tracking-wide text-muted-foreground/45">
+                                                {group.title}
+                                            </p>
+                                        )}
+                                        {group.items.map((item) =>
+                                            disabled ? (
+                                                <div
+                                                    key={item.path}
+                                                    title="请先在上方选择应用"
+                                                    className={cn(
+                                                        "flex items-center gap-3 px-3 py-2 rounded-lg text-muted-foreground/40 cursor-not-allowed",
+                                                        group.title && "ml-2"
+                                                    )}
+                                                >
+                                                    <item.icon className="w-5 h-5 shrink-0" />
+                                                    <span className="font-medium text-sm">{item.label}</span>
+                                                </div>
+                                            ) : (
+                                                <Link
+                                                    key={item.path}
+                                                    to={item.path}
+                                                    className={cn(
+                                                        "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200",
+                                                        group.title && "ml-2",
+                                                        location.pathname === item.path
+                                                            ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                                                            : "hover:bg-muted/80 text-muted-foreground hover:text-foreground hover:translate-x-1"
+                                                    )}
+                                                >
+                                                    <item.icon className="w-5 h-5 shrink-0" />
+                                                    <span className="font-medium text-sm">{item.label}</span>
+                                                </Link>
+                                            )
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         );
                     })}
