@@ -11,6 +11,7 @@ import com.qingyu.care.dto.UsageAnalyticsDTO.Summary;
 import com.qingyu.care.dto.UsageAnalyticsDTO.TrendPoint;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.repository.ApplicationRepository;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
@@ -71,6 +72,7 @@ public class AnalyticsService {
     private final StatDocHitDailyRepository docHitRepository;
     private final ChatMessageRepository messageRepository;
     private final DocumentRepository documentRepository;
+    private final ConfigService configService;
 
     /**
      * 获取用量看板数据。
@@ -132,7 +134,26 @@ public class AnalyticsService {
                 ? buildTenantRanking(fromDate)
                 : buildAppRanking(fromDate, tenantId);
 
-        return new UsageAnalyticsDTO(summary, trend, ranking, platform ? "PLATFORM" : "TENANT");
+        // ===== 成本估算（平台配置费率 × 区间 token 总量） =====
+        double pricePer1k = resolvePricePer1kTokens();
+        UsageAnalyticsDTO.Pricing pricing = new UsageAnalyticsDTO.Pricing(
+                pricePer1k, round2(totalTokens / 1000.0 * pricePer1k));
+
+        return new UsageAnalyticsDTO(summary, trend, ranking, pricing, platform ? "PLATFORM" : "TENANT");
+    }
+
+    /** 平台配置的 token 费率（billing.cost.price-per-1k-tokens，元/1K token）；未配置/非法/非正值按 0 */
+    private double resolvePricePer1kTokens() {
+        String value = configService.get(OwnerScope.PLATFORM, null, "billing.cost.price-per-1k-tokens", null);
+        if (value == null || value.isBlank()) {
+            return 0.0;
+        }
+        try {
+            double price = Double.parseDouble(value.trim());
+            return price > 0 ? price : 0.0;
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
     }
 
     /** 平台视角：Top N 租户排行，回填租户名称 */

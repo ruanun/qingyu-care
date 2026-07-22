@@ -3,7 +3,7 @@ import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { Loader2, RefreshCw, Phone, MessageCircle, Coins, Bot, UserPen } from 'lucide-react';
+import { Loader2, RefreshCw, Phone, MessageCircle, Coins, Bot, UserPen, Wallet } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -95,6 +95,9 @@ const UsagePage: React.FC = () => {
     }
 
     const s = data?.summary;
+    // 成本估算：费率为 0 表示平台未配置（平台配置页 billing.cost.price-per-1k-tokens）
+    const price = data?.pricing?.pricePer1kTokens ?? 0;
+    const costOf = (tokens: number) => `¥${(tokens / 1000 * price).toFixed(2)}`;
 
     return (
         <div className="p-8 max-w-6xl mx-auto space-y-6 h-full overflow-y-auto">
@@ -140,9 +143,16 @@ const UsagePage: React.FC = () => {
 
             {section === 'usage' && (<>
             {/* 汇总卡片 */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 <StatCard icon={<Phone className="w-4 h-4 text-primary" />} label="调用数" value={s?.totalCalls ?? 0} />
                 <StatCard icon={<Coins className="w-4 h-4 text-amber-500" />} label="Token" value={s?.totalTokens ?? 0} />
+                <StatCard
+                    icon={<Wallet className="w-4 h-4 text-rose-500" />}
+                    label="预估成本"
+                    value={price > 0
+                        ? `¥${data?.pricing?.totalCostYuan ?? 0}`
+                        : <span className="text-base text-muted-foreground" title="平台配置页设置 Token 费率后启用">未配费率</span>}
+                />
                 <StatCard icon={<MessageCircle className="w-4 h-4 text-green-500" />} label="会话数" value={s?.totalSessions ?? 0} />
                 <StatCard icon={<Bot className="w-4 h-4 text-blue-500" />} label="AI 解决率" value={`${s?.aiResolutionRate ?? 0}%`} />
                 <StatCard icon={<UserPen className="w-4 h-4 text-purple-500" />} label="转人工率" value={`${s?.handoverRate ?? 0}%`} />
@@ -210,6 +220,7 @@ const UsagePage: React.FC = () => {
                                         <th className="text-left py-2 font-medium">{isTenant ? '应用' : '租户'}</th>
                                         <th className="text-right py-2 font-medium">调用数</th>
                                         <th className="text-right py-2 font-medium">Token</th>
+                                        {price > 0 && <th className="text-right py-2 font-medium">预估成本</th>}
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -218,6 +229,7 @@ const UsagePage: React.FC = () => {
                                             <td className="py-2">{r.name}</td>
                                             <td className="py-2 text-right font-mono">{r.calls}</td>
                                             <td className="py-2 text-right font-mono">{r.tokens}</td>
+                                            {price > 0 && <td className="py-2 text-right font-mono">{costOf(r.tokens)}</td>}
                                         </tr>
                                     ))}
                                 </tbody>
