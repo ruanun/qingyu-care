@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
     MessageSquare, Database, UserPen, LayoutDashboard,
@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { useAppStore } from '@/stores/appStore';
+import { platformService } from '@/api/platform';
 import AppSwitcher from '@/components/AppSwitcher';
 import {
     DropdownMenu,
@@ -121,6 +122,14 @@ const MainLayout: React.FC = () => {
     const navigate = useNavigate();
     const { user, logout } = useAuthStore();
     const { currentApp } = useAppStore();
+    const [announcement, setAnnouncement] = useState('');
+
+    // 系统公告（平台配置 platform.announcement）：获取失败静默降级为无公告
+    useEffect(() => {
+        platformService.getAnnouncement()
+            .then((res) => setAnnouncement((res.data ?? '').trim()))
+            .catch(() => setAnnouncement(''));
+    }, []);
 
     const canSee = (item: NavItem) =>
         !item.roles || (!!user?.role && item.roles.includes(user.role));
@@ -253,6 +262,11 @@ const MainLayout: React.FC = () => {
                         <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 font-medium">服务运行中</span>
                     </div>
                 </header>
+                {announcement && (
+                    <div className="px-6 py-1.5 text-sm bg-primary/10 text-primary border-b shrink-0 truncate" title={announcement}>
+                        📢 {announcement}
+                    </div>
+                )}
                 {/* key=currentApp.id：切换应用时强制重挂载页面，触发重新拉取数据 */}
                 <div key={currentApp?.id ?? 'none'} className="flex-1 overflow-hidden relative">
                     <Outlet />

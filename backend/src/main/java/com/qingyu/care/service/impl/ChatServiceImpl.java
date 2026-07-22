@@ -8,8 +8,11 @@ import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
+import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatService;
+import com.qingyu.care.service.ConfigService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.ModelRouterService;
@@ -61,6 +64,7 @@ public class ChatServiceImpl implements ChatService {
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
     private final AbTestService abTestService;
+    private final ConfigService configService;
 
     @Override
     @Transactional
@@ -148,10 +152,10 @@ public class ChatServiceImpl implements ChatService {
         // 构建消息历史
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy);
         
-        // 调用AI（动态模型路由）；取完整响应以拿到 token 用量
+        // 调用AI（动态模型路由，场景取租户配置 tenant.default.model.scenario）；取完整响应以拿到 token 用量
         final List<Message> finalMessages = messages;
         org.springframework.ai.chat.model.ChatResponse aiResp =
-                modelRouterService.callWithFallback("default", client ->
+                modelRouterService.callWithFallback(resolveModelScenario(), client ->
                         client.prompt().messages(finalMessages).call().chatResponse());
         // M4: 取文本用 getResult().getOutput().getContent()（1.0 GA 才是 getText()）
         String response = aiResp.getResult().getOutput().getContent();
@@ -212,7 +216,8 @@ public class ChatServiceImpl implements ChatService {
         String hitDocumentIds = extractHitDocumentIds(relevantDocs);
         String userMessage = request.getMessage();
 
-        ChatClient chatClient = modelRouterService.getDefaultChatClient();
+        // 场景解析读租户配置（依赖 TenantContext），须在请求线程完成，不能挪进响应式管道
+        ChatClient chatClient = modelRouterService.getChatClientForScenario(resolveModelScenario());
         // stream().chatResponse() 返回 Flux<org.springframework.ai.chat.model.ChatResponse>
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 chatClient.prompt().messages(messages).stream().chatResponse();
@@ -408,6 +413,16 @@ public class ChatServiceImpl implements ChatService {
     ChatStrategy resolveStrategy(ChatSession session) {
         return abTestService.resolveVariantStrategy(session.getExperimentId(), session.getVariantStrategyId())
                 .orElseGet(() -> chatStrategyService.getActiveStrategy("default"));
+    }
+
+    /**
+     * 解析当前租户的默认模型场景（租户配置 tenant.default.model.scenario，缺省 default）。
+     * 只影响模型路由（callWithFallback / 流式 ChatClient 选择）；问答策略的场景解析与
+     * 会话摘要等辅助任务不受此配置影响，仍走 default。依赖 TenantContext，须在请求线程调用。
+     */
+    String resolveModelScenario() {
+        return configService.get(OwnerScope.TENANT, TenantContext.getTenantId(),
+                "tenant.default.model.scenario", "default");
     }
 
     /**

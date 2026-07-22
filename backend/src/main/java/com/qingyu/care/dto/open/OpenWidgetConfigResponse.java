@@ -26,8 +26,15 @@ public class OpenWidgetConfigResponse {
     private String themeColor;
 
     public static OpenWidgetConfigResponse of(Application app) {
+        return of(app, null);
+    }
+
+    /**
+     * @param brandName 租户配置的对外品牌名（tenant.display.name），非空时覆盖应用名对外展示
+     */
+    public static OpenWidgetConfigResponse of(Application app, String brandName) {
         return OpenWidgetConfigResponse.builder()
-                .appName(app.getName())
+                .appName(brandName != null && !brandName.isBlank() ? brandName : app.getName())
                 .welcomeMessage(app.getWelcomeMessage())
                 .avatar(app.getAvatar())
                 .themeColor(app.getThemeColor())

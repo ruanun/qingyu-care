@@ -18,4 +18,7 @@ public interface SysConfigRepository extends JpaRepository<SysConfig, Long> {
     // 租户级
     List<SysConfig> findByScopeAndTenantId(OwnerScope scope, Long tenantId);
     Optional<SysConfig> findByScopeAndTenantIdAndConfigKey(OwnerScope scope, Long tenantId, String configKey);
+
+    /** 某配置键在指定范围内的全部行（跨租户，供定时任务收集各租户覆盖值） */
+    List<SysConfig> findByScopeAndConfigKey(OwnerScope scope, String configKey);
 }
