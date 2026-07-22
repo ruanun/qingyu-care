@@ -23,7 +23,7 @@ class WebhookDispatcherTest {
     @Mock ApplicationRepository applicationRepository;
     @Mock WebhookDeliveryRepository deliveryRepository;
     @Mock WebhookPayloadBuilder payloadBuilder;
-    @Mock WebhookSender sender;
+    @Mock WebhookQueue queue;
     @InjectMocks WebhookDispatcher dispatcher;
 
     private WebhookDomainEvent event() {
@@ -37,7 +37,7 @@ class WebhookDispatcherTest {
     @Test
     void skips_whenAppIdNull() {
         dispatcher.onDomainEvent(new WebhookDomainEvent("session.ended", null, 1L, "s-1", null, LocalDateTime.now()));
-        verifyNoInteractions(deliveryRepository, sender);
+        verifyNoInteractions(deliveryRepository, queue);
     }
 
     @Test
@@ -45,7 +45,7 @@ class WebhookDispatcherTest {
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(app(null, "session.ended")));
         dispatcher.onDomainEvent(event());
         verify(deliveryRepository, never()).save(any());
-        verifyNoInteractions(sender);
+        verifyNoInteractions(queue);
     }
 
     @Test
@@ -54,7 +54,7 @@ class WebhookDispatcherTest {
                 Optional.of(app("https://u", "session.handover_requested")));
         dispatcher.onDomainEvent(event());
         verify(deliveryRepository, never()).save(any());
-        verifyNoInteractions(sender);
+        verifyNoInteractions(queue);
     }
 
     @Test
@@ -71,6 +71,6 @@ class WebhookDispatcherTest {
         dispatcher.onDomainEvent(event());
 
         verify(deliveryRepository, atLeastOnce()).save(any());
-        verify(sender).deliverAsync(100L);
+        verify(queue).dispatch(100L);
     }
 }

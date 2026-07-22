@@ -23,6 +23,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # 短超时：Redis 为可选依赖（限流/Webhook 队列均 fail-open），
+      # 故障时快速失败进入降级路径，不拖慢业务线程
+      connect-timeout: 1000
+      timeout: 2000
 
   # JPA 配置
   jpa:
@@ -104,6 +108,20 @@ qingyu:
       retry-scan-interval-ms: 30000
       # 各次失败后的退避分钟数
       backoff-minutes: [1, 5, 15, 30, 60]
+      # Redis Stream 队列投递（关闭或 Redis 故障冷却期回退 @Async 直投，DB 重试扫描兜底）
+      queue:
+        enabled: true
+        stream-key: "qingyu:webhook:deliveries"
+        group: webhook-workers
+        # 消费轮询间隔（毫秒，fixedDelay）
+        poll-interval-ms: 200
+        # 单次批量拉取条数 / XREADGROUP 阻塞等待（毫秒）
+        batch-size: 16
+        block-ms: 1000
+        # 流近似截断长度（防无界增长）
+        max-length: 10000
+        # Redis 故障冷却时长（毫秒）：冷却期内直接直投
+        failure-cooldown-ms: 5000
 
     # 会话配置
     session:
