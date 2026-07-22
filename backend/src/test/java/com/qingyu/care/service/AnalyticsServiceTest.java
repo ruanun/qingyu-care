@@ -28,6 +28,7 @@ class AnalyticsServiceTest {
     @Mock TenantRepository tenantRepository;
     @Mock ApplicationRepository applicationRepository;
     @Mock AuthService authService;
+    @Mock ConfigService configService;
     @InjectMocks AnalyticsService service;
 
     private UsageDailyRow usageRow(LocalDate d, long calls, long tokens, long messages) {
@@ -135,5 +136,45 @@ class AnalyticsServiceTest {
 
         assertThat(service.getUsage(5, null).trend()).hasSize(30);
         assertThat(service.getUsage(90, null).trend()).hasSize(90);
+    }
+
+    @Test
+    void 配置了token费率_按区间token总量估算成本() {
+        LocalDate today = LocalDate.now();
+        when(authService.isPlatformAdmin()).thenReturn(true);
+        when(usageRepository.aggregateDaily(any(), isNull(), isNull()))
+                .thenReturn(List.of(usageRow(today, 2, 3000, 2)));
+        when(sessionRepository.aggregateDailySessions(any(), isNull(), isNull())).thenReturn(List.of());
+        when(sessionRepository.aggregateSessionSummary(any(), isNull(), isNull()))
+                .thenReturn(summaryRow(0, 0, 0, 0));
+        when(usageRepository.rankByTenant(any(), any())).thenReturn(List.of());
+        when(configService.get(any(), isNull(), eq("billing.cost.price-per-1k-tokens"), isNull()))
+                .thenReturn("0.02");
+
+        UsageAnalyticsDTO dto = service.getUsage(30, null);
+
+        assertThat(dto.pricing().pricePer1kTokens()).isEqualTo(0.02);
+        assertThat(dto.pricing().totalCostYuan()).isEqualTo(0.06); // 3000/1000 × 0.02
+    }
+
+    @Test
+    void 未配置或非法费率_成本按0且费率为0() {
+        when(authService.isPlatformAdmin()).thenReturn(true);
+        when(usageRepository.aggregateDaily(any(), isNull(), isNull())).thenReturn(List.of());
+        when(sessionRepository.aggregateDailySessions(any(), isNull(), isNull())).thenReturn(List.of());
+        when(sessionRepository.aggregateSessionSummary(any(), isNull(), isNull()))
+                .thenReturn(summaryRow(0, 0, 0, 0));
+        when(usageRepository.rankByTenant(any(), any())).thenReturn(List.of());
+
+        // 未配置（mock 默认返回 null）
+        assertThat(service.getUsage(30, null).pricing().pricePer1kTokens()).isEqualTo(0.0);
+
+        // 非法值与非正值一律按未配置处理
+        when(configService.get(any(), isNull(), eq("billing.cost.price-per-1k-tokens"), isNull()))
+                .thenReturn("abc");
+        assertThat(service.getUsage(30, null).pricing().totalCostYuan()).isEqualTo(0.0);
+        when(configService.get(any(), isNull(), eq("billing.cost.price-per-1k-tokens"), isNull()))
+                .thenReturn("-1");
+        assertThat(service.getUsage(30, null).pricing().pricePer1kTokens()).isEqualTo(0.0);
     }
 }

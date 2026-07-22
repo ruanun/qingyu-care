@@ -24,10 +24,17 @@ export interface UsageRankingItem {
     tokens: number;
 }
 
+/** 成本估算：pricePer1kTokens 为 0 表示平台未配置费率 */
+export interface UsagePricing {
+    pricePer1kTokens: number;
+    totalCostYuan: number;
+}
+
 export interface UsageAnalytics {
     summary: UsageSummary;
     trend: UsageTrendPoint[];
     ranking: UsageRankingItem[];
+    pricing: UsagePricing;
     scope: 'PLATFORM' | 'TENANT';
 }
 
