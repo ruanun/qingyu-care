@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -72,11 +73,17 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取指定模型配置
+     * 获取指定模型配置。
+     * findById 不受 Hibernate @Filter 保护，显式补租户归属校验——否则已登录租户可枚举 id
+     * 跨租户读到他人模型配置（含明文 apiKey）。不匹配按「不存在」处理，与查不到同语义防探测。
      */
     public AiModelConfig getById(Long id) {
-        return repository.findById(id)
+        AiModelConfig config = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("AI模型配置", id.toString()));
+        if (!TenantOwnershipGuard.belongsToCurrentContext(config.getTenantId(), config.getAppId())) {
+            throw new ResourceNotFoundException("AI模型配置", id.toString());
+        }
+        return config;
     }
 
     /**
@@ -89,11 +96,13 @@ public class ModelRouterService {
     }
 
     /**
-     * 删除模型配置
+     * 删除模型配置。经 getById 显式归属校验后再删——deleteById 直连主键同样绕 @Filter，
+     * 否则租户可枚举 id 删他人模型配置。
      */
     @Transactional
     public void deleteModel(Long id) {
-        repository.deleteById(id);
+        AiModelConfig config = getById(id);
+        repository.delete(config);
         log.info("Deleted AI model config: {}", id);
     }
 

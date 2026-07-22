@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.ExperimentStatus;
 import com.qingyu.care.exception.BusinessException;
@@ -99,8 +100,13 @@ public class ChatStrategyService {
      * 管理：根据 ID 获取
      */
     public ChatStrategy getById(Long id) {
-        return repository.findById(id)
+        ChatStrategy strategy = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("问答策略", id.toString()));
+        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测
+        if (!TenantOwnershipGuard.belongsToCurrentContext(strategy.getTenantId(), strategy.getAppId())) {
+            throw new ResourceNotFoundException("问答策略", id.toString());
+        }
+        return strategy;
     }
 
     /**

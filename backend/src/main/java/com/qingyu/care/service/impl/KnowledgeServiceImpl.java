@@ -1,5 +1,6 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
@@ -81,8 +82,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public KnowledgeBase getKnowledgeBase(Long id) {
-        return knowledgeBaseRepository.findById(id)
+        KnowledgeBase kb = knowledgeBaseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Knowledge base not found: " + id));
+        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测
+        if (!TenantOwnershipGuard.belongsToCurrentContext(kb.getTenantId(), kb.getAppId())) {
+            throw new RuntimeException("Knowledge base not found: " + id);
+        }
+        return kb;
     }
 
     @Override
@@ -100,7 +106,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public void deleteKnowledgeBase(Long id) {
-        knowledgeBaseRepository.deleteById(id);
+        // 经 getKnowledgeBase 显式归属校验后再删——deleteById 直连主键同样绕 @Filter
+        KnowledgeBase kb = getKnowledgeBase(id);
+        knowledgeBaseRepository.delete(kb);
     }
 
     @Override
@@ -138,8 +146,20 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     @Override
     public Document getDocument(Long documentId) {
-        return documentRepository.findById(documentId)
+        Document doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
+        requireDocumentOwnership(doc, documentId);
+        return doc;
+    }
+
+    /**
+     * 文档归属校验：findById 不受 @Filter 保护，加载后显式补校验，不匹配按「不存在」同语义处理防探测。
+     * 供 getDocument / deleteDocument / reprocessDocument / getDocumentStatus 复用。
+     */
+    private void requireDocumentOwnership(Document doc, Long documentId) {
+        if (!TenantOwnershipGuard.belongsToCurrentContext(doc.getTenantId(), doc.getAppId())) {
+            throw new RuntimeException("Document not found: " + documentId);
+        }
     }
 
     @Override
@@ -147,7 +167,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public void deleteDocument(Long documentId) {
         Document doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
-        
+        requireDocumentOwnership(doc, documentId);
+
         // 删除向量存储中的数据（根据 metadata 中的 documentId）
         try {
             int deletedCount = vectorStoreRepository.deleteByDocumentId(documentId.toString());
@@ -170,6 +191,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public void reprocessDocument(Long documentId) {
         Document doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("Document not found: " + documentId));
+        requireDocumentOwnership(doc, documentId);
         doc.setStatus(DocumentStatus.PENDING);
         documentRepository.save(doc);
         processDocumentAsync(documentId);
@@ -259,6 +281,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public com.qingyu.care.dto.DocumentStatusDTO getDocumentStatus(Long documentId) {
         Document doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new RuntimeException("文档不存在: " + documentId));
+        requireDocumentOwnership(doc, documentId);
         return convertToStatusDTO(doc);
     }
     

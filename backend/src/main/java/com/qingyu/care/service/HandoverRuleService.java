@@ -3,6 +3,7 @@ package com.qingyu.care.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -84,8 +85,13 @@ public class HandoverRuleService {
      * 获取指定规则
      */
     public HandoverRule getById(Long id) {
-        return repository.findById(id)
+        HandoverRule rule = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("转人工规则", id.toString()));
+        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测
+        if (!TenantOwnershipGuard.belongsToCurrentContext(rule.getTenantId(), rule.getAppId())) {
+            throw new ResourceNotFoundException("转人工规则", id.toString());
+        }
+        return rule;
     }
 
     /**
