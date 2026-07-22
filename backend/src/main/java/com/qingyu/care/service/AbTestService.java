@@ -121,6 +121,62 @@ public class AbTestService {
         repository.delete(exp);
     }
 
+    /** 分桶结果三元组（落 ChatSession 三字段） */
+    public record VariantAssignment(Long experimentId, String variantName, Long variantStrategyId) {}
+
+    /**
+     * 为新会话分桶（仅开放路径调用）。fail-soft：无运行实验或任何异常返回 empty，
+     * 会话不参与实验、不阻断对话。
+     */
+    public java.util.Optional<VariantAssignment> assignForNewSession() {
+        try {
+            return repository.findFirstByStatus(ExperimentStatus.RUNNING)
+                    .map(exp -> {
+                        AbVariant v = pickVariant(exp.getVariants(),
+                                java.util.concurrent.ThreadLocalRandom.current().nextInt(100));
+                        return new VariantAssignment(exp.getId(), v.getName(), v.getStrategyId());
+                    });
+        } catch (Exception e) {
+            log.warn("A/B 分桶失败，会话不参与实验: {}", e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * 纯函数：按累计权重区间取变体（roll ∈ [0,100)）。权重 0 的变体区间为空，永不选中。
+     * static 免容器单测（同 ChatServiceImpl.meterContentStream 惯例）。
+     */
+    static AbVariant pickVariant(List<AbVariant> variants, int roll) {
+        int cumulative = 0;
+        for (AbVariant v : variants) {
+            cumulative += v.getWeight();
+            if (roll < cumulative) {
+                return v;
+            }
+        }
+        // 理论不可达（启动校验保证权重和=100），防御性兜底取末位
+        return variants.get(variants.size() - 1);
+    }
+
+    /**
+     * 对话时解析变体策略。empty = 走默认策略（未参与实验 / 实验已结束或被删 /
+     * 策略被禁用或删除 / 异常，全部 fail-soft）。
+     */
+    public java.util.Optional<ChatStrategy> resolveVariantStrategy(Long experimentId, Long variantStrategyId) {
+        if (experimentId == null || variantStrategyId == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return repository.findById(experimentId)
+                    .filter(e -> e.getStatus() == ExperimentStatus.RUNNING)
+                    .flatMap(e -> strategyRepository.findById(variantStrategyId))
+                    .filter(s -> Boolean.TRUE.equals(s.getEnabled()));
+        } catch (Exception e) {
+            log.warn("解析变体策略失败，回退默认策略: {}", e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
     /** 基础合法性：变体名非空不重复、权重 0~100、必须绑定策略（权重和只在 start 强校验） */
     private void validateVariantBasics(List<AbVariant> variants) {
         if (variants == null || variants.isEmpty()) {
