@@ -115,8 +115,8 @@ public class ChatServiceImpl implements ChatService {
                     .build();
         }
         
-        // 获取策略配置（默认为 default，未来可扩充根据请求场景选择）
-        ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
+        // 获取策略配置（会话带 A/B 变体时用变体策略）
+        ChatStrategy strategy = resolveStrategy(session);
 
         // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
@@ -146,7 +146,7 @@ public class ChatServiceImpl implements ChatService {
         String context = buildContext(relevantDocs);
         
         // 构建消息历史
-        List<Message> messages = buildMessages(session, request.getMessage(), context);
+        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy);
         
         // 调用AI（动态模型路由）；取完整响应以拿到 token 用量
         final List<Message> finalMessages = messages;
@@ -202,10 +202,10 @@ public class ChatServiceImpl implements ChatService {
         // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索）；
         // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
         ChatSession session = getOrCreateSession(request);
-        ChatStrategy strategy = chatStrategyService.getActiveStrategy("default");
+        ChatStrategy strategy = resolveStrategy(session);
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         String context = buildContext(relevantDocs);
-        List<Message> messages = buildMessages(session, request.getMessage(), context);
+        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy);
 
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
                 relevantDocs.stream().mapToDouble(ChatServiceImpl::resolveConfidenceScore).max().orElse(0.0);
@@ -401,6 +401,31 @@ public class ChatServiceImpl implements ChatService {
                 session.getSessionId(), "user_request", LocalDateTime.now()));
     }
     
+    /**
+     * 取本次对话生效的策略：会话带有效变体（实验仍 RUNNING 且策略可用）→ 变体策略；
+     * 其余一切情形回退默认策略。package-private 便于同包单测。
+     */
+    ChatStrategy resolveStrategy(ChatSession session) {
+        return abTestService.resolveVariantStrategy(session.getExperimentId(), session.getVariantStrategyId())
+                .orElseGet(() -> chatStrategyService.getActiveStrategy("default"));
+    }
+
+    /**
+     * 解析系统 Prompt 模板：策略绑定 promptTemplateId 优先（闭合该字段长期未接线的缺口，
+     * 取不到 fail-soft 回退），否则全局激活模板。package-private 便于同包单测。
+     */
+    String resolveSystemTemplate(ChatStrategy strategy) {
+        if (strategy != null && strategy.getPromptTemplateId() != null) {
+            try {
+                return promptTemplateService.getById(strategy.getPromptTemplateId()).getContent();
+            } catch (Exception e) {
+                log.warn("策略绑定的 Prompt 模板不可用（id={}），回退全局激活模板: {}",
+                        strategy.getPromptTemplateId(), e.getMessage());
+            }
+        }
+        return promptTemplateService.getActiveTemplateContent();
+    }
+
     private ChatSession getOrCreateSession(ChatRequest request) {
         if (request.getSessionId() != null) {
             return sessionRepository.findBySessionId(request.getSessionId())
@@ -481,11 +506,12 @@ public class ChatServiceImpl implements ChatService {
                 .collect(Collectors.joining("\n\n---\n\n"));
     }
     
-    private List<Message> buildMessages(ChatSession session, String userMessage, String context) {
+    private List<Message> buildMessages(ChatSession session, String userMessage, String context,
+                                        ChatStrategy strategy) {
         List<Message> messages = new ArrayList<>();
-        
-        // 系统消息 - 从数据库获取激活的 Prompt 模板
-        String systemTemplate = promptTemplateService.getActiveTemplateContent();
+
+        // 系统消息 - 策略绑定模板优先，否则全局激活模板
+        String systemTemplate = resolveSystemTemplate(strategy);
         String systemPrompt = systemTemplate.replace("{context}", context);
         messages.add(new SystemMessage(systemPrompt));
         
