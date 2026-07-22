@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
 // 库模式：产出单文件 IIFE，直接输出到后端 static/。

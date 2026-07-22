@@ -24,7 +24,7 @@ services:
 
   # RustFS - S3 兼容对象存储 (官方配置)
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.0-beta.10
     container_name: qingyu-rustfs
     security_opt:
       - "no-new-privileges:true"
