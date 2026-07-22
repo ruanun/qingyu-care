@@ -157,9 +157,9 @@ public class ChatServiceImpl implements ChatService {
         org.springframework.ai.chat.model.ChatResponse aiResp =
                 modelRouterService.callWithFallback(resolveModelScenario(), client ->
                         client.prompt().messages(finalMessages).call().chatResponse());
-        // M4: 取文本用 getResult().getOutput().getContent()（1.0 GA 才是 getText()）
-        String response = aiResp.getResult().getOutput().getContent();
-        // M4: getTotalTokens() 返回 Long；安全空检查后转 Integer 填入 DTO
+        // Spring AI 1.x GA：取文本用 getResult().getOutput().getText()
+        String response = aiResp.getResult().getOutput().getText();
+        // getTotalTokens() 返回 Integer；安全空检查后填入 DTO
         Integer tokenUsage = (aiResp.getMetadata() != null && aiResp.getMetadata().getUsage() != null
                 && aiResp.getMetadata().getUsage().getTotalTokens() != null)
                 ? aiResp.getMetadata().getUsage().getTotalTokens().intValue()
@@ -180,7 +180,7 @@ public class ChatServiceImpl implements ChatService {
                 .suggestHandover(handoverRuleService.checkLowConfidenceTrigger(maxScore))
                 .knowledgeHits(relevantDocs.stream()
                         .map(doc -> ChatResponse.KnowledgeHit.builder()
-                                .content(truncateContent(doc.getContent(), 100))
+                                .content(truncateContent(doc.getText(), 100))
                                 .score(resolveConfidenceScore(doc))
                                 .source((String) doc.getMetadata().getOrDefault("source", "unknown"))
                                 .build())
@@ -246,7 +246,7 @@ public class ChatServiceImpl implements ChatService {
                     }
                 })
                 .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
-                        ? cr.getResult().getOutput().getContent() : null)
+                        ? cr.getResult().getOutput().getText() : null)
                 .doFinally(sig -> onTokensUsed.accept(tokens.get()));
     }
 
@@ -501,10 +501,12 @@ public class ChatServiceImpl implements ChatService {
 
             int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
             double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
-            SearchRequest searchRequest = SearchRequest.query(query)
-                    .withTopK(topK)
-                    .withSimilarityThreshold(threshold)
-                    .withFilterExpression(scope.toFilterExpression());
+            SearchRequest searchRequest = SearchRequest.builder()
+                    .query(query)
+                    .topK(topK)
+                    .similarityThreshold(threshold)
+                    .filterExpression(scope.toFilterExpression())
+                    .build();
             return vectorStore.similaritySearch(searchRequest);
         } catch (Exception e) {
             log.warn("Knowledge search failed: {}", e.getMessage());
@@ -517,7 +519,7 @@ public class ChatServiceImpl implements ChatService {
             return "暂无相关知识库内容。";
         }
         return docs.stream()
-                .map(Document::getContent)
+                .map(Document::getText)
                 .collect(Collectors.joining("\n\n---\n\n"));
     }
     

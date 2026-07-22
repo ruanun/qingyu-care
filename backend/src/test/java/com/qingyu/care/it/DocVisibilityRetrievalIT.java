@@ -81,12 +81,12 @@ class DocVisibilityRetrievalIT extends AbstractPostgresIT {
         seedChunk("内部价格表 产品型号XV-1111 说明", kb, "802", "INTERNAL", "true");
 
         List<Document> anonymous = search("产品型号XV-1111", DocumentVisibility.PUBLIC);
-        assertThat(anonymous).extracting(Document::getContent)
+        assertThat(anonymous).extracting(Document::getText)
                 .anyMatch(c -> c.contains("公开FAQ"))
                 .noneMatch(c -> c.contains("内部价格表"));
 
         List<Document> trusted = search("产品型号XV-1111", DocumentVisibility.INTERNAL);
-        assertThat(trusted).extracting(Document::getContent)
+        assertThat(trusted).extracting(Document::getText)
                 .anyMatch(c -> c.contains("公开FAQ"))
                 .anyMatch(c -> c.contains("内部价格表"));
     }
@@ -117,7 +117,7 @@ class DocVisibilityRetrievalIT extends AbstractPostgresIT {
         // 重新启用 → 恢复命中（chunk 未删、免重嵌入）
         vectorStoreRepository.updateDocEnabledByDocumentId("804", "true");
         assertThat(search("产品型号XV-3333", DocumentVisibility.INTERNAL))
-                .extracting(Document::getContent).anyMatch(c -> c.contains("可开关知识"));
+                .extracting(Document::getText).anyMatch(c -> c.contains("可开关知识"));
     }
 
     @Test

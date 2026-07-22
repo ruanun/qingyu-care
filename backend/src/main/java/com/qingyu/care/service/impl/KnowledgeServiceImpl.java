@@ -216,8 +216,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             TikaDocumentReader reader = new TikaDocumentReader(new ByteArrayResource(fileBytes));
             List<org.springframework.ai.document.Document> documents = reader.get();
             
-            // 切分文档
-            TokenTextSplitter splitter = new TokenTextSplitter(chunkSize, chunkOverlap, 5, 10000, true);
+            // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
+            TokenTextSplitter splitter = TokenTextSplitter.builder()
+                    .withChunkSize(chunkSize)
+                    .withMinChunkSizeChars(chunkOverlap)
+                    .withMinChunkLengthToEmbed(5)
+                    .withMaxNumChunks(10000)
+                    .withKeepSeparator(true)
+                    .build();
             List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
             
             // 添加元数据（包含租户隔离信息）——
@@ -246,7 +252,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             doc.setStatus(DocumentStatus.COMPLETED);
             doc.setChunkCount(chunks.size());
             doc.setContent(documents.stream()
-                    .map(org.springframework.ai.document.Document::getContent)
+                    .map(org.springframework.ai.document.Document::getText)
                     .reduce("", (a, b) -> a + "\n" + b));
             documentRepository.save(doc);
             

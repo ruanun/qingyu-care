@@ -126,7 +126,7 @@ class HybridRetrievalIT extends AbstractPostgresIT {
 
         List<Document> docs = search("产品型号XZ-9000");
 
-        assertThat(docs).extracting(Document::getContent).anyMatch(c -> c.contains("XZ-9000"));
+        assertThat(docs).extracting(Document::getText).anyMatch(c -> c.contains("XZ-9000"));
     }
 
     @Test
@@ -138,6 +138,6 @@ class HybridRetrievalIT extends AbstractPostgresIT {
         List<Document> docs = search("产品型号XZ-9000");
 
         // hybrid 关闭 → 只走向量路（fail-soft 空）；关键词 chunk 不应被召回
-        assertThat(docs).extracting(Document::getContent).noneMatch(c -> c.contains("XZ-9000"));
+        assertThat(docs).extracting(Document::getText).noneMatch(c -> c.contains("XZ-9000"));
     }
 }
