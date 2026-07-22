@@ -151,7 +151,7 @@ qingyu:
 dromara:
   x-file-storage:
     default-platform: rustfs
-    amazon-s3:
+    amazon-s3-v2:
       - platform: rustfs
         enable-storage: true
         access-key: ${STORAGE_ACCESS_KEY:rustfsadmin}

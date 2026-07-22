@@ -1,8 +1,5 @@
 package com.qingyu.care.service;
 
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.S3Object;
-import com.amazonaws.util.IOUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.x.file.storage.core.FileInfo;
@@ -10,8 +7,13 @@ import org.dromara.x.file.storage.core.FileStorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
@@ -26,12 +28,12 @@ import java.util.UUID;
 public class FileService {
 
     private final FileStorageService fileStorageService;
-    private final AmazonS3 amazonS3Client;
+    private final S3Client s3Client;
     
-    @Value("${dromara.x-file-storage.amazon-s3[0].bucket-name}")
+    @Value("${dromara.x-file-storage.amazon-s3-v2[0].bucket-name}")
     private String bucketName;
-    
-    @Value("${dromara.x-file-storage.amazon-s3[0].base-path:knowledge/}")
+
+    @Value("${dromara.x-file-storage.amazon-s3-v2[0].base-path:knowledge/}")
     private String basePath;
 
     /**
@@ -67,13 +69,15 @@ public class FileService {
         // filePath 已经是完整的 S3 对象键，不需要再加 basePath
         String objectKey = filePath;
         log.debug("S3 对象键: {}", objectKey);
-        
+
         try {
-            S3Object s3Object = amazonS3Client.getObject(bucketName, objectKey);
-            byte[] bytes = IOUtils.toByteArray(s3Object.getObjectContent());
+            byte[] bytes = s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(objectKey)
+                    .build()).asByteArray();
             log.info("文件下载成功: {} ({} bytes)", filePath, bytes.length);
             return bytes;
-        } catch (IOException e) {
+        } catch (SdkException e) {
             log.error("文件下载失败: {}", filePath, e);
             throw new RuntimeException("文件下载失败: " + filePath, e);
         }
@@ -95,7 +99,10 @@ public class FileService {
         
         try {
             // filePath 已经是完整的 S3 对象键
-            amazonS3Client.deleteObject(bucketName, filePath);
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(filePath)
+                    .build());
             log.info("文件删除成功: {}", filePath);
             return true;
         } catch (Exception e) {
@@ -113,7 +120,14 @@ public class FileService {
     public boolean fileExists(String filePath) {
         try {
             String objectKey = basePath + filePath;
-            return amazonS3Client.doesObjectExist(bucketName, objectKey);
+            // v2 无 doesObjectExist：headObject 成功即存在，NoSuchKey 即不存在
+            s3Client.headObject(HeadObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(objectKey)
+                    .build());
+            return true;
+        } catch (NoSuchKeyException e) {
+            return false;
         } catch (Exception e) {
             log.error("检查文件存在失败: {}", filePath, e);
             return false;
