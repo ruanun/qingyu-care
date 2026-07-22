@@ -2,7 +2,7 @@
 
 > 日期：2026-07-22
 > 作者：ruan
-> 状态：设计已确认，待实施
+> 状态：已实现（2026-07-22）
 > 前置：分析三件套（`2026-07-09-analytics-suite-design.md`）已合入 master(86f6892)
 
 ## 1. 背景与目标
@@ -162,3 +162,13 @@ Phase 4.4 的最后一项。为应用提供「问答策略 / Prompt 实验对比
 - **不做**：显著性检验、多实验并行 / 分层、用户级稳定分桶、按实验维度扩展 rollup、自动应用胜者（结束后由人工手动把胜出策略设为默认，现有策略页已支持）；
 - **取舍**：流式 AI 消息不落 `tokenUsage` 的既有局限不变，token 相关指标不进报表；关键词命中置信度为 0 的既有局限（见 `resolveConfidenceScore`）沿袭，对各变体公平不影响对比；
 - **实验期间改动变体所绑策略的参数**（策略本身仍可编辑）会即时影响该变体后续对话——不做快照，文档口径：实验期间请勿改动参与实验的策略。
+
+## 11. 实施偏差记录
+
+对照本设计的实施收尾（Task 12）复核，实际实现与设计存在以下偏差，逐条记录：
+
+1. **仓库查询方式调整**：`AbExperimentRepository` 判断"策略是否被 RUNNING 实验引用"（对应 §4.4 策略删除保护）改用 Spring Data 派生查询 `existsByStatusAndVariants_StrategyId(...)`，未采用原计划的 JPQL 布尔投影——计划自审阶段发现 Hibernate 6 对 `@ElementCollection` 字段的 JPQL 布尔投影支持有坑，提前改道派生查询规避。
+2. **创建接口加固**：`AbTestService.create()` 在落库前显式清空请求体带入的 `tenantId`/`appId`，交由 `TenantEntityListener` 按 `TenantContext` 回填——这是评审阶段发现的加固点：控制器请求体裸实体绑定（`@RequestBody AbExperiment`）存在跨租户写入面（攻击者可在请求体里塞任意 `tenantId`/`appId`），非设计原文范围，属评审补强。同类裸实体绑定的历史存量面（如 `ChatStrategyController` 等）本次未处理，留作独立技术债。
+3. **前端调用点加固**：管理页 `AbTestPage.tsx` 与报表视图六处调用点统一按 `res.code === 200` 判断业务成功（而非仅依赖 HTTP 状态码），并对创建/编辑对话框的单行权重输入补了整数区间校验——评审阶段发现并修复，避免误报成功或静默失败。
+4. **IT 防御性写法**：`AbTestFlowIT` 中读取消息关联 id 时用 `Number` 接收再转换，防止 JSON 数字类型自动拆箱异常——良性防御性写法，不影响业务语义。
+5. **遗留技术债备忘**（Task 8 评审记录）：裸实体绑定导致的跨租户写入面并非本特性独有，`ChatStrategyController` 等既有控制器存在同类存量问题，本特性仅加固了自身新增的 `AbTestController`/`AbTestService`，未扩面处理存量控制器，留待后续统一治理。
