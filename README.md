@@ -27,11 +27,14 @@
 - ✅ **操作审计日志** - 关键写操作自动记录（`@AuditLog` + AOP 异步落库、敏感字段脱敏）
 - ✅ **系统概览** - 系统健康状态与租户/应用/用户/会话关键指标
 - ✅ **对外接入** - 开放 REST API（`/open/v1/**`，服务端 `X-Api-Key` / 浏览器 Origin 白名单双路径鉴权，限流 + 用量计量）、JS Widget 一行嵌入（Shadow DOM 隔离）、Webhook 事件推送（HMAC-SHA256 签名 + 退避重试）
+- ✅ **用量统计看板** - 开放 API 调用次数 / token 消耗趋势与聚合（按角色自适应平台 / 租户 / 应用视角）
+- ✅ **计费与套餐额度** - 套餐额度映射（FREE/PRO/ENTERPRISE），调用 + token 双维度月度额度，超额 403 与近阈值告警，月度自然重置
+- ✅ **高级 RAG** - 多知识库联合检索、混合检索（向量 + zhparser 中文关键词 FTS，RRF 融合）、文档权限控制（PUBLIC/INTERNAL 按鉴权路径定级）
+- ✅ **分析与优化** - 对话质量评估、热点问题统计、知识库覆盖率分析（Widget 赞/踩反馈埋点 + rollup 日粒度预聚合看板）
 
 ### 规划中
-- 🚀 用量统计与计费、套餐管理
 - 🏢 多渠道接入（微信公众号 / 企业微信 / 钉钉 / 飞书）
-- 🏢 高级 RAG（多库联合检索、混合检索、文档权限）
+- 🏢 A/B 测试（问答策略 / Prompt 实验对比）
 
 > 详细路线图见 [`SaaS平台规划.md`](./SaaS平台规划.md)。
 
@@ -62,7 +65,7 @@
 | React Router | 7 | 路由 |
 
 ### 基础设施（`docker/docker-compose.yml`）
-PostgreSQL 17 (pgvector) · RustFS（S3 兼容对象存储） · Redis 7（缓存/消息队列，预留）
+PostgreSQL 17（自定义镜像 `qingyu/pgvector-zhparser:pg17`，pgvector 向量检索 + zhparser 中文分词） · RustFS（S3 兼容对象存储） · Redis 7（限流/缓存）
 
 ## 📁 项目结构
 
@@ -160,7 +163,8 @@ pnpm dev
 | `AiModelController` / `HandoverRuleController` | 模型配置与转人工规则 |
 | `TenantController` / `ApplicationController` / `UserController` | 租户 / 应用 / 用户管理 |
 | `DashboardController` | 统计仪表盘 |
-| `open/*`（`/open/v1/**`） | 对外开放 API：对话 / 会话 / Widget 配置（独立鉴权与限流） |
+| `AnalyticsController` / `BillingController` | 数据分析（用量 / 质量 / 热点 / 覆盖率）与套餐额度 |
+| `open/*`（`/open/v1/**`） | 对外开放 API：对话 / 会话 / 反馈 / Widget 配置（独立鉴权与限流） |
 
 ## 🔧 核心配置说明
 
@@ -179,8 +183,8 @@ pnpm dev
 ```
 Phase 1  多租户基础架构   ████████████ 已完成
 Phase 2  对外接入能力     ████████████ 已完成（开放 API + Widget + Webhook）
-Phase 3  管理后台         ███████████░ 接近完成（仅剩用量统计与账单，已延后）
-Phase 4  高级功能         ░░░░░░░░░░░░ 下一步（计费 / 多渠道 / 高级 RAG）
+Phase 3  管理后台         ████████████ 已完成（含用量统计看板）
+Phase 4  高级功能         █████████░░░ 进行中（计费额度 ✅ / 高级 RAG ✅ / 分析三件套 ✅；剩余：多渠道接入、A/B 测试）
 ```
 
 ## 📄 许可证
