@@ -8,6 +8,7 @@ import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
+import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
@@ -59,6 +60,7 @@ public class ChatServiceImpl implements ChatService {
     private final RetrievalScopeResolver retrievalScopeResolver;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final AbTestService abTestService;
 
     @Override
     @Transactional
@@ -407,15 +409,24 @@ public class ChatServiceImpl implements ChatService {
         return createNewSession(request);
     }
     
-    private ChatSession createNewSession(ChatRequest request) {
+    /** package-private 便于同包单测（同 persistStreamedMessages 惯例） */
+    ChatSession createNewSession(ChatRequest request) {
         ChatSession session = ChatSession.builder()
                 .sessionId(UUID.randomUUID().toString())
                 .userId(request.getUserId())
                 .status(SessionStatus.AI_PROCESSING)
                 .build();
-        session = sessionRepository.save(session);
-        log.info("Session {} created for user {}", session.getSessionId(), session.getUserId());
-        return session;
+        // 仅开放渠道参与 A/B 分流（管理后台测试对话不污染实验样本）
+        if (request.isOpenChannel()) {
+            abTestService.assignForNewSession().ifPresent(a -> {
+                session.setExperimentId(a.experimentId());
+                session.setVariantName(a.variantName());
+                session.setVariantStrategyId(a.variantStrategyId());
+            });
+        }
+        ChatSession saved = sessionRepository.save(session);
+        log.info("Session {} created for user {}", saved.getSessionId(), saved.getUserId());
+        return saved;
     }
     
     /**

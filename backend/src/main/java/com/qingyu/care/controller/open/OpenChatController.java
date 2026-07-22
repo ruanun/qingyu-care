@@ -101,6 +101,7 @@ public class OpenChatController {
                 .userId(req.getUserId())
                 .message(req.getMessage())
                 .stream(stream)
+                .openChannel(true)
                 .build();
     }
 }

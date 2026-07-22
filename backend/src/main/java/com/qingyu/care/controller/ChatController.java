@@ -37,13 +37,15 @@ public class ChatController {
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
+        request.setOpenChannel(false);
         ChatResponse response = chatService.chat(request);
         return ApiResponse.success(response);
     }
-    
+
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "流式聊天", description = "发送消息并以流式方式获取AI回复")
     public Flux<String> streamChat(@Valid @RequestBody ChatRequest request) {
+        request.setOpenChannel(false);
         return chatService.streamChat(request);
     }
     
