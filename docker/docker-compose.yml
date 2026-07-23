@@ -22,7 +22,7 @@ services:
     networks:
       - qingyu-network
 
-  # RustFS - S3 兼容对象存储 (官方配置)
+  # RustFS - S3 兼容对象存储（单节点单盘 SNSD 模式，官方推荐用于本地/小规模）
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.10
     container_name: qingyu-rustfs
@@ -30,29 +30,15 @@ services:
       - "no-new-privileges:true"
     ports:
       - "9000:9000"   # S3 API
-      - "9001:9001"   # Web Console
+      - "9001:9001"   # Web 控制台
     environment:
-      - RUSTFS_VOLUMES=/data/rustfs{0...3}
-      - RUSTFS_ADDRESS=0.0.0.0:9000
-      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_VOLUMES=/data          # 单盘模式；镜像已把 /data 归属 UID 10001，命名卷自动继承权限
       - RUSTFS_CONSOLE_ENABLE=true
-      - RUSTFS_EXTERNAL_ADDRESS=:9000
-      - RUSTFS_CORS_ALLOWED_ORIGINS=*
-      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=*
+      - RUSTFS_CORS_ALLOWED_ORIGINS=* # 本地开发放开跨域
       - RUSTFS_ACCESS_KEY=rustfsadmin
       - RUSTFS_SECRET_KEY=rustfsadmin123
-      - RUSTFS_OBS_LOGGER_LEVEL=info
-      - RUSTFS_OBJECT_CACHE_ENABLE=true
-      - RUSTFS_OBJECT_CACHE_TTL_SECS=300
     volumes:
-      - rustfs_data_0:/data/rustfs0
-      - rustfs_data_1:/data/rustfs1
-      - rustfs_data_2:/data/rustfs2
-      - rustfs_data_3:/data/rustfs3
-      - rustfs_logs:/app/logs
-    depends_on:
-      volume-permission-helper:
-        condition: service_completed_successfully
+      - rustfs_data:/data
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -f http://localhost:9000/health"]
       interval: 30s
@@ -63,27 +49,7 @@ services:
       - qingyu-network
     restart: unless-stopped
 
-  # RustFS 卷权限修复服务
-  volume-permission-helper:
-    image: alpine
-    container_name: qingyu-volume-helper
-    volumes:
-      - rustfs_data_0:/data0
-      - rustfs_data_1:/data1
-      - rustfs_data_2:/data2
-      - rustfs_data_3:/data3
-      - rustfs_logs:/logs
-    command: >
-      sh -c "
-        chown -R 10001:10001 /data0 /data1 /data2 /data3 /logs &&
-        echo 'Volume Permissions fixed' &&
-        exit 0
-      "
-    restart: "no"
-    networks:
-      - qingyu-network
-
-  # 初始化 RustFS Bucket
+  # 初始化 RustFS Bucket（x-file-storage 不会自动建桶，需预创建）
   createbuckets:
     image: minio/mc
     container_name: qingyu-createbuckets
@@ -94,8 +60,7 @@ services:
       /bin/sh -c "
       /usr/bin/mc alias set myrustfs http://rustfs:9000 rustfsadmin rustfsadmin123;
       /usr/bin/mc mb myrustfs/qingyu-care --ignore-existing;
-      /usr/bin/mc anonymous set public myrustfs/qingyu-care;
-      echo 'Bucket qingyu-care created successfully';
+      echo 'Bucket qingyu-care 已就绪';
       exit 0;
       "
     networks:
@@ -119,11 +84,7 @@ services:
 
 volumes:
   postgres_data:
-  rustfs_data_0:
-  rustfs_data_1:
-  rustfs_data_2:
-  rustfs_data_3:
-  rustfs_logs:
+  rustfs_data:
   redis_data:
 
 networks:
