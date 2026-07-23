@@ -37,4 +37,6 @@ test-output/
 
 # Compiled class files
 *.class
-interview-guide-ref
+
+# 参考项目目录（仅本地参考，不纳入版本控制）
+/references/
