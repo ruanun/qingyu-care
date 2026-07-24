@@ -1,8 +1,10 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import com.qingyu.care.repository.VectorStoreRepository;
@@ -14,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.vectorstore.VectorStore;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -126,5 +129,41 @@ class KnowledgeOwnershipTest {
 
         assertThatThrownBy(() -> service().getDocumentStatus(7L))
                 .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void getDocuments_越权kbId_不查询文档且按不存在处理() {
+        when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kbOwnedBy(9L)));
+        TenantContext.setTenantId(2L);
+
+        assertThatThrownBy(() -> service().getDocuments(1L))
+                .isInstanceOf(RuntimeException.class);
+        verify(documentRepository, never()).findByKnowledgeBaseId(any());
+    }
+
+    @Test
+    void getDocuments_本上下文kbId_正常查询() {
+        when(knowledgeBaseRepository.findById(1L)).thenReturn(Optional.of(kbOwnedBy(2L)));
+        when(documentRepository.findByKnowledgeBaseId(1L)).thenReturn(List.of());
+        TenantContext.setTenantId(2L);
+
+        List<Document> result = service().getDocuments(1L);
+
+        assertThat(result).isEmpty();
+        verify(documentRepository).findByKnowledgeBaseId(1L);
+    }
+
+    @Test
+    void getDocumentsStatus_按当前上下文归属过滤_剔除他租户文档() {
+        Document ownDoc = Document.builder().id(1L).name("本租户文档").status(DocumentStatus.COMPLETED).build();
+        ownDoc.setTenantId(2L);
+        Document otherDoc = Document.builder().id(2L).name("他租户文档").status(DocumentStatus.COMPLETED).build();
+        otherDoc.setTenantId(9L);
+        when(documentRepository.findAllById(List.of(1L, 2L))).thenReturn(List.of(ownDoc, otherDoc));
+        TenantContext.setTenantId(2L);
+
+        List<DocumentStatusDTO> result = service().getDocumentsStatus(List.of(1L, 2L));
+
+        assertThat(result).extracting(DocumentStatusDTO::getId).containsExactly(1L);
     }
 }

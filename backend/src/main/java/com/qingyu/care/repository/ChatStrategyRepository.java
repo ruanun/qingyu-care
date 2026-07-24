@@ -28,6 +28,19 @@ public interface ChatStrategyRepository extends JpaRepository<ChatStrategy, Long
     Optional<ChatStrategy> findPlatformDefaultByScenario(@Param("scenario") String scenario);
 
     /**
+     * 获取指定租户自有的所有策略（管理面用，不受启用/默认过滤）
+     */
+    List<ChatStrategy> findByTenantId(Long tenantId);
+
+    /**
+     * 查询全部平台默认策略（tenant_id IS NULL）——原生 SQL 绕过 Hibernate 租户过滤器，
+     * 管理面 list 用，确保平台默认在收窄后仍可见。
+     */
+    @Query(value = "SELECT * FROM chat_strategy WHERE tenant_id IS NULL ORDER BY scenario, id",
+           nativeQuery = true)
+    List<ChatStrategy> findAllPlatformDefaults();
+
+    /**
      * 获取指定场景的所有策略
      */
     List<ChatStrategy> findByScenarioOrderByIsDefaultDescCreatedAtDesc(String scenario);

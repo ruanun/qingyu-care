@@ -3,6 +3,7 @@ package com.qingyu.care.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
@@ -69,10 +70,23 @@ public class HandoverRuleService {
     }
 
     /**
-     * 获取所有规则
+     * 获取所有规则（管理面）：租户自有(按 tenantId) ∪ 平台默认(tenant_id IS NULL)，按 id 去重。
+     * TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，禁止裸 findAll；无 tenantId
+     * （平台管理员）时自有部分为空，但平台默认规则仍须可见——顺带修复租户此前看不到平台默认
+     * 规则的 bug（NULL 行不匹配 tenantFilter）。
      */
     public List<HandoverRule> getAllRules() {
-        return repository.findAllByOrderByPriorityAsc();
+        Long tenantId = TenantContext.getTenantId();
+        List<HandoverRule> own = tenantId == null ? List.of() : repository.findByTenantIdOrderByPriorityAsc(tenantId);
+        List<HandoverRule> platformDefaults = repository.findAllPlatformDefaults();
+        return mergeById(own, platformDefaults);
+    }
+
+    private List<HandoverRule> mergeById(List<HandoverRule> own, List<HandoverRule> platformDefaults) {
+        java.util.LinkedHashMap<Long, HandoverRule> byId = new java.util.LinkedHashMap<>();
+        for (HandoverRule r : own) byId.putIfAbsent(r.getId(), r);
+        for (HandoverRule r : platformDefaults) byId.putIfAbsent(r.getId(), r);
+        return new java.util.ArrayList<>(byId.values());
     }
 
     /**

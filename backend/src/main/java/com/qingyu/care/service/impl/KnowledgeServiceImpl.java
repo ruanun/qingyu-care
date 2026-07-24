@@ -75,9 +75,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return knowledgeBaseRepository.save(kb);
     }
 
+    /**
+     * 按当前应用收窄的知识库列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
+     * 裸 findAll 会让平台管理员跨应用读全平台知识库；显式按 appId 收窄，无 appId（未选应用）返空。
+     * 注意：管理列表须包含已禁用知识库（禁用是可逆操作，禁用后仍要能在列表里看到并重新启用），
+     * 因此用不带 enabled 过滤的 {@link KnowledgeBaseRepository#findByAppId(Long)}；
+     * {@code findByAppIdAndEnabledTrue} 是 RAG 检索范围专用，语义不同，不可混用。
+     */
     @Override
     public List<KnowledgeBase> getAllKnowledgeBases() {
-        return knowledgeBaseRepository.findAll();
+        Long appId = com.qingyu.care.config.TenantContext.getAppId();
+        return appId == null ? List.of() : knowledgeBaseRepository.findByAppId(appId);
     }
 
     @Override
@@ -141,6 +149,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public List<Document> getDocuments(Long knowledgeBaseId) {
+        // 先经 getKnowledgeBase 做归属校验（同 uploadDocument/getDocument 先校验后操作），
+        // 越权 kbId 直接抛出，不查询文档，防跨租户枚举知识库下文档列表
+        getKnowledgeBase(knowledgeBaseId);
         return documentRepository.findByKnowledgeBaseId(knowledgeBaseId);
     }
     
@@ -293,7 +304,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     @Override
     public List<com.qingyu.care.dto.DocumentStatusDTO> getDocumentsStatus(List<Long> documentIds) {
+        // findAllById 不受 @Filter 保护，按当前上下文归属过滤结果，剔除越权文档（不抛异常，
+        // 因入参是批量 id，个别越权 id 不应影响批内其余合法查询）
         return documentRepository.findAllById(documentIds).stream()
+                .filter(doc -> TenantOwnershipGuard.belongsToCurrentContext(doc.getTenantId(), doc.getAppId()))
                 .map(this::convertToStatusDTO)
                 .toList();
     }

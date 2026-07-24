@@ -92,10 +92,22 @@ public class ChatStrategyService {
     }
 
     /**
-     * 管理：获取所有策略
+     * 管理：获取所有策略——租户自有(按 tenantId) ∪ 平台默认(tenant_id IS NULL)，按 id 去重。
+     * TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，禁止裸 findAll；无 tenantId
+     * （平台管理员）时自有部分为空，但平台默认策略仍须可见——保住多级回退可管理性。
      */
     public List<ChatStrategy> getAllStrategies() {
-        return repository.findAll();
+        Long tenantId = TenantContext.getTenantId();
+        List<ChatStrategy> own = tenantId == null ? List.of() : repository.findByTenantId(tenantId);
+        List<ChatStrategy> platformDefaults = repository.findAllPlatformDefaults();
+        return mergeById(own, platformDefaults);
+    }
+
+    private List<ChatStrategy> mergeById(List<ChatStrategy> own, List<ChatStrategy> platformDefaults) {
+        java.util.LinkedHashMap<Long, ChatStrategy> byId = new java.util.LinkedHashMap<>();
+        for (ChatStrategy s : own) byId.putIfAbsent(s.getId(), s);
+        for (ChatStrategy s : platformDefaults) byId.putIfAbsent(s.getId(), s);
+        return new java.util.ArrayList<>(byId.values());
     }
 
     /**

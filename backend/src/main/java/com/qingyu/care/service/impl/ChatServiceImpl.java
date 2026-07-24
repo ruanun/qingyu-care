@@ -9,6 +9,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatService;
@@ -361,8 +362,14 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public ChatSession getSession(String sessionId) {
-        return sessionRepository.findBySessionId(sessionId)
+        ChatSession session = sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话", sessionId));
+        // findBySessionId 不受 @Filter 保护，加载后显式校验归属，越权按「不存在」同语义处理防枚举探测；
+        // 无上下文（平台管理员登录后 tenantId 恒为 null）按 belongsToCurrentContext 语义放行
+        if (!TenantOwnershipGuard.belongsToCurrentContext(session.getTenantId(), session.getAppId())) {
+            throw new ResourceNotFoundException("会话", sessionId);
+        }
+        return session;
     }
 
     @Override
@@ -474,7 +481,10 @@ public class ChatServiceImpl implements ChatService {
 
     private ChatSession getOrCreateSession(ChatRequest request) {
         if (request.getSessionId() != null) {
+            // findBySessionId 不受 @Filter 保护，加载后须显式校验归属；越权（如平台管理员选了应用 X
+            // 却传入应用 Y 的 sessionId）视同「未找到」直接建新会话，热路径不抛异常，保正常续接 UX
             return sessionRepository.findBySessionId(request.getSessionId())
+                    .filter(s -> TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId()))
                     .orElseGet(() -> createNewSession(request));
         }
         return createNewSession(request);
@@ -622,15 +632,25 @@ public class ChatServiceImpl implements ChatService {
     
     @Override
     public org.springframework.data.domain.Page<ChatSession> getUserSessions(String userId, org.springframework.data.domain.Pageable pageable) {
-        return sessionRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查（防 userId 猜测跨租户）
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
+        }
+        return sessionRepository.findByTenantIdAndUserIdOrderByCreatedAtDesc(tenantId, userId, pageable);
     }
-    
+
     @Override
     public org.springframework.data.domain.Page<ChatSession> getAllSessions(com.qingyu.care.enums.SessionStatus status, org.springframework.data.domain.Pageable pageable) {
-        if (status == null) {
-            return sessionRepository.findAllByOrderByCreatedAtDesc(pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
         }
-        return sessionRepository.findByStatusOrderByCreatedAtDesc(status, pageable);
+        if (status == null) {
+            return sessionRepository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable);
+        }
+        return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status, pageable);
     }
     
     @Override
@@ -694,7 +714,13 @@ public class ChatServiceImpl implements ChatService {
     
     @Override
     public org.springframework.data.domain.Page<ChatSession> getWaitingAgentSessions(org.springframework.data.domain.Pageable pageable) {
-        return sessionRepository.findByStatusOrderByCreatedAtDesc(SessionStatus.WAITING_AGENT, pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
+        }
+        return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(
+                tenantId, SessionStatus.WAITING_AGENT, pageable);
     }
     
     @Override

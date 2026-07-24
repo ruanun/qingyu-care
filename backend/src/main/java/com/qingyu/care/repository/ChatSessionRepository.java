@@ -20,32 +20,71 @@ import java.util.Optional;
 public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> {
     
     Optional<ChatSession> findBySessionId(String sessionId);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByUserId(String userId);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByStatus(SessionStatus status);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     Page<ChatSession> findByAgentId(Long agentId, Pageable pageable);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByUserIdAndStatus(String userId, SessionStatus status);
-    
+
     // ===== 新增方法 =====
-    
+
     /**
      * 分页查询用户的历史会话
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdAndUserIdOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
-    
+
     /**
      * 分页查询所有会话（带状态过滤）
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdAndStatusOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findByStatusOrderByCreatedAtDesc(SessionStatus status, Pageable pageable);
-    
+
     /**
      * 分页查询所有会话
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findAllByOrderByCreatedAtDesc(Pageable pageable);
-    
+
+    // ===== 应用级 list 平台管理员越权收口（批次 B）=====
+    // TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，裸 findAllByOrderByCreatedAtDesc /
+    // findStatusOrderByCreatedAtDesc / findByUserIdOrderByCreatedAtDesc 会让平台管理员跨租户读会话。
+    // 服务层显式按 TenantContext.getTenantId() 收窄，下面三个派生方法配合使用。
+
+    /**
+     * 分页查询指定租户的所有会话
+     */
+    Page<ChatSession> findByTenantIdOrderByCreatedAtDesc(Long tenantId, Pageable pageable);
+
+    /**
+     * 分页查询指定租户下指定状态的会话
+     */
+    Page<ChatSession> findByTenantIdAndStatusOrderByCreatedAtDesc(
+            Long tenantId, SessionStatus status, Pageable pageable);
+
+    /**
+     * 分页查询指定租户下指定用户的历史会话（防 userId 猜测跨租户读取）
+     */
+    Page<ChatSession> findByTenantIdAndUserIdOrderByCreatedAtDesc(
+            Long tenantId, String userId, Pageable pageable);
+
     /**
      * 查找超时的活跃会话（最后更新时间超过指定时间）
      */
