@@ -46,4 +46,13 @@ class AuditLogSanitizeTest {
         // 结尾的右括号必须保留（验证正则终止符含 ) 的修复）
         assertThat(detail).endsWith(")");
     }
+
+    @Test
+    void masksAuthHeaderField() {
+        String raw = "AiTool(name=query_order, authHeader=Authorization: Bearer abc123, timeoutMs=5000)";
+        String out = AuditLogAspect.sanitize(raw);
+        assertThat(out).contains("authHeader=***");
+        assertThat(out).doesNotContain("Bearer abc123");
+        assertThat(out).doesNotContain("abc123");
+    }
 }

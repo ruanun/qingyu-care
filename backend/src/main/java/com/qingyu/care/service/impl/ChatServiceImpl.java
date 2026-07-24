@@ -12,6 +12,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatService;
+import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ConfigService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
@@ -31,6 +32,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
@@ -65,6 +67,7 @@ public class ChatServiceImpl implements ChatService {
     private final TransactionTemplate transactionTemplate;
     private final AbTestService abTestService;
     private final ConfigService configService;
+    private final ChatToolService chatToolService;
 
     @Override
     @Transactional
@@ -148,15 +151,27 @@ public class ChatServiceImpl implements ChatService {
         
         // 构建上下文
         String context = buildContext(relevantDocs);
-        
-        // 构建消息历史
-        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy);
-        
+
+        // 解析当前应用的 skill/工具（请求线程内，依赖 TenantContext）
+        ChatToolService.ToolBundle toolBundle = chatToolService.resolve();
+        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
+                toolBundle.skillMarkdowns());
+
         // 调用AI（动态模型路由，场景取租户配置 tenant.default.model.scenario）；取完整响应以拿到 token 用量
         final List<Message> finalMessages = messages;
+        final List<ToolCallback> tools = toolBundle.toolCallbacks();
         org.springframework.ai.chat.model.ChatResponse aiResp =
-                modelRouterService.callWithFallback(resolveModelScenario(), client ->
-                        client.prompt().messages(finalMessages).call().chatResponse());
+                modelRouterService.callWithFallback(resolveModelScenario(), client -> {
+                    var spec = client.prompt().messages(finalMessages);
+                    if (!tools.isEmpty()) {
+                        spec = spec.toolCallbacks(tools);   // 无工具时不挂载 → 与现状逐字节一致
+                    }
+                    return spec.call().chatResponse();
+                });
+        if (!tools.isEmpty()) {
+            log.debug("本轮启用 {} 个工具；带工具调用时 usage 仅反映末轮，token 计量可能少计（已知局限）",
+                    tools.size());
+        }
         // Spring AI 1.x GA：取文本用 getResult().getOutput().getText()
         String response = aiResp.getResult().getOutput().getText();
         // getTotalTokens() 返回 Integer；安全空检查后填入 DTO
@@ -209,7 +224,8 @@ public class ChatServiceImpl implements ChatService {
         ChatStrategy strategy = resolveStrategy(session);
         List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
         String context = buildContext(relevantDocs);
-        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy);
+        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
+                java.util.List.of());
 
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
                 relevantDocs.stream().mapToDouble(ChatServiceImpl::resolveConfidenceScore).max().orElse(0.0);
@@ -224,6 +240,21 @@ public class ChatServiceImpl implements ChatService {
         return withStreamPersistence(meterContentStream(source, onTokensUsed),
                 full -> persistStreamedMessages(session, userMessage, full, maxScore,
                         hitDocumentIds, onAiMessageSaved));
+    }
+
+    /**
+     * 纯方法：把各 skill 的 Markdown 正文追加到系统提示末尾（分隔符包裹）。空/ null 原样返回。
+     * static 免容器单测，同 meterContentStream 惯例。
+     */
+    static String appendSkillMarkdowns(String systemPrompt, java.util.List<String> markdowns) {
+        if (markdowns == null || markdowns.isEmpty()) {
+            return systemPrompt;
+        }
+        StringBuilder sb = new StringBuilder(systemPrompt);
+        for (String md : markdowns) {
+            sb.append("\n\n--- 技能指引 ---\n").append(md);
+        }
+        return sb.toString();
     }
 
     /**
@@ -524,12 +555,13 @@ public class ChatServiceImpl implements ChatService {
     }
     
     private List<Message> buildMessages(ChatSession session, String userMessage, String context,
-                                        ChatStrategy strategy) {
+                                        ChatStrategy strategy, java.util.List<String> skillMarkdowns) {
         List<Message> messages = new ArrayList<>();
 
         // 系统消息 - 策略绑定模板优先，否则全局激活模板
         String systemTemplate = resolveSystemTemplate(strategy);
         String systemPrompt = systemTemplate.replace("{context}", context);
+        systemPrompt = appendSkillMarkdowns(systemPrompt, skillMarkdowns);
         messages.add(new SystemMessage(systemPrompt));
         
         // 历史消息
