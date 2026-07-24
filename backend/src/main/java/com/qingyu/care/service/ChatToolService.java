@@ -1,8 +1,10 @@
 package com.qingyu.care.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
 import com.qingyu.care.service.tool.HttpToolCallback;
@@ -11,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -18,8 +21,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 工具/Skill 运行时解析。resolve() 须在请求线程调用（依赖 TenantContext 的应用隔离）。
- * CRUD 部分在后续任务追加。
+ * 工具/Skill 运行时解析 + AiTool 管理面 CRUD。resolve() 须在请求线程调用（依赖 TenantContext 的应用隔离）。
  *
  * @author ruan
  */
@@ -70,5 +72,35 @@ public class ChatToolService {
             }
         }
         return new ToolBundle(markdowns, callbacks);
+    }
+
+    // ===== AiTool CRUD =====
+
+    public List<AiTool> listTools() {
+        return toolRepository.findAll();
+    }
+
+    /**
+     * 按 id 取工具。含明文 authHeader，用写级守卫（同 ModelRouterService.getById 对 apiKey 的处理）：
+     * 越权按「不存在」处理，防枚举探测与跨租户读取凭据。
+     */
+    public AiTool getTool(Long id) {
+        AiTool t = toolRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("工具", id.toString()));
+        if (!TenantOwnershipGuard.mutableInCurrentContext(t.getTenantId(), t.getAppId())) {
+            throw new ResourceNotFoundException("工具", id.toString());
+        }
+        return t;
+    }
+
+    @Transactional
+    public AiTool saveTool(AiTool t) {
+        return toolRepository.save(t);
+    }
+
+    @Transactional
+    public void deleteTool(Long id) {
+        AiTool t = getTool(id);
+        toolRepository.delete(t);
     }
 }
