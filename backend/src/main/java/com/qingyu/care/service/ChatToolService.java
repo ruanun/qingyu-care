@@ -103,4 +103,31 @@ public class ChatToolService {
         AiTool t = getTool(id);
         toolRepository.delete(t);
     }
+
+    // ===== AiSkill CRUD =====
+
+    public List<AiSkill> listSkills() {
+        return skillRepository.findAll();
+    }
+
+    /** 按 id 取 skill（无密钥，用读级守卫 belongsToCurrentContext）。 */
+    public AiSkill getSkill(Long id) {
+        AiSkill s = skillRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("技能", id.toString()));
+        if (!TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId())) {
+            throw new ResourceNotFoundException("技能", id.toString());
+        }
+        return s;
+    }
+
+    @Transactional
+    public AiSkill saveSkill(AiSkill s) {
+        return skillRepository.save(s);
+    }
+
+    @Transactional
+    public void deleteSkill(Long id) {
+        AiSkill s = getSkill(id);
+        skillRepository.delete(s);
+    }
 }
