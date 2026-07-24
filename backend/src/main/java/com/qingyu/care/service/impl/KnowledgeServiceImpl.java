@@ -149,6 +149,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public List<Document> getDocuments(Long knowledgeBaseId) {
+        // 先经 getKnowledgeBase 做归属校验（同 uploadDocument/getDocument 先校验后操作），
+        // 越权 kbId 直接抛出，不查询文档，防跨租户枚举知识库下文档列表
+        getKnowledgeBase(knowledgeBaseId);
         return documentRepository.findByKnowledgeBaseId(knowledgeBaseId);
     }
     
@@ -301,7 +304,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     @Override
     public List<com.qingyu.care.dto.DocumentStatusDTO> getDocumentsStatus(List<Long> documentIds) {
+        // findAllById 不受 @Filter 保护，按当前上下文归属过滤结果，剔除越权文档（不抛异常，
+        // 因入参是批量 id，个别越权 id 不应影响批内其余合法查询）
         return documentRepository.findAllById(documentIds).stream()
+                .filter(doc -> TenantOwnershipGuard.belongsToCurrentContext(doc.getTenantId(), doc.getAppId()))
                 .map(this::convertToStatusDTO)
                 .toList();
     }

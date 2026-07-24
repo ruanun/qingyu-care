@@ -9,6 +9,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatService;
@@ -361,8 +362,14 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public ChatSession getSession(String sessionId) {
-        return sessionRepository.findBySessionId(sessionId)
+        ChatSession session = sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话", sessionId));
+        // findBySessionId 不受 @Filter 保护，加载后显式校验归属，越权按「不存在」同语义处理防枚举探测；
+        // 无上下文（平台管理员登录后 tenantId 恒为 null）按 belongsToCurrentContext 语义放行
+        if (!TenantOwnershipGuard.belongsToCurrentContext(session.getTenantId(), session.getAppId())) {
+            throw new ResourceNotFoundException("会话", sessionId);
+        }
+        return session;
     }
 
     @Override
