@@ -60,7 +60,7 @@ public class HttpToolCallback implements ToolCallback {
             String resp = executor.execute(tool.getHttpMethod(), url, tool.getAuthHeader(), body, tool.getTimeoutMs());
             return truncate(resp, tool.getMaxResponseChars());
         } catch (Exception e) {
-            log.warn("工具 {} 调用失败: {}", tool.getName(), e.getMessage());
+            log.warn("工具 {} 调用失败: {}", tool.getName(), e.getClass().getSimpleName());
             return "工具调用失败: " + e.getMessage();
         }
     }

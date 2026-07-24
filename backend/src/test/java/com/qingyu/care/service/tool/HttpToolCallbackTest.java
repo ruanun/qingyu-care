@@ -61,4 +61,27 @@ class HttpToolCallbackTest {
         String result = cb.call("{\"orderId\":\"A123\"}");
         assertThat(result).contains("工具调用失败");
     }
+
+    @Test
+    void callUrlEncodesParameterValues() {
+        String[] captured = new String[1];
+        HttpToolExecutor exec = (method, url, auth, body, timeout) -> { captured[0] = url; return "OK"; };
+        HttpToolCallback cb = new HttpToolCallback(tool(), exec, mapper);
+        cb.call("{\"orderId\":\"a&b c\"}");
+        assertThat(captured[0]).doesNotContain("orders/a&b"); // 结构字符已转义，未破坏 URL 结构
+        assertThat(captured[0]).contains("a%26b");            // & 被编码为 %26
+    }
+
+    @Test
+    void callSendsRawJsonBodyForPost() {
+        AiTool postTool = AiTool.builder()
+                .name("create_ticket").description("建单")
+                .inputSchema("{}").httpMethod("POST").urlTemplate("http://8.8.8.8/tickets")
+                .timeoutMs(3000).maxResponseChars(100).enabled(true).build();
+        String[] capturedBody = new String[1];
+        HttpToolExecutor exec = (method, url, auth, body, timeout) -> { capturedBody[0] = body; return "OK"; };
+        HttpToolCallback cb = new HttpToolCallback(postTool, exec, mapper);
+        cb.call("{\"title\":\"x\"}");
+        assertThat(capturedBody[0]).isEqualTo("{\"title\":\"x\"}");
+    }
 }
