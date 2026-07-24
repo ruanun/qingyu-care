@@ -1,0 +1,74 @@
+package com.qingyu.care.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.entity.AiSkill;
+import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.repository.AiSkillRepository;
+import com.qingyu.care.repository.AiToolRepository;
+import com.qingyu.care.service.tool.HttpToolCallback;
+import com.qingyu.care.service.tool.HttpToolExecutor;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * 工具/Skill 运行时解析。resolve() 须在请求线程调用（依赖 TenantContext 的应用隔离）。
+ * CRUD 部分在后续任务追加。
+ *
+ * @author ruan
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ChatToolService {
+
+    private final AiToolRepository toolRepository;
+    private final AiSkillRepository skillRepository;
+    private final HttpToolExecutor httpToolExecutor;
+    private final ObjectMapper objectMapper;
+
+    /** 运行时解析包：待注入系统提示的 skill 正文 + 待挂载的工具回调。 */
+    public record ToolBundle(List<String> skillMarkdowns, List<ToolCallback> toolCallbacks) {
+        public static ToolBundle empty() {
+            return new ToolBundle(List.of(), List.of());
+        }
+
+        public boolean isEmpty() {
+            return skillMarkdowns.isEmpty() && toolCallbacks.isEmpty();
+        }
+    }
+
+    /**
+     * 取当前应用 enabled 的 skill，收集正文 + 其绑定工具的并集，组装为 ToolBundle。
+     * 工具只经 skill 激活；无 skill 时返回 empty（chat() 据此保持零回归）。
+     */
+    public ToolBundle resolve() {
+        List<AiSkill> skills = skillRepository.findByEnabledTrue();
+        if (skills.isEmpty()) {
+            return ToolBundle.empty();
+        }
+        List<String> markdowns = new ArrayList<>();
+        Set<Long> toolIds = new LinkedHashSet<>();
+        for (AiSkill s : skills) {
+            if (s.getContent() != null && !s.getContent().isBlank()) {
+                markdowns.add(s.getContent());
+            }
+            if (s.getToolIds() != null) {
+                toolIds.addAll(s.getToolIds());
+            }
+        }
+        List<ToolCallback> callbacks = new ArrayList<>();
+        if (!toolIds.isEmpty()) {
+            for (AiTool t : toolRepository.findByIdInAndEnabledTrue(toolIds)) {
+                callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
+            }
+        }
+        return new ToolBundle(markdowns, callbacks);
+    }
+}
