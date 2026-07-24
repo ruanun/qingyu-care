@@ -27,6 +27,12 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
     List<AiModelConfig> findAllByOrderByScenarioAscPriorityAsc();
 
     /**
+     * 获取指定应用自有的模型配置，按场景和优先级排序（管理面用，不带 enabled 过滤，
+     * 须见禁用模型才能重新启用）
+     */
+    List<AiModelConfig> findByAppIdOrderByScenarioAscPriorityAsc(Long appId);
+
+    /**
      * 查询启用的平台共享模型（scope=PLATFORM），按优先级排序。
      * 使用原生 SQL，绕过 Hibernate 的租户过滤器（@Filter 不作用于原生查询），
      * 从而让租户用户也能命中平台共享模型。

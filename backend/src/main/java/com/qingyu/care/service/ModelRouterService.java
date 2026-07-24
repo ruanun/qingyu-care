@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.enums.OwnerScope;
@@ -66,10 +67,24 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取所有模型配置
+     * 获取所有模型配置（管理面）：当前应用自有 ∪ 平台共享(scope=PLATFORM)，按 id 去重。
+     * TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，禁止裸 findAll；无 appId
+     * （平台管理员未选定应用）时自有部分为空，但平台共享模型仍须可见——保住多级回退可管理性。
      */
     public List<AiModelConfig> getAllModels() {
-        return repository.findAllByOrderByScenarioAscPriorityAsc();
+        Long appId = TenantContext.getAppId();
+        List<AiModelConfig> own = appId == null
+                ? List.of()
+                : repository.findByAppIdOrderByScenarioAscPriorityAsc(appId);
+        List<AiModelConfig> shared = repository.findAllSharedModels();
+        return mergeOwnAndSharedById(own, shared);
+    }
+
+    private List<AiModelConfig> mergeOwnAndSharedById(List<AiModelConfig> own, List<AiModelConfig> shared) {
+        java.util.LinkedHashMap<Long, AiModelConfig> byId = new java.util.LinkedHashMap<>();
+        for (AiModelConfig m : own) byId.putIfAbsent(m.getId(), m);
+        for (AiModelConfig m : shared) byId.putIfAbsent(m.getId(), m);
+        return new java.util.ArrayList<>(byId.values());
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.PromptTemplate;
 import com.qingyu.care.exception.BusinessException;
@@ -63,10 +64,22 @@ public class PromptTemplateService {
     }
 
     /**
-     * 获取所有版本
+     * 获取所有版本（管理面）：租户自有(按 tenantId) ∪ 平台默认(tenant_id IS NULL)，按 id 去重。
+     * TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，禁止裸 findAll；无 tenantId
+     * （平台管理员）时自有部分为空，但平台默认模板仍须可见——保住多级回退可管理性。
      */
     public List<PromptTemplate> getAllVersions() {
-        return repository.findAllByOrderByVersionDesc();
+        Long tenantId = TenantContext.getTenantId();
+        List<PromptTemplate> own = tenantId == null ? List.of() : repository.findByTenantIdOrderByVersionDesc(tenantId);
+        List<PromptTemplate> platformDefaults = repository.findAllPlatformDefaults();
+        return mergeById(own, platformDefaults);
+    }
+
+    private List<PromptTemplate> mergeById(List<PromptTemplate> own, List<PromptTemplate> platformDefaults) {
+        java.util.LinkedHashMap<Long, PromptTemplate> byId = new java.util.LinkedHashMap<>();
+        for (PromptTemplate t : own) byId.putIfAbsent(t.getId(), t);
+        for (PromptTemplate t : platformDefaults) byId.putIfAbsent(t.getId(), t);
+        return new java.util.ArrayList<>(byId.values());
     }
 
     /**

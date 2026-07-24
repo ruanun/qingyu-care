@@ -25,11 +25,24 @@ public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, 
     @Query(value = "SELECT * FROM prompt_templates WHERE is_active = true AND tenant_id IS NULL ORDER BY id LIMIT 1",
             nativeQuery = true)
     Optional<PromptTemplate> findPlatformDefaultActive();
-    
+
     /**
      * 获取所有版本，按版本号降序
      */
     List<PromptTemplate> findAllByOrderByVersionDesc();
+
+    /**
+     * 获取指定租户自有的所有模板版本，按版本号降序（管理面用）
+     */
+    List<PromptTemplate> findByTenantIdOrderByVersionDesc(Long tenantId);
+
+    /**
+     * 查询全部平台默认模板（tenant_id IS NULL）——原生 SQL 绕过 Hibernate 租户过滤器，
+     * 管理面 list 用，确保平台默认在收窄后仍可见。
+     */
+    @Query(value = "SELECT * FROM prompt_templates WHERE tenant_id IS NULL ORDER BY version DESC",
+            nativeQuery = true)
+    List<PromptTemplate> findAllPlatformDefaults();
     
     /**
      * 获取最新版本号
