@@ -16,7 +16,7 @@
 | AiTool | `ChatToolService.listTools()` | 新增 `AiToolRepository.findByAppId(Long)`；`appId==null?List.of():findByAppId(appId)` |
 | AiSkill | `ChatToolService.listSkills()` | 同上 `AiSkillRepository.findByAppId(Long)` |
 | AbExperiment | `AbTestService.list()` | 新增 repo `findByAppIdOrderByCreatedAtDesc(Long)`；服务按 `TenantContext.getAppId()` 收窄 |
-| KnowledgeBase | `KnowledgeServiceImpl.getAllKnowledgeBases()` | **改用已存在的死代码** `findByAppIdAndEnabledTrue(appId)`（显式传 `TenantContext.getAppId()`），无 appId 返空 |
+| KnowledgeBase | `KnowledgeServiceImpl.getAllKnowledgeBases()` | 新增 `findByAppId(appId)`（不带 enabled 过滤，管理面须见禁用库，否则禁用后无法重新启用），显式传 `TenantContext.getAppId()`，无 appId 返空；`findByAppIdAndEnabledTrue` 保留给 `RetrievalScopeResolver` 检索范围专用（只让启用库参与 RAG），语义不同不可混用 |
 
 ### 批次 B · 租户级会话（按 tenant_id 收窄，无 tenantId 即平台管理员返空）
 | 资源 | 服务方法 | 修法 |

@@ -78,11 +78,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     /**
      * 按当前应用收窄的知识库列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
      * 裸 findAll 会让平台管理员跨应用读全平台知识库；显式按 appId 收窄，无 appId（未选应用）返空。
+     * 注意：管理列表须包含已禁用知识库（禁用是可逆操作，禁用后仍要能在列表里看到并重新启用），
+     * 因此用不带 enabled 过滤的 {@link KnowledgeBaseRepository#findByAppId(Long)}；
+     * {@code findByAppIdAndEnabledTrue} 是 RAG 检索范围专用，语义不同，不可混用。
      */
     @Override
     public List<KnowledgeBase> getAllKnowledgeBases() {
         Long appId = com.qingyu.care.config.TenantContext.getAppId();
-        return appId == null ? List.of() : knowledgeBaseRepository.findByAppIdAndEnabledTrue(appId);
+        return appId == null ? List.of() : knowledgeBaseRepository.findByAppId(appId);
     }
 
     @Override

@@ -24,7 +24,8 @@ import static org.mockito.Mockito.when;
 /**
  * KnowledgeBase 管理面 list 的应用级收窄单测：TenantDataAspect 对 PLATFORM_ADMIN 整体不启用
  * @Filter，裸 findAll 会让平台管理员跨应用读全平台知识库；getAllKnowledgeBases 须显式按
- * TenantContext.getAppId() 收窄（复用既有 findByAppIdAndEnabledTrue），无 appId 返空且不查库。
+ * TenantContext.getAppId() 收窄（用不带 enabled 过滤的 findByAppId，管理面须见禁用库），
+ * 无 appId 返空且不查库。
  *
  * @author ruan
  */
@@ -51,7 +52,7 @@ class KnowledgeBaseListScopeTest {
     void getAllKnowledgeBases_有appId_按appId收窄() {
         TenantContext.setAppId(10L);
         KnowledgeBase kb = KnowledgeBase.builder().id(1L).name("库").enabled(true).build();
-        when(knowledgeBaseRepository.findByAppIdAndEnabledTrue(10L)).thenReturn(List.of(kb));
+        when(knowledgeBaseRepository.findByAppId(10L)).thenReturn(List.of(kb));
 
         List<KnowledgeBase> result = service().getAllKnowledgeBases();
 
@@ -60,11 +61,23 @@ class KnowledgeBaseListScopeTest {
     }
 
     @Test
+    void getAllKnowledgeBases_有appId_已禁用知识库也在管理列表可见() {
+        TenantContext.setAppId(10L);
+        KnowledgeBase disabledKb = KnowledgeBase.builder().id(2L).name("已禁用库").enabled(false).build();
+        when(knowledgeBaseRepository.findByAppId(10L)).thenReturn(List.of(disabledKb));
+
+        List<KnowledgeBase> result = service().getAllKnowledgeBases();
+
+        assertThat(result).containsExactly(disabledKb);
+        verify(knowledgeBaseRepository, never()).findByAppIdAndEnabledTrue(any());
+    }
+
+    @Test
     void getAllKnowledgeBases_无appId_返空且不查库() {
         List<KnowledgeBase> result = service().getAllKnowledgeBases();
 
         assertThat(result).isEmpty();
-        verify(knowledgeBaseRepository, never()).findByAppIdAndEnabledTrue(any());
+        verify(knowledgeBaseRepository, never()).findByAppId(any());
         verify(knowledgeBaseRepository, never()).findAll();
     }
 }
