@@ -20,30 +20,47 @@ import java.util.Optional;
 public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> {
     
     Optional<ChatSession> findBySessionId(String sessionId);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByUserId(String userId);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByStatus(SessionStatus status);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     Page<ChatSession> findByAgentId(Long agentId, Pageable pageable);
-    
+
+    /** @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantId... 收窄版本。 */
+    @Deprecated
     List<ChatSession> findByUserIdAndStatus(String userId, SessionStatus status);
-    
+
     // ===== 新增方法 =====
-    
+
     /**
      * 分页查询用户的历史会话
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdAndUserIdOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
-    
+
     /**
      * 分页查询所有会话（带状态过滤）
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdAndStatusOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findByStatusOrderByCreatedAtDesc(SessionStatus status, Pageable pageable);
-    
+
     /**
      * 分页查询所有会话
+     *
+     * @deprecated 未按租户/应用收窄，仅历史遗留，禁止新调用；请用 findByTenantIdOrderByCreatedAtDesc。
      */
+    @Deprecated
     Page<ChatSession> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     // ===== 应用级 list 平台管理员越权收口（批次 B）=====

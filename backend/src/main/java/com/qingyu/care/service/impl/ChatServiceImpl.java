@@ -481,7 +481,10 @@ public class ChatServiceImpl implements ChatService {
 
     private ChatSession getOrCreateSession(ChatRequest request) {
         if (request.getSessionId() != null) {
+            // findBySessionId 不受 @Filter 保护，加载后须显式校验归属；越权（如平台管理员选了应用 X
+            // 却传入应用 Y 的 sessionId）视同「未找到」直接建新会话，热路径不抛异常，保正常续接 UX
             return sessionRepository.findBySessionId(request.getSessionId())
+                    .filter(s -> TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId()))
                     .orElseGet(() -> createNewSession(request));
         }
         return createNewSession(request);

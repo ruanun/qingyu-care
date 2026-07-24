@@ -1,7 +1,11 @@
 package com.qingyu.care.service.impl;
 
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.dto.ChatRequest;
+import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.entity.ChatStrategy;
+import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
@@ -26,12 +30,19 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * ChatSession 按 sessionId 加载的租户归属校验单测：{@code findBySessionId} 不受 @Filter 保护，
  * 加载后须显式用 TenantOwnershipGuard 校验归属，越权按「不存在」同语义处理（同 KnowledgeOwnershipTest 范式）；
  * 无上下文（平台管理员/Reactor 线程无 TenantContext）按 belongsToCurrentContext 语义放行。
+ *
+ * <p>{@code getOrCreateSession} 复用同一套守卫：续接他人（他应用/他租户）会话时视同「未找到」，
+ * 走 {@code createNewSession} 新建，防平台管理员跨应用续接会话历史（该方法 private，经公开
+ * 入口 {@code chat()} 间接验证，同类注释里的两条建议路径之一）。
  *
  * @author ruan
  */
@@ -85,5 +96,40 @@ class ChatServiceSessionOwnershipTest {
         when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(sessionOwnedBy(9L)));
 
         assertThat(chatService.getSession("sess-1")).isNotNull();
+    }
+
+    @Test
+    void getOrCreateSession_归属相符_经chat复用会话() {
+        ChatSession existing = sessionOwnedBy(2L);
+        existing.setStatus(SessionStatus.AGENT_PROCESSING);
+        when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(existing));
+        TenantContext.setTenantId(2L);
+
+        ChatResponse resp = chatService.chat(
+                ChatRequest.builder().sessionId("sess-1").message("你好").build());
+
+        // AGENT_PROCESSING 短路分支直接返回同一会话，未新建
+        assertThat(resp.getSessionId()).isEqualTo("sess-1");
+        verify(sessionRepository, never()).save(any());
+    }
+
+    @Test
+    void getOrCreateSession_归属不符_经chat视同不存在新建会话() {
+        ChatSession existing = sessionOwnedBy(9L);
+        existing.setStatus(SessionStatus.AGENT_PROCESSING);
+        when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(existing));
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(messageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(abTestService.resolveVariantStrategy(null, null)).thenReturn(Optional.empty());
+        when(chatStrategyService.getActiveStrategy("default")).thenReturn(
+                ChatStrategy.builder().name("默认").scenario("default").allowNoKnowledge(false).build());
+        TenantContext.setTenantId(2L);
+
+        ChatResponse resp = chatService.chat(
+                ChatRequest.builder().sessionId("sess-1").message("你好").build());
+
+        // 他租户会话按未找到处理，走 createNewSession 新建，不复用越权 sessionId
+        assertThat(resp.getSessionId()).isNotEqualTo("sess-1");
+        verify(sessionRepository).save(any(ChatSession.class));
     }
 }
