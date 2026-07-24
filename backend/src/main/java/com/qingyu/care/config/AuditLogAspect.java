@@ -31,9 +31,9 @@ public class AuditLogAspect {
     private final AuditLogService auditLogService;
     private final UserRepository userRepository;
 
-    /** 脱敏正则：匹配 apiKey/password/secret/appsecret 等敏感字段（到下一个逗号、括号或行尾） */
+    /** 脱敏正则：匹配 apiKey/password/secret/appsecret/authHeader 等敏感字段（到下一个逗号、括号或行尾） */
     private static final Pattern SENSITIVE =
-            Pattern.compile("(?i)(apikey|password|secret|appsecret)=([^,}\\])]*)");
+            Pattern.compile("(?i)(apikey|password|secret|appsecret|authheader)=([^,}\\])]*)");
 
     /** 详情最大长度 */
     private static final int MAX_DETAIL = 1000;
