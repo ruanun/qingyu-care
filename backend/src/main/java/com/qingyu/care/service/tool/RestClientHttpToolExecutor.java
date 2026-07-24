@@ -21,7 +21,16 @@ public class RestClientHttpToolExecutor implements HttpToolExecutor {
     public String execute(String method, String url, String authHeader, String body, int timeoutMs) {
         SsrfGuard.assertAllowed(url);
 
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // 禁止底层自动跟随 3xx 重定向：SimpleClientHttpRequestFactory 默认对 GET 跟随重定向，
+        // 会绕过上面的 SsrfGuard（重定向目标不再校验），可被 302 指向内网/元数据，故此处硬关。
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
+            @Override
+            protected void prepareConnection(java.net.HttpURLConnection connection, String httpMethod)
+                    throws java.io.IOException {
+                super.prepareConnection(connection, httpMethod);
+                connection.setInstanceFollowRedirects(false);
+            }
+        };
         factory.setConnectTimeout(Duration.ofMillis(timeoutMs));
         factory.setReadTimeout(Duration.ofMillis(timeoutMs));
         RestClient client = RestClient.builder().requestFactory(factory).build();
