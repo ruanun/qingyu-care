@@ -39,12 +39,17 @@ public class RestClientHttpToolExecutor implements HttpToolExecutor {
         final String host = URI.create(url).getHost();
         final InetAddress[] pinned = SsrfGuard.resolveAndValidate(host);
 
-        // 关键：连接期只对该 host 返回上面这批已校验地址，其它 host 走系统解析。
+        // 关键：连接期只对该 host 返回上面这批已校验地址，拒绝其它 host（fail-closed）。
         // 这样校验用的解析结果 == 实际连接用的地址，两次解析之间无法翻转 IP。
         DnsResolver pinnedResolver = new SystemDefaultDnsResolver() {
             @Override
             public InetAddress[] resolve(String h) throws UnknownHostException {
-                return host.equalsIgnoreCase(h) ? pinned : super.resolve(h);
+                // 只允许目标 host 走已校验的 pinned 地址；任何其它 host（本客户端单次直连、已禁重定向无代理，
+                // 理论上不该出现）一律 fail-closed 拒绝，杜绝 URI 解析差异导致的未校验二次解析绕过 SSRF 守卫。
+                if (!host.equalsIgnoreCase(h)) {
+                    throw new UnknownHostException("非预期主机（SSRF 钉住拒绝）: " + h);
+                }
+                return pinned;
             }
         };
 
