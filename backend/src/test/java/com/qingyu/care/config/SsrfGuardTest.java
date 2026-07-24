@@ -36,4 +36,11 @@ class SsrfGuardTest {
         assertThatThrownBy(() -> SsrfGuard.assertAllowed("not-a-url"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void blocksIpv6UniqueLocalAndAnyLocalAndMulticast() throws Exception {
+        assertThat(SsrfGuard.isBlocked(InetAddress.getByName("fd00::1"))).isTrue();   // IPv6 ULA
+        assertThat(SsrfGuard.isBlocked(InetAddress.getByName("0.0.0.0"))).isTrue();   // anyLocal
+        assertThat(SsrfGuard.isBlocked(InetAddress.getByName("224.0.0.1"))).isTrue(); // multicast
+    }
 }

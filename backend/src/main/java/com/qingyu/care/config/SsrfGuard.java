@@ -40,7 +40,13 @@ public final class SsrfGuard {
 
     /** 纯函数：判断地址是否属于应拒绝的内网/特殊网段。 */
     static boolean isBlocked(InetAddress a) {
-        return a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress()
-                || a.isAnyLocalAddress() || a.isMulticastAddress();
+        if (a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress()
+                || a.isAnyLocalAddress() || a.isMulticastAddress()) {
+            return true;
+        }
+        // IPv6 唯一本地地址 ULA（fc00::/7，RFC 4193）：Java 的 isSiteLocalAddress() 对 IPv6
+        // 仅识别已废弃的 fec0::/10，不覆盖 fc00::/7，须按首字节补判，防内网 IPv6 绕过。
+        byte[] bytes = a.getAddress();
+        return bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
     }
 }
