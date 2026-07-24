@@ -75,9 +75,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return knowledgeBaseRepository.save(kb);
     }
 
+    /**
+     * 按当前应用收窄的知识库列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
+     * 裸 findAll 会让平台管理员跨应用读全平台知识库；显式按 appId 收窄，无 appId（未选应用）返空。
+     */
     @Override
     public List<KnowledgeBase> getAllKnowledgeBases() {
-        return knowledgeBaseRepository.findAll();
+        Long appId = com.qingyu.care.config.TenantContext.getAppId();
+        return appId == null ? List.of() : knowledgeBaseRepository.findByAppIdAndEnabledTrue(appId);
     }
 
     @Override

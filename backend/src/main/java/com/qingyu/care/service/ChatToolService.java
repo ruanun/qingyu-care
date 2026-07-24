@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
@@ -76,8 +77,13 @@ public class ChatToolService {
 
     // ===== AiTool CRUD =====
 
+    /**
+     * 按当前应用收窄的工具列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
+     * 裸 findAll 会让平台管理员跨应用读全平台工具；显式按 appId 收窄，无 appId（未选应用）返空。
+     */
     public List<AiTool> listTools() {
-        return toolRepository.findAll();
+        Long appId = TenantContext.getAppId();
+        return appId == null ? List.of() : toolRepository.findByAppId(appId);
     }
 
     /**
@@ -106,8 +112,10 @@ public class ChatToolService {
 
     // ===== AiSkill CRUD =====
 
+    /** 按当前应用收窄的 skill 列表，语义同 {@link #listTools()}。 */
     public List<AiSkill> listSkills() {
-        return skillRepository.findAll();
+        Long appId = TenantContext.getAppId();
+        return appId == null ? List.of() : skillRepository.findByAppId(appId);
     }
 
     /** 按 id 取 skill（无密钥，用读级守卫 belongsToCurrentContext）。 */

@@ -55,6 +55,30 @@ class AbTestServiceTest {
     }
 
     @Test
+    void list_有appId_按appId收窄() {
+        AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
+        when(repository.findByAppIdOrderByCreatedAtDesc(10L)).thenReturn(List.of(exp));
+        TenantContext.setAppId(10L);
+        try {
+            List<AbExperiment> result = service.list();
+
+            assertThat(result).containsExactly(exp);
+            verify(repository, never()).findAllByOrderByCreatedAtDesc();
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void list_无appId_返空且不查库() {
+        List<AbExperiment> result = service.list();
+
+        assertThat(result).isEmpty();
+        verify(repository, never()).findByAppIdOrderByCreatedAtDesc(any());
+        verify(repository, never()).findAllByOrderByCreatedAtDesc();
+    }
+
+    @Test
     void create_强制置为草稿并清运行时字段() {
         AbExperiment input = AbExperiment.builder().id(99L).name("新实验")
                 .status(ExperimentStatus.RUNNING)

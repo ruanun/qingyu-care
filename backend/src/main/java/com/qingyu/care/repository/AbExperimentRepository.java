@@ -22,6 +22,9 @@ public interface AbExperimentRepository extends JpaRepository<AbExperiment, Long
 
     List<AbExperiment> findAllByOrderByCreatedAtDesc();
 
+    /** 显式按 appId 过滤（管理面 list 用，防平台管理员裸 findAll 跨应用读取） */
+    List<AbExperiment> findByAppIdOrderByCreatedAtDesc(Long appId);
+
     /** 指定策略是否被指定状态的实验引用（策略删除保护用；派生查询跨 @ElementCollection 属性路径） */
     boolean existsByStatusAndVariants_StrategyId(ExperimentStatus status, Long strategyId);
 }

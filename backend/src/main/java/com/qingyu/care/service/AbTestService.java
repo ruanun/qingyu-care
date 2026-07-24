@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.dto.AbTestReportDTO;
 import com.qingyu.care.entity.AbExperiment;
@@ -36,8 +37,13 @@ public class AbTestService {
     private final ChatStrategyRepository strategyRepository;
     private final AbTestReportDao reportDao;
 
+    /**
+     * 按当前应用收窄的实验列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
+     * 裸 findAll 会让平台管理员跨应用读全平台实验；显式按 appId 收窄，无 appId（未选应用）返空。
+     */
     public List<AbExperiment> list() {
-        return repository.findAllByOrderByCreatedAtDesc();
+        Long appId = TenantContext.getAppId();
+        return appId == null ? List.of() : repository.findByAppIdOrderByCreatedAtDesc(appId);
     }
 
     /**
