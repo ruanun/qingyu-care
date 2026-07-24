@@ -99,7 +99,15 @@
             <artifactId>s3</artifactId>
             <version>2.46.7</version>
         </dependency>
-        
+
+        <!-- Apache HttpClient 5：供对话内工具调用出站时「钉住」已校验 IP，杜绝 SSRF 的
+             DNS rebinding/TOCTOU（自定义 DnsResolver 把校验期解析结果复用到连接期）。
+             版本随 Spring Boot BOM 托管，勿写 version。 -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
+
         <!-- Database -->
         <dependency>
             <groupId>org.postgresql</groupId>

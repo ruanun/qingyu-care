@@ -38,6 +38,18 @@ class SsrfGuardTest {
     }
 
     @Test
+    void resolveAndValidateRejectsInternalHost() {
+        assertThatThrownBy(() -> SsrfGuard.resolveAndValidate("127.0.0.1"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void resolveAndValidateReturnsAddressesForPublicHost() {
+        InetAddress[] addrs = SsrfGuard.resolveAndValidate("8.8.8.8");
+        assertThat(addrs).isNotEmpty();
+    }
+
+    @Test
     void blocksIpv6UniqueLocalAndAnyLocalAndMulticast() throws Exception {
         assertThat(SsrfGuard.isBlocked(InetAddress.getByName("fd00::1"))).isTrue();   // IPv6 ULA
         assertThat(SsrfGuard.isBlocked(InetAddress.getByName("0.0.0.0"))).isTrue();   // anyLocal

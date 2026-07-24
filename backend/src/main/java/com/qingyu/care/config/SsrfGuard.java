@@ -38,6 +38,27 @@ public final class SsrfGuard {
         }
     }
 
+    /**
+     * 解析并校验主机：返回校验通过的全部地址（供连接期 DNS 钉住复用，杜绝 rebinding——
+     * 校验用的解析结果与实际连接用的必须是同一份，否则 TTL=0 域名可在两次解析间翻转 IP）。
+     */
+    public static InetAddress[] resolveAndValidate(String host) {
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("工具 URL 缺少合法主机");
+        }
+        try {
+            InetAddress[] addrs = InetAddress.getAllByName(host);
+            for (InetAddress a : addrs) {
+                if (isBlocked(a)) {
+                    throw new IllegalArgumentException("工具 URL 指向内网/环回地址，已拒绝: " + host);
+                }
+            }
+            return addrs;
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("工具 URL 主机无法解析: " + host, e);
+        }
+    }
+
     /** 纯函数：判断地址是否属于应拒绝的内网/特殊网段。 */
     static boolean isBlocked(InetAddress a) {
         if (a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress()
