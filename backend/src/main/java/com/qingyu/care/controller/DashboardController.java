@@ -7,6 +7,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import com.qingyu.care.repository.DocumentRepository;
+import com.qingyu.care.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class DashboardController {
     private final ChatSessionRepository sessionRepository;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final DocumentRepository documentRepository;
+    private final ChatService chatService;
     
     @GetMapping("/stats")
     @Operation(summary = "获取仪表盘统计数据", description = "返回系统关键指标")
@@ -74,8 +76,8 @@ public class DashboardController {
     @Operation(summary = "获取最近会话", description = "返回最近的会话列表")
     public ApiResponse<List<ChatSession>> getRecentSessions(
             @RequestParam(defaultValue = "5") int limit) {
-        Page<ChatSession> recentSessions = sessionRepository.findAllByOrderByCreatedAtDesc(
-                PageRequest.of(0, limit));
+        // 改走 ChatService（复用已按 TenantContext 收窄的 getAllSessions），不再直连 repository
+        Page<ChatSession> recentSessions = chatService.getAllSessions(null, PageRequest.of(0, limit));
         return ApiResponse.success(recentSessions.getContent());
     }
 }

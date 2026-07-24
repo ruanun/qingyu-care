@@ -622,15 +622,25 @@ public class ChatServiceImpl implements ChatService {
     
     @Override
     public org.springframework.data.domain.Page<ChatSession> getUserSessions(String userId, org.springframework.data.domain.Pageable pageable) {
-        return sessionRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查（防 userId 猜测跨租户）
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
+        }
+        return sessionRepository.findByTenantIdAndUserIdOrderByCreatedAtDesc(tenantId, userId, pageable);
     }
-    
+
     @Override
     public org.springframework.data.domain.Page<ChatSession> getAllSessions(com.qingyu.care.enums.SessionStatus status, org.springframework.data.domain.Pageable pageable) {
-        if (status == null) {
-            return sessionRepository.findAllByOrderByCreatedAtDesc(pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
         }
-        return sessionRepository.findByStatusOrderByCreatedAtDesc(status, pageable);
+        if (status == null) {
+            return sessionRepository.findByTenantIdOrderByCreatedAtDesc(tenantId, pageable);
+        }
+        return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status, pageable);
     }
     
     @Override
@@ -694,7 +704,13 @@ public class ChatServiceImpl implements ChatService {
     
     @Override
     public org.springframework.data.domain.Page<ChatSession> getWaitingAgentSessions(org.springframework.data.domain.Pageable pageable) {
-        return sessionRepository.findByStatusOrderByCreatedAtDesc(SessionStatus.WAITING_AGENT, pageable);
+        // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return org.springframework.data.domain.Page.empty(pageable);
+        }
+        return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(
+                tenantId, SessionStatus.WAITING_AGENT, pageable);
     }
     
     @Override

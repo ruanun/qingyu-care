@@ -45,7 +45,29 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
      * 分页查询所有会话
      */
     Page<ChatSession> findAllByOrderByCreatedAtDesc(Pageable pageable);
-    
+
+    // ===== 应用级 list 平台管理员越权收口（批次 B）=====
+    // TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，裸 findAllByOrderByCreatedAtDesc /
+    // findStatusOrderByCreatedAtDesc / findByUserIdOrderByCreatedAtDesc 会让平台管理员跨租户读会话。
+    // 服务层显式按 TenantContext.getTenantId() 收窄，下面三个派生方法配合使用。
+
+    /**
+     * 分页查询指定租户的所有会话
+     */
+    Page<ChatSession> findByTenantIdOrderByCreatedAtDesc(Long tenantId, Pageable pageable);
+
+    /**
+     * 分页查询指定租户下指定状态的会话
+     */
+    Page<ChatSession> findByTenantIdAndStatusOrderByCreatedAtDesc(
+            Long tenantId, SessionStatus status, Pageable pageable);
+
+    /**
+     * 分页查询指定租户下指定用户的历史会话（防 userId 猜测跨租户读取）
+     */
+    Page<ChatSession> findByTenantIdAndUserIdOrderByCreatedAtDesc(
+            Long tenantId, String userId, Pageable pageable);
+
     /**
      * 查找超时的活跃会话（最后更新时间超过指定时间）
      */
