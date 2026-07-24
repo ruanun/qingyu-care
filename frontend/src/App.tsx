@@ -9,6 +9,7 @@ import PromptPage from './pages/PromptPage';
 import HandoverRulePage from './pages/HandoverRulePage';
 import ModelConfigPage from './pages/ModelConfigPage';
 import ToolConfigPage from './pages/ToolConfigPage';
+import SkillConfigPage from './pages/SkillConfigPage';
 import StrategyConfigPage from './pages/StrategyConfigPage';
 import LoginPage from './pages/LoginPage';
 import UserListPage from './pages/UserListPage';
@@ -61,6 +62,7 @@ function App() {
           <Route path="strategies" element={<RequireApp><StrategyConfigPage /></RequireApp>} />
           <Route path="ai-models" element={<RequireApp><ModelConfigPage /></RequireApp>} />
           <Route path="ai-tools" element={<RequireApp><ToolConfigPage /></RequireApp>} />
+          <Route path="ai-skills" element={<RequireApp><SkillConfigPage /></RequireApp>} />
           <Route path="handover-rules" element={<RequireApp><HandoverRulePage /></RequireApp>} />
           <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
           <Route path="ab-tests" element={<RequireApp><AbTestPage /></RequireApp>} />
