@@ -1,5 +1,6 @@
 package com.qingyu.care.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.qingyu.care.enums.QaPairSource;
 import com.qingyu.care.enums.QaPairStatus;
 import jakarta.persistence.*;
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "qa_pair")
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Builder
