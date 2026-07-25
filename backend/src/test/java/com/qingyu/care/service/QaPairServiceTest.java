@@ -69,7 +69,8 @@ class QaPairServiceTest {
                 .containsEntry("tenantId", "11").containsEntry("appId", "22")
                 .containsEntry("knowledgeBaseId", "7").containsEntry("docEnabled", "true")
                 .containsEntry("visibility", "PUBLIC").containsEntry("qaPairId", "5")
-                .containsEntry("contentType", "qa");
+                .containsEntry("contentType", "qa")
+                .containsEntry("source", "如何退货");
     }
 
     @Test
@@ -104,8 +105,9 @@ class QaPairServiceTest {
 
         service().delete(5L);
 
-        verify(vectorStoreRepository).deleteByQaPairId("5");
-        verify(qaPairRepository).delete(qa);
+        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(vectorStoreRepository, qaPairRepository);
+        ord.verify(vectorStoreRepository).deleteByQaPairId("5");
+        ord.verify(qaPairRepository).delete(qa);
     }
 
     @Test
@@ -117,6 +119,21 @@ class QaPairServiceTest {
 
         verify(vectorStoreRepository).deleteByQaPairId("5");
         verify(vectorStore).add(any());
+    }
+
+    @Test
+    void update_disabledContentChanged_reEmbedsThenKeepsDisabled() {
+        QaPair disabled = active(5L);
+        disabled.setStatus(QaPairStatus.DISABLED);
+        when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(disabled));
+        when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service().update(5L, "改后的问", "改后的答");
+
+        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(vectorStoreRepository, vectorStore);
+        ord.verify(vectorStoreRepository).deleteByQaPairId("5");
+        ord.verify(vectorStore).add(any());
+        ord.verify(vectorStoreRepository).updateDocEnabledByQaPairId("5", "false");
     }
 
     @Test
