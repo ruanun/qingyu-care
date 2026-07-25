@@ -4,6 +4,7 @@ import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.QaPairRequest;
 import com.qingyu.care.entity.QaPair;
+import com.qingyu.care.service.QaGenerationService;
 import com.qingyu.care.service.QaPairService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +18,8 @@ import java.util.List;
 public class QaPairController {
 
     private final QaPairService qaPairService;
+    private final QaGenerationService qaGenerationService;
+    private final com.qingyu.care.service.KnowledgeService knowledgeService;
 
     @GetMapping("/knowledge/{kbId}/qa-pairs")
     public ApiResponse<List<QaPair>> list(@PathVariable Long kbId) {
@@ -52,5 +55,14 @@ public class QaPairController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         qaPairService.delete(id);
         return ApiResponse.success("问答对已删除", null);
+    }
+
+    /** 触发 LLM 从文档生成 QA 草稿（异步）。请求线程先校验文档归属。 */
+    @AuditLog(action = "QA_GENERATE", targetType = "Document")
+    @PostMapping("/qa-pairs/generate")
+    public ApiResponse<Void> generate(@RequestParam Long documentId) {
+        knowledgeService.getDocument(documentId); // 归属校验（越权抛）
+        qaGenerationService.generateFromDocument(documentId);
+        return ApiResponse.success("已开始生成问答对，稍后在草稿列表复核", null);
     }
 }
