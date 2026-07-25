@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -34,13 +35,14 @@ public class QaGenerationService {
 
     /** 从文档内容异步生成 QA 草稿。调用方（控制器）须先在请求线程校验文档归属。 */
     @Async
+    @Transactional
     public void generateFromDocument(Long documentId) {
-        Document doc = documentRepository.findById(documentId).orElse(null);
-        if (doc == null || doc.getContent() == null || doc.getContent().isBlank()) {
-            log.warn("文档 {} 无内容，跳过 QA 生成", documentId);
-            return;
-        }
         try {
+            Document doc = documentRepository.findById(documentId).orElse(null);
+            if (doc == null || doc.getContent() == null || doc.getContent().isBlank()) {
+                log.warn("文档 {} 无内容，跳过 QA 生成", documentId);
+                return;
+            }
             String prompt = "你是知识库助手。请从下面的资料中提炼尽量多的高质量常见问答对，"
                     + "问题简洁、答案严格基于资料原文、不要编造。只输出 JSON 数组，形如 "
                     + "[{\"question\":\"...\",\"answer\":\"...\"}]，不要输出任何额外文字。\n\n资料：\n" + doc.getContent();
