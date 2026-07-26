@@ -96,6 +96,9 @@ public class QaPairService {
     @Transactional
     public QaPair setEnabled(Long id, boolean enabled) {
         QaPair qa = getQaPair(id);
+        if (qa.getStatus() == com.qingyu.care.enums.QaPairStatus.DRAFT) {
+            throw new InvalidOperationException("草稿需先复核通过");
+        }
         qa.setStatus(enabled ? QaPairStatus.ACTIVE : QaPairStatus.DISABLED);
         qaPairRepository.save(qa);
         vectorStoreRepository.updateDocEnabledByQaPairId(id.toString(), String.valueOf(enabled));

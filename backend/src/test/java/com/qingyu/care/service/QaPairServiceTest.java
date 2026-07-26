@@ -137,6 +137,16 @@ class QaPairServiceTest {
     }
 
     @Test
+    void setEnabled_onDraft_throws() {
+        QaPair draft = active(5L);
+        draft.setStatus(com.qingyu.care.enums.QaPairStatus.DRAFT);
+        when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(draft));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service().setEnabled(5L, true))
+                .isInstanceOf(com.qingyu.care.exception.InvalidOperationException.class);
+        verify(vectorStoreRepository, never()).updateDocEnabledByQaPairId(any(), any());
+    }
+
+    @Test
     void getQaPair_crossTenant_throwsNotFound() {
         QaPair other = active(5L);
         other.setTenantId(999L); // 他租户

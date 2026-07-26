@@ -6,6 +6,7 @@ import com.qingyu.care.dto.QaPairRequest;
 import com.qingyu.care.entity.QaPair;
 import com.qingyu.care.service.QaGenerationService;
 import com.qingyu.care.service.QaPairService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,13 +29,13 @@ public class QaPairController {
 
     @AuditLog(action = "QA_CREATE", targetType = "QaPair")
     @PostMapping("/knowledge/{kbId}/qa-pairs")
-    public ApiResponse<QaPair> create(@PathVariable Long kbId, @RequestBody QaPairRequest req) {
+    public ApiResponse<QaPair> create(@PathVariable Long kbId, @Valid @RequestBody QaPairRequest req) {
         return ApiResponse.success("问答对已创建", qaPairService.create(kbId, req.getQuestion(), req.getAnswer()));
     }
 
     @AuditLog(action = "QA_UPDATE", targetType = "QaPair")
     @PutMapping("/qa-pairs/{id}")
-    public ApiResponse<QaPair> update(@PathVariable Long id, @RequestBody QaPairRequest req) {
+    public ApiResponse<QaPair> update(@PathVariable Long id, @Valid @RequestBody QaPairRequest req) {
         return ApiResponse.success("问答对已更新", qaPairService.update(id, req.getQuestion(), req.getAnswer()));
     }
 
