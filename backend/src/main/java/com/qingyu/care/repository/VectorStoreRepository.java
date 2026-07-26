@@ -46,4 +46,15 @@ public interface VectorStoreRepository extends JpaRepository<VectorStoreEntity, 
     @Query(value = "UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{docEnabled}', to_jsonb(:enabled)) "
             + "WHERE metadata->>'documentId' = :documentId", nativeQuery = true)
     int updateDocEnabledByDocumentId(@Param("documentId") String documentId, @Param("enabled") String enabled);
+
+    /** 按 metadata 中的 qaPairId 删除向量（删除/重嵌 QA 前清旧）。 */
+    @Modifying
+    @Query(value = "DELETE FROM vector_store WHERE metadata->>'qaPairId' = :qaPairId", nativeQuery = true)
+    int deleteByQaPairId(@Param("qaPairId") String qaPairId);
+
+    /** 按 qaPairId 同步 QA 向量的启用标记（停用不删向量，重新启用免重嵌入）。metadata 列是 json，须先转 jsonb。 */
+    @Modifying
+    @Query(value = "UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{docEnabled}', to_jsonb(:enabled)) "
+            + "WHERE metadata->>'qaPairId' = :qaPairId", nativeQuery = true)
+    int updateDocEnabledByQaPairId(@Param("qaPairId") String qaPairId, @Param("enabled") String enabled);
 }

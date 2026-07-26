@@ -9,6 +9,7 @@ import { knowledgeService } from '@/api/knowledge';
 import type { KnowledgeBase, Document } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import QaPairPanel from '@/components/QaPairPanel';
 import {
     Dialog,
     DialogContent,
@@ -36,6 +37,7 @@ const KnowledgePage: React.FC = () => {
     const [isDocLoading, setIsDocLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [deleteDocId, setDeleteDocId] = useState<number | null>(null);
+    const [activeTab, setActiveTab] = useState<'docs' | 'qa'>('docs');
     const { toast } = useToast();
 
     const fetchDocuments = useCallback(async (kbId: number) => {
@@ -264,6 +266,13 @@ const KnowledgePage: React.FC = () => {
                             </CardHeader>
                             <CardContent>
                                 <Separator className="mb-6" />
+                                <div className="flex gap-4 border-b mb-4">
+                                    <button className={cn('pb-2 text-sm font-medium border-b-2 -mb-px', activeTab === 'docs' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')} onClick={() => setActiveTab('docs')}>文档</button>
+                                    <button className={cn('pb-2 text-sm font-medium border-b-2 -mb-px', activeTab === 'qa' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')} onClick={() => setActiveTab('qa')}>问答对</button>
+                                </div>
+                                {activeTab === 'qa' ? (
+                                    <QaPairPanel kbId={selectedKb.id} documents={documents} />
+                                ) : (
                                 <div className="space-y-4">
                                     <h4 className="text-sm font-semibold">已上传文档 ({documents.length})</h4>
 
@@ -339,6 +348,7 @@ const KnowledgePage: React.FC = () => {
                                         ))
                                     )}
                                 </div>
+                                )}
                             </CardContent>
                         </Card>
                     ) : (
