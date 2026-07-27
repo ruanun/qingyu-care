@@ -28,16 +28,21 @@
 - `searchKnowledge(query, strategy)` 被 `chat()`/`streamChat()` **自调用**（同 bean），直接加 `@Transactional` 因 Spring 代理自调用不生效。→ **自注入 `self`**（复刻 `KnowledgeServiceImpl` 既有 `self` + `@Lazy` setter 范式）：
   - `ChatServiceImpl` 加 `private ChatServiceImpl self;` + `@Autowired @Lazy setSelf(...)`；
   - `searchKnowledge(String, ChatStrategy)` 由 private 改 **public** + `@Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)`；
-  - `chat()`（约 130 行）与 `streamChat()`（约 210 行）两处调用改为 `self.searchKnowledge(...)`。
+  - **仅** `chat()`（约 130 行）与 `streamChat()`（约 226 行）两处调用改为 `self.searchKnowledge(...)`（经代理走 REQUIRES_NEW）。
+- **关键约束：公开入口 `searchKnowledge(String)`（约 520 行）内部对 2 参方法的调用保持直调（`searchKnowledge(query, strategy)`，自调用不经代理 → 注解失效、跑在调用方连接上），绝不改成 `self.`。** 原因：检索类 IT（`HybridRetrievalIT`/`DocVisibilityRetrievalIT`/`MultiKbRetrievalIT`）是类级 `@Transactional`，在**同一事务**内先播种（KB 走 JPA、chunk 走 `jdbcTemplate`）再经 `searchKnowledge(String)` 检索；若该路径进了 REQUIRES_NEW 新连接，会看不见本事务未提交的播种数据 → 三个 IT 全崩。故 REQUIRES_NEW 只在生产热路径（chat/streamChat）经代理生效，测试入口保持同事务可见性。
 - 顶层既有 try/catch（异常 → `List.of()`）保留，与事务隔离叠加双保险。
 - **不重构 chat() 整体事务边界、不动检索业务逻辑/RRF/RetrievalScope。**
 
 ## 4. 测试
 
-- **单测**：现有调用 `chat()` 的单测（`ChatServiceSessionOwnershipTest` 的经-chat 用例等）在 `@InjectMocks` 无 Spring 环境下 `self` 为 null → 需在 setup 里 `service.setSelf(service)` 令 `self.searchKnowledge` 可达，保证既有用例不回归（这是本次实现必须一并处理的测试影响）。
-- **IT（真库，择一可行者）**：验证「检索 SQL 失败不毒化外层事务」这一核心不变式——
-  - 首选：一个 IT 在 `chat()` 路径上诱导关键词检索失败（如测试内临时使 `content_tsv` 相关查询失败），断言 `chat()` 仍返回成功（HTTP 200 / 非异常）、知识命中为空、且同请求内后续 `ChatToolService.resolve` 等不受毒化；
-  - 若在共享容器里诱导失败过于脆弱/影响其它 IT，则退化为一个专门的事务隔离 IT（外层 `@Transactional` 中调用一个 REQUIRES_NEW 的失败 SQL、断言外层后续查询仍可用），加结构验证（chat 经 self 路由 searchKnowledge），并标注「LLM 额度恢复后真机 re-smoke 复验完整链路」。
+- **单测（纯 Mockito）**：
+  - **路由**：新增 `chat()` 用例——把 `self` 注入为 mock `ChatServiceImpl`，令 `searchKnowledge` 返回空、策略 `allowNoKnowledge=false`（走兜底分支，不触达 LLM），`verify(selfMock).searchKnowledge(...)` 证明检索经代理路由（而非私有自调用，后者代理不生效）。
+  - **注解守卫**：反射断言 2 参 `searchKnowledge(String, ChatStrategy)` 为 public 且带 `@Transactional(propagation=REQUIRES_NEW, readOnly=true)`——守住本修复的核心配置不被误删。
+  - **回归**：现有调用 `chat()` 的 `ChatServiceSessionOwnershipTest` 在 `@InjectMocks` 无 Spring 环境下 `self` 为 null → 在 `@BeforeEach` 里 `chatService.setSelf(chatService)` 令 `self.searchKnowledge` 可达，保证既有用例不回归。（`ChatServiceSearchScopeTest` 走 `searchKnowledge(String)` 直调路径、不触达 `self`，无需改。）
+- **IT（真库，机制级验证）** `RetrievalTxIsolationIT extends AbstractPostgresIT`：因关键词 SQL 用 `plainto_tsquery`（任意输入不报错）、真实 SQL 失败只源于 schema 级（`content_tsv` 缺失，共享容器里恒存在），且 chat() 端到端受 LLM 依赖阻塞（与既有 LLM-IT 跳过先例一致），故以探针 bean 验证本修复所依赖的 Spring/PG 不变式：
+  - **正例**：外层 `@Transactional` 中调用探针的 `@Transactional(REQUIRES_NEW, readOnly=true)` 方法（内部跑必失败 SQL `SELECT 1/0` 并吞异常，镜像 `searchKnowledge` 的 fail-soft），随后在外层连接上 `SELECT 1` 断言仍返回 1（外层未被毒化）。
+  - **反例（证明隔离是必需的）**：外层 `@Transactional` 中调用探针的 `REQUIRED`（同事务）失败方法，随后 `SELECT 1` 断言抛出（`current transaction is aborted`），坐实不隔离即毒化。
+- **已知局限（登记留债）**：`chat()` 全链路 fail-soft（真实检索失败→不 500）无端到端 IT——受 LLM 依赖阻塞，沿用既定 LLM-IT 跳过取舍；待 DashScope 额度恢复后真机 re-smoke 复验完整链路。
 
 ## 5. 明确不做（YAGNI）
 - 不修 zhparser 镜像/`content_tsv` 建列（那是部署环境问题，另行处理）。
