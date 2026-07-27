@@ -751,9 +751,16 @@ public class ChatServiceImpl implements ChatService {
         session.setAgentId(agentId);
         session.setHandoverTime(LocalDateTime.now());
         log.info("Session {} accepted by agent {}", sessionId, agentId);
-        return sessionRepository.save(session);
+        ChatSession saved = sessionRepository.save(session);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.accepted", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+        realtimeNotifier.toUserSessionEvent(session.getSessionId(), "accepted", "客服已接入，正在为您服务");
+
+        return saved;
     }
-    
+
     @Override
     @Transactional
     public void agentReply(String sessionId, String message, Long agentId) {
@@ -767,16 +774,28 @@ public class ChatServiceImpl implements ChatService {
                 .role(MessageRole.ASSISTANT)
                 .content(message)
                 .build();
-        messageRepository.save(agentMsg);
+        agentMsg = messageRepository.save(agentMsg);
         log.info("Agent {} replied to session {}", agentId, sessionId);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "agent.replied", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+        realtimeNotifier.toUserMessage(session.getSessionId(), agentMsg);
     }
-    
+
     @Override
     public org.springframework.data.domain.Page<ChatSession> getWaitingAgentSessions(org.springframework.data.domain.Pageable pageable) {
         // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
         Long tenantId = TenantContext.getTenantId();
         if (tenantId == null) {
             return org.springframework.data.domain.Page.empty(pageable);
+        }
+        // appId 非空时按 tenantId+appId 双重收窄（防跨应用查到待接会话）；appId 为空退回仅 tenantId
+        // （兼容管理端无 appId 场景，避免炸空）
+        Long appId = TenantContext.getAppId();
+        if (appId != null) {
+            return sessionRepository.findByTenantIdAndAppIdAndStatusOrderByCreatedAtDesc(
+                    tenantId, appId, SessionStatus.WAITING_AGENT, pageable);
         }
         return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(
                 tenantId, SessionStatus.WAITING_AGENT, pageable);

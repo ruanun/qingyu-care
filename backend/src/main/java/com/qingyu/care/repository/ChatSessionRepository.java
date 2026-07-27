@@ -80,6 +80,12 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
             Long tenantId, SessionStatus status, Pageable pageable);
 
     /**
+     * 分页查询指定租户+应用下指定状态的会话（待接队列 appId 双重收窄，防跨应用查到待接会话）
+     */
+    Page<ChatSession> findByTenantIdAndAppIdAndStatusOrderByCreatedAtDesc(
+            Long tenantId, Long appId, SessionStatus status, Pageable pageable);
+
+    /**
      * 分页查询指定租户下指定用户的历史会话（防 userId 猜测跨租户读取）
      */
     Page<ChatSession> findByTenantIdAndUserIdOrderByCreatedAtDesc(
