@@ -46,4 +46,13 @@ class RealtimeNotifierTest {
         verify(hub).publish(org.mockito.ArgumentMatchers.eq("agent:9:2"),
                 org.mockito.ArgumentMatchers.eq("session"), org.mockito.ArgumentMatchers.contains("sess-2"));
     }
+
+    @Test
+    void 会话事件_text为null_不抛异常仍发布() {
+        org.assertj.core.api.Assertions.assertThatCode(
+                        () -> notifier.toUserSessionEvent("s9", "ended", null))
+                .doesNotThrowAnyException();
+        verify(hub).publish(org.mockito.ArgumentMatchers.eq("session:s9"),
+                org.mockito.ArgumentMatchers.eq("session"), org.mockito.ArgumentMatchers.anyString());
+    }
 }

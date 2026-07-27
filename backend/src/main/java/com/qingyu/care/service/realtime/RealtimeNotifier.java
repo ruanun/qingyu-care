@@ -33,8 +33,11 @@ public class RealtimeNotifier {
 
     /** 向用户 inbox 推一条会话状态事件（accepted/ended/returned_to_ai）。 */
     public void toUserSessionEvent(String sessionId, String kind, String text) {
-        hub.publish(RealtimeKeys.session(sessionId), "session",
-                json(Map.of("sessionId", sessionId, "kind", kind, "text", text)));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sessionId", sessionId);
+        m.put("kind", kind);
+        m.put("text", text);
+        hub.publish(RealtimeKeys.session(sessionId), "session", json(m));
     }
 
     /** 向指定坐席推一条聊天消息（用户新消息）。 */
@@ -58,13 +61,18 @@ public class RealtimeNotifier {
 
     /** 推 typing 短事件（不落库）。 */
     public void typing(String key, String sessionId, String from) {
-        hub.publish(key, "typing", json(Map.of("sessionId", sessionId, "from", from)));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sessionId", sessionId);
+        m.put("from", from);
+        hub.publish(key, "typing", json(m));
     }
 
     /** 广播坐席上/下线 presence 给本租户其他在线坐席。 */
     public void presenceToTenantAgents(Long tenantId, Long agentUserId, boolean online) {
-        toTenantAgents(tenantId, "presence",
-                json(Map.of("agentUserId", agentUserId, "online", online)));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("agentUserId", agentUserId);
+        m.put("online", online);
+        toTenantAgents(tenantId, "presence", json(m));
     }
 
     private String messageJson(String sessionId, ChatMessage msg) {
