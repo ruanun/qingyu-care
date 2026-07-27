@@ -60,6 +60,7 @@ public class OpenSessionController {
      */
     @GetMapping(value = "/{sessionId}/inbox", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> inbox(@PathVariable String sessionId) {
+        chatService.getSession(sessionId); // 归属校验：越权/不存在抛 404，阻止跨租户订阅
         return realtimeHub.subscribe(RealtimeKeys.session(sessionId));
     }
 
