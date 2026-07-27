@@ -155,6 +155,14 @@ public class ChatController {
         return ApiResponse.success(chatService.getSessionMessages(sessionId));
     }
 
+    @PostMapping("/session/{sessionId}/return-to-ai")
+    @Operation(summary = "交还 AI", description = "坐席把会话交还 AI 续答")
+    public ApiResponse<Void> returnToAI(@PathVariable String sessionId) {
+        SecurityUtil.requireAgent();
+        chatService.returnToAI(sessionId);
+        return ApiResponse.success("已交还 AI", null);
+    }
+
     @PostMapping("/session/{sessionId}/message/{messageId}/feedback")
     @Operation(summary = "评价消息", description = "对 AI 回复打赞/踩（feedback ∈ {1,-1}，重复提交覆盖）")
     public ApiResponse<Void> feedback(

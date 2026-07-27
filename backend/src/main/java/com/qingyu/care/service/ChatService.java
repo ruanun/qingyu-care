@@ -118,5 +118,10 @@ public interface ChatService {
      * 获取会话消息历史
      */
     List<ChatMessage> getSessionMessages(String sessionId);
+
+    /**
+     * 坐席把会话交还 AI 续答（仅 AGENT_PROCESSING 状态允许）
+     */
+    void returnToAI(String sessionId);
 }
 

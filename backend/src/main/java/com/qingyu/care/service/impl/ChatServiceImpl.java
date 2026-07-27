@@ -806,5 +806,19 @@ public class ChatServiceImpl implements ChatService {
         ChatSession session = getSession(sessionId);
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
     }
+
+    @Override
+    @Transactional
+    public void returnToAI(String sessionId) {
+        ChatSession session = getSession(sessionId);
+        if (session.getStatus() != SessionStatus.AGENT_PROCESSING) {
+            throw new InvalidOperationException("该会话不在人工处理状态，无法交还 AI：" + session.getStatus());
+        }
+        session.setStatus(SessionStatus.AI_PROCESSING);
+        session.setAgentId(null);
+        sessionRepository.save(session);
+        realtimeNotifier.toUserSessionEvent(sessionId, "returned_to_ai", "已切回智能助手为您服务");
+        log.info("Session {} returned to AI by agent", sessionId);
+    }
 }
 
