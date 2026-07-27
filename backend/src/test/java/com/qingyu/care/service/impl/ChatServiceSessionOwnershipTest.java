@@ -17,6 +17,7 @@ import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -62,6 +63,12 @@ class ChatServiceSessionOwnershipTest {
     @Mock TransactionTemplate transactionTemplate;
     @Mock AbTestService abTestService;
     @InjectMocks ChatServiceImpl chatService;
+
+    @BeforeEach
+    void wireSelf() {
+        // chat() 现经 self.searchKnowledge 路由；单测无 Spring，self 需手动指向本实例防 NPE
+        chatService.setSelf(chatService);
+    }
 
     @AfterEach
     void clear() {

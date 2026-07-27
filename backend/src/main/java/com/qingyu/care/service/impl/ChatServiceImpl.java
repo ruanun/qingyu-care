@@ -39,6 +39,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
@@ -69,6 +70,15 @@ public class ChatServiceImpl implements ChatService {
     private final AbTestService abTestService;
     private final ConfigService configService;
     private final ChatToolService chatToolService;
+
+    // 自注入解决 @Transactional 同类自调用不经代理不生效问题（仿 KnowledgeServiceImpl.self）
+    private ChatServiceImpl self;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    public void setSelf(ChatServiceImpl self) {
+        this.self = self;
+    }
 
     @Override
     @Transactional
@@ -126,9 +136,10 @@ public class ChatServiceImpl implements ChatService {
         // 获取策略配置（会话带 A/B 变体时用变体策略）
         ChatStrategy strategy = resolveStrategy(session);
 
-        // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）
-        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
-        
+        // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）；
+        // 经 self 走代理 → searchKnowledge 的 REQUIRES_NEW 只读事务生效，检索 SQL 失败不毒化本写事务
+        List<Document> relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
+
         // 计算置信度（M4 PgVectorStore 写入的是 "distance" 键，须换算，见 resolveConfidenceScore）
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
             relevantDocs.stream()
@@ -223,7 +234,8 @@ public class ChatServiceImpl implements ChatService {
         // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
         ChatSession session = getOrCreateSession(request);
         ChatStrategy strategy = resolveStrategy(session);
-        List<Document> relevantDocs = searchKnowledge(request.getMessage(), strategy);
+        // 同 chat()：经 self 走代理，检索在独立只读事务上执行
+        List<Document> relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
         String context = buildContext(relevantDocs);
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
                 java.util.List.of());
@@ -525,8 +537,13 @@ public class ChatServiceImpl implements ChatService {
      * 直接短路返回空（省掉 embedding 调用），走既有 allowNoKnowledge/fallbackMessage 语义。
      * 非空范围下按 strategy 分流：hybridEnabled（null 视为开启）走混合检索，否则纯向量；
      * 两条路径都带 tenant+app+kbIds 过滤。整体 fail-soft：任何异常均返回空列表，不阻断对话。
+     * <p>事务隔离：经 chat()/streamChat() 的 self 代理调用时以 REQUIRES_NEW 只读新事务执行——
+     * 检索 SQL（关键词全文/向量）失败只毒化该独立连接，chat 写事务连接不受影响，真正 fail-soft。
+     * 公开入口 searchKnowledge(String) 内部对本方法保持直调（自调用不经代理、注解失效），
+     * 以保住检索类 IT 的同事务播种可见性——切勿改成 self.searchKnowledge。
      */
-    private List<Document> searchKnowledge(String query, ChatStrategy strategy) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public List<Document> searchKnowledge(String query, ChatStrategy strategy) {
         try {
             RetrievalScope scope = retrievalScopeResolver.resolve();
             if (scope.isEmpty()) {
