@@ -36,17 +36,31 @@ public class RealtimeHub {
      * 归零则摘除该 channel。心跳 merge 进流保活。
      */
     public Flux<ServerSentEvent<String>> subscribe(String key) {
-        Channel ch = channels.computeIfAbsent(key,
-                k -> new Channel(Sinks.many().multicast().directBestEffort(), new AtomicInteger(0)));
-        ch.subscribers().incrementAndGet();
-        Flux<ServerSentEvent<String>> heartbeat = Flux.interval(HEARTBEAT, HEARTBEAT)
-                .map(i -> ServerSentEvent.<String>builder().comment("ping").build());
-        return Flux.merge(ch.sink().asFlux(), heartbeat)
-                .doFinally(sig -> {
-                    if (ch.subscribers().decrementAndGet() <= 0) {
-                        channels.remove(key, ch);
-                    }
-                });
+        // Flux.defer：注册（计数+1）推迟到真正被订阅时才发生，与 doFinally 的注销（计数-1）成对，
+        // 避免拿到 Flux 却从未订阅时的幽灵 presence
+        return Flux.defer(() -> {
+            Channel ch = register(key);
+            Flux<ServerSentEvent<String>> heartbeat = Flux.interval(HEARTBEAT, HEARTBEAT)
+                    .map(i -> ServerSentEvent.<String>builder().comment("ping").build());
+            return Flux.merge(ch.sink().asFlux(), heartbeat)
+                    .doFinally(sig -> deregister(key));
+        });
+    }
+
+    /** 原子获取或新建 channel 并计数+1（compute 对同一 key 全程串行，杜绝增/减/摘除竞态）。 */
+    private Channel register(String key) {
+        return channels.compute(key, (k, v) -> {
+            Channel c = (v != null) ? v
+                    : new Channel(Sinks.many().multicast().directBestEffort(), new AtomicInteger(0));
+            c.subscribers().incrementAndGet();
+            return c;
+        });
+    }
+
+    /** 原子计数-1，归零即摘除（computeIfPresent 返回 null 从 map 移除，与 register 同 key 互斥）。 */
+    private void deregister(String key) {
+        channels.computeIfPresent(key, (k, v) ->
+                v.subscribers().decrementAndGet() <= 0 ? null : v);
     }
 
     /** 向某键的订阅者尽力推送一条命名事件。无订阅者或发送失败均安全丢弃。 */

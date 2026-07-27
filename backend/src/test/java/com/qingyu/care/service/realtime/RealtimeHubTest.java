@@ -52,4 +52,23 @@ class RealtimeHubTest {
         assertThat(hub.onlineKeys("agent:9:")).containsExactlyInAnyOrder("agent:9:1", "agent:9:2");
         a.dispose(); b.dispose(); c.dispose();
     }
+
+    @Test
+    void 同一key多个订阅者都收到同一次广播() {
+        RealtimeHub hub = new RealtimeHub();
+        java.util.List<String> a = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.List<String> b = new java.util.concurrent.CopyOnWriteArrayList<>();
+        reactor.core.Disposable d1 = hub.subscribe("k").subscribe(sse -> { if (sse.data() != null) a.add(sse.data()); });
+        reactor.core.Disposable d2 = hub.subscribe("k").subscribe(sse -> { if (sse.data() != null) b.add(sse.data()); });
+        // 两个订阅就绪后再发（directBestEffort 无缓冲，发早了会丢）
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(1))
+                .until(() -> hub.isOnline("k"));
+        hub.publish("k", "message", "hi");
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(1))
+                .until(() -> !a.isEmpty() && !b.isEmpty());
+        d1.dispose();
+        d2.dispose();
+        assertThat(a).containsExactly("hi");
+        assertThat(b).containsExactly("hi");
+    }
 }
