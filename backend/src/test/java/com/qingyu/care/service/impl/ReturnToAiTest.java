@@ -3,6 +3,7 @@ package com.qingyu.care.service.impl;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.event.WebhookDomainEvent;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
@@ -19,6 +20,7 @@ import com.qingyu.care.service.realtime.RealtimeNotifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -88,6 +90,15 @@ class ReturnToAiTest {
         assertThat(session.getStatus()).isEqualTo(SessionStatus.AI_PROCESSING);
         assertThat(session.getAgentId()).isNull();
         verify(sessionRepository).save(session);
+
+        ArgumentCaptor<WebhookDomainEvent> captor = ArgumentCaptor.forClass(WebhookDomainEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        WebhookDomainEvent event = captor.getValue();
+        assertThat(event.getEventType()).isEqualTo("session.returned_to_ai");
+        assertThat(event.getSessionId()).isEqualTo("sess-1");
+        assertThat(event.getTenantId()).isEqualTo(2L);
+        assertThat(event.getAppId()).isEqualTo(5L);
+
         verify(realtimeNotifier).toUserSessionEvent(
                 eq("sess-1"), eq("returned_to_ai"), any(String.class));
     }
@@ -102,6 +113,7 @@ class ReturnToAiTest {
                 .isInstanceOf(InvalidOperationException.class);
 
         verify(sessionRepository, never()).save(any(ChatSession.class));
+        verify(eventPublisher, never()).publishEvent(any());
         verify(realtimeNotifier, never()).toUserSessionEvent(any(), any(), any());
     }
 }

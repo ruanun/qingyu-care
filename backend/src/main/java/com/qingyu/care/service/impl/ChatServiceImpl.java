@@ -817,6 +817,10 @@ public class ChatServiceImpl implements ChatService {
         session.setStatus(SessionStatus.AI_PROCESSING);
         session.setAgentId(null);
         sessionRepository.save(session);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.returned_to_ai", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
         realtimeNotifier.toUserSessionEvent(sessionId, "returned_to_ai", "已切回智能助手为您服务");
         log.info("Session {} returned to AI by agent", sessionId);
     }
