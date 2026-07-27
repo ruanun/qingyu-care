@@ -221,17 +221,17 @@ public class ChatServiceImpl implements ChatService {
         // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
         ChatSession session = getOrCreateSession(request);
 
-        // 与 chat() 对齐：先做转人工关键词触发 + 人工接管态 AI 静默
-        if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
-            onTokensUsed.accept(0);
-            onAiMessageSaved.accept(-1L);
-            return Flux.just("正在为您转接人工客服，请稍候...");
-        }
+        // 与 chat() 严格同序：先判人工接管态静默，再判关键词触发，避免已接管会话被关键词打回 WAITING_AGENT
         if (isAgentControlled(session)) {
             persistUserMessageDuringHandover(session, request.getMessage());
             onTokensUsed.accept(0);
             onAiMessageSaved.accept(-1L);
             return Flux.just("[会话已转接人工客服，请等待回复]");
+        }
+        if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
+            onTokensUsed.accept(0);
+            onAiMessageSaved.accept(-1L);
+            return Flux.just("正在为您转接人工客服，请稍候...");
         }
 
         ChatStrategy strategy = resolveStrategy(session);
@@ -593,6 +593,7 @@ public class ChatServiceImpl implements ChatService {
         }
         session.setStatus(SessionStatus.WAITING_AGENT);
         sessionRepository.save(session);
+        log.info("关键词触发转人工: sessionId={}", session.getSessionId());
         eventPublisher.publishEvent(new WebhookDomainEvent(
                 "session.handover_requested", session.getAppId(), session.getTenantId(),
                 session.getSessionId(), "keyword", LocalDateTime.now()));

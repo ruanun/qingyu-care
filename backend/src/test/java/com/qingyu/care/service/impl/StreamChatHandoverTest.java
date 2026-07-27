@@ -33,7 +33,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -129,6 +131,29 @@ class StreamChatHandoverTest {
         assertThat(session.getStatus()).isEqualTo(SessionStatus.WAITING_AGENT);
         verify(modelRouterService, never()).getChatClientForScenario(any());
         verify(realtimeNotifier).newWaitingToTenantAgents(eq(9L), eq(session));
+    }
+
+    @Test
+    void streamChat_已接管态_发含关键词消息_仍静默不重复触发转人工() {
+        // 会话已是 AGENT_PROCESSING（正被坐席接管），此时用户发含转人工关键词的消息，
+        // streamChat 应先判人工接管态静默（与 chat() 同序），而不是被关键词打回 WAITING_AGENT
+        ChatSession session = ChatSession.builder().sessionId("s2").build();
+        session.setStatus(SessionStatus.AGENT_PROCESSING);
+        session.setTenantId(9L);
+        session.setAgentId(3L);
+        when(sessionRepository.findBySessionId("s2")).thenReturn(Optional.of(session));
+        when(messageRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        // 正确顺序下已接管态短路、不会再走到关键词判断，此桩仅用于证明"若顺序颠倒会误判"，标 lenient 防误报
+        lenient().when(handoverRuleService.checkKeywordTrigger("我要转人工")).thenReturn(true);
+
+        List<String> out = chatService.streamChat(
+                ChatRequest.builder().sessionId("s2").message("我要转人工").build()).collectList().block();
+
+        assertThat(String.join("", out)).contains("人工客服");
+        assertThat(session.getStatus()).isEqualTo(SessionStatus.AGENT_PROCESSING);   // 未被打回 WAITING_AGENT
+        verify(eventPublisher, never()).publishEvent(any());                          // 不重复发 handover 事件
+        verify(realtimeNotifier, never()).newWaitingToTenantAgents(anyLong(), any()); // 不广播新待接
+        verify(realtimeNotifier).toAgentMessage(eq(9L), eq(3L), any());               // 静默转发给接管坐席
     }
 
     @Test
