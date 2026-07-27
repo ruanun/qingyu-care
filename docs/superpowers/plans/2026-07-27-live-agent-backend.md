@@ -43,7 +43,7 @@
 
 ---
 
-### Task A1: RealtimeHub 传输层 + RealtimeKeys
+### Task 1: RealtimeHub 传输层 + RealtimeKeys
 
 **Files:**
 - Create: `backend/src/main/java/com/qingyu/care/service/realtime/RealtimeKeys.java`
@@ -262,14 +262,14 @@ git commit -m "feat: 实时 SSE 传输层 RealtimeHub（Sinks 多播注册表 + 
 
 ---
 
-### Task A2: RealtimeNotifier 领域发布
+### Task 2: RealtimeNotifier 领域发布
 
 **Files:**
 - Create: `backend/src/main/java/com/qingyu/care/service/realtime/RealtimeNotifier.java`
 - Test: `backend/src/test/java/com/qingyu/care/service/realtime/RealtimeNotifierTest.java`
 
 **Interfaces:**
-- Consumes: `RealtimeHub`（Task A1）、`RealtimeKeys`、`ChatMessage`（`entity/`）、`ChatSession`。
+- Consumes: `RealtimeHub`（Task 1）、`RealtimeKeys`、`ChatMessage`（`entity/`）、`ChatSession`。
 - Produces（供 ChatServiceImpl / 控制器调用）：
   - `toUserMessage(String sessionId, ChatMessage msg)` — 向用户 inbox 推 `message`
   - `toUserSessionEvent(String sessionId, String kind, String text)` — 向用户推 `session`（kind ∈ accepted/ended/returned_to_ai）
@@ -451,7 +451,7 @@ git commit -m "feat: 实时领域发布 RealtimeNotifier（消息/会话/typing/
 
 ---
 
-### Task A3: 两端 SSE 端点 + 坐席角色门禁
+### Task 3: 两端 SSE 端点 + 坐席角色门禁
 
 **Files:**
 - Modify: `backend/src/main/java/com/qingyu/care/util/SecurityUtil.java`（加 `isTenantMember()` + `requireAgent()`）
@@ -616,7 +616,7 @@ git commit -m "feat: 两端 SSE 端点（坐席 stream + 用户 inbox）+ 坐席
 
 ---
 
-### Task B1: 坐席身份收口（agentId 绑登录 + 端点门禁）
+### Task 4: 坐席身份收口（agentId 绑登录 + 端点门禁）
 
 **Files:**
 - Modify: `backend/src/main/java/com/qingyu/care/dto/AgentReplyRequest.java`（删 agentId）
@@ -681,7 +681,7 @@ git commit -m "fix: 坐席身份收口——agentId 取登录态、坐席端点�
 
 ---
 
-### Task B2: streamChat 对齐（抽取共享转人工/AI 静默）
+### Task 5: streamChat 对齐（抽取共享转人工/AI 静默）
 
 **Files:**
 - Modify: `backend/src/main/java/com/qingyu/care/service/impl/ChatServiceImpl.java`
@@ -696,7 +696,7 @@ git commit -m "fix: 坐席身份收口——agentId 取登录态、坐席端点�
 
 - [ ] **Step 1：写 StreamChatHandoverTest（先失败）**
 
-`service/impl/StreamChatHandoverTest.java`（Mockito，注入全套 mock 含新 `RealtimeNotifier`；沿用 `ChatServiceSessionOwnershipTest` 的 mock 集合，注意本任务后 `ChatServiceImpl` 新增依赖 `RealtimeNotifier` 需补 `@Mock`；若 Task 1 的 `self` 自注入已在，需 `@BeforeEach setSelf`）：
+`service/impl/StreamChatHandoverTest.java`（Mockito，注入全套 mock 含新 `RealtimeNotifier`；沿用 `ChatServiceSessionOwnershipTest` 的 mock 集合，注意本任务后 `ChatServiceImpl` 新增依赖 `RealtimeNotifier` 需补 `@Mock`；`ChatServiceImpl` 已有 `self` 自注入（检索事务隔离修复引入），单测需 `@BeforeEach setSelf(chatService)`）：
 
 ```java
 // 断言 streamChat 在 AGENT_PROCESSING 会话下：不调用 AI（modelRouterService 无交互），
@@ -799,7 +799,7 @@ cd backend && git add -A && git commit -m "feat: streamChat 对齐 chat()——�
 
 ---
 
-### Task B3: 双向推送 + 会话事件（accept/agentReply）
+### Task 6: 双向推送 + 会话事件（accept/agentReply）
 
 **Files:**
 - Modify: `backend/src/main/java/com/qingyu/care/service/impl/ChatServiceImpl.java`（acceptSession/agentReply 接 notifier + 事件；getWaitingAgentSessions 加 appId）
@@ -856,7 +856,7 @@ cd backend && git add -A && git commit -m "feat: 坐席接管/回复双向实时
 
 ---
 
-### Task C1: 回归 AI（returnToAI）
+### Task 7: 回归 AI（returnToAI）
 
 **Files:**
 - Modify: `backend/src/main/java/com/qingyu/care/service/ChatService.java`（加接口方法）
@@ -921,7 +921,7 @@ cd backend && git add -A && git commit -m "feat: 回归 AI（returnToAI，AGENT_
 
 ---
 
-### Task C2: 端到端实时流 IT（accept→reply→SSE 收到）
+### Task 8: 端到端实时流 IT（accept→reply→SSE 收到）
 
 **Files:**
 - Test: `backend/src/test/java/com/qingyu/care/it/LiveAgentFlowIT.java`
@@ -950,7 +950,7 @@ cd backend && git add -A && git commit -m "test: 真人坐席端到端 IT（SSE 
 
 ---
 
-### Task E1: 后端收尾全量回归
+### Task 9: 后端收尾全量回归
 
 - [ ] **Step 1：全量 verify**
 
