@@ -23,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -88,6 +90,33 @@ class ChatServiceRetrievalTxTest {
         chatService.chat(ChatRequest.builder().message("你好").build());
 
         verify(selfMock).searchKnowledge(eq("你好"), any(ChatStrategy.class));
+    }
+
+    @Test
+    void chat_检索事务开启失败_仍fail_soft兜底不抛() {
+        // self.searchKnowledge 直接抛出 REQUIRES_NEW「开启新事务」阶段的典型异常（连接池耗尽），
+        // 该异常落在 searchKnowledge 方法体 try 之外，不会被内部 catch 吞掉；
+        // chat() 调用点须自行兜底，验证仍 fail-soft（降级空知识、走兜底话术，不把异常抛给调用方）。
+        ChatServiceImpl selfMock = mock(ChatServiceImpl.class);
+        when(selfMock.searchKnowledge(anyString(), any()))
+                .thenThrow(new CannotCreateTransactionException("pool exhausted"));
+        chatService.setSelf(selfMock);
+
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(messageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(abTestService.resolveVariantStrategy(null, null)).thenReturn(Optional.empty());
+        when(chatStrategyService.getActiveStrategy("default")).thenReturn(
+                ChatStrategy.builder().name("默认").scenario("default")
+                        .allowNoKnowledge(false).fallbackMessage("请稍等").build());
+
+        ChatRequest request = ChatRequest.builder().message("你好").build();
+
+        assertThatCode(() -> chatService.chat(request)).doesNotThrowAnyException();
+
+        var response = chatService.chat(request);
+        assertThat(response.getContent()).isEqualTo("请稍等");
+        assertThat(response.getKnowledgeHits()).isEmpty();
+        assertThat(response.isSuggestHandover()).isFalse();
     }
 
     @Test

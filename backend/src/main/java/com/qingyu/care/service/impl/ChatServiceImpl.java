@@ -138,7 +138,15 @@ public class ChatServiceImpl implements ChatService {
 
         // 检索相关知识（是否走混合检索由 strategy.hybridEnabled 决定）；
         // 经 self 走代理 → searchKnowledge 的 REQUIRES_NEW 只读事务生效，检索 SQL 失败不毒化本写事务
-        List<Document> relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
+        List<Document> relevantDocs;
+        try {
+            relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
+        } catch (Exception e) {
+            // REQUIRES_NEW 的开启/提交事务阶段异常（如连接池耗尽）落在 searchKnowledge 方法体 try 之外，
+            // 此处兜底补全 fail-soft 契约：检索不可用时降级为空知识、不阻断对话
+            log.warn("检索独立事务开启/提交失败，降级为空知识: {}", e.getMessage());
+            relevantDocs = List.of();
+        }
 
         // 计算置信度（M4 PgVectorStore 写入的是 "distance" 键，须换算，见 resolveConfidenceScore）
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
@@ -235,7 +243,14 @@ public class ChatServiceImpl implements ChatService {
         ChatSession session = getOrCreateSession(request);
         ChatStrategy strategy = resolveStrategy(session);
         // 同 chat()：经 self 走代理，检索在独立只读事务上执行
-        List<Document> relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
+        List<Document> relevantDocs;
+        try {
+            relevantDocs = self.searchKnowledge(request.getMessage(), strategy);
+        } catch (Exception e) {
+            // 同 chat()：REQUIRES_NEW 的开启/提交事务阶段异常落在方法体 try 之外，此处兜底 fail-soft
+            log.warn("检索独立事务开启/提交失败，降级为空知识: {}", e.getMessage());
+            relevantDocs = List.of();
+        }
         String context = buildContext(relevantDocs);
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
                 java.util.List.of());
