@@ -5,6 +5,7 @@ import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.impl.ChatServiceImpl;
+import com.qingyu.care.service.realtime.RealtimeNotifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +39,7 @@ class ChatServiceSearchScopeTest {
     @Mock HybridRetrievalService hybridRetrievalService;
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock RealtimeNotifier realtimeNotifier;
     @InjectMocks ChatServiceImpl chatService;
 
     @Test
