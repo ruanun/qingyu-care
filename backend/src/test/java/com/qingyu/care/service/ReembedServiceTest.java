@@ -20,13 +20,14 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -70,6 +71,12 @@ class ReembedServiceTest {
                 .status(DocumentStatus.COMPLETED).build();
     }
 
+    /** 模拟 processDocument 内部吞异常后落库的终态：状态仍为 FAILED（不重抛）。 */
+    private Document failedDoc(long id, long kbId) {
+        return Document.builder().id(id).name("doc" + id).knowledgeBase(kb(kbId))
+                .status(DocumentStatus.FAILED).build();
+    }
+
     private QaPair qa(long id, long kbId) {
         return QaPair.builder().id(id).knowledgeBase(kb(kbId)).question("问题" + id).answer("答案" + id)
                 .source(QaPairSource.MANUAL).status(QaPairStatus.ACTIVE).build();
@@ -87,8 +94,12 @@ class ReembedServiceTest {
                 .thenReturn(List.of(qa(31L, 1L)));
         when(qaPairRepository.findByKnowledgeBaseIdAndStatus(2L, QaPairStatus.ACTIVE))
                 .thenReturn(List.of(qa(32L, 2L)));
-        // 其中一个文档重嵌抛异常，不应中断整批；lenient 避免 Mockito 严格桩对其余未命中 id 的参数不匹配误报
-        lenient().doThrow(new RuntimeException("下载失败")).when(knowledgeService).processDocument(12L);
+        // processDocument 内部吞异常置 FAILED、不重抛（真实语义），故用回读状态模拟"其中一个文档处理失败"：
+        // 12L 处理后状态仍为 FAILED，其余处理后为 COMPLETED；knowledgeService.processDocument 保持 void 不抛
+        when(documentRepository.findById(11L)).thenReturn(Optional.of(doc(11L, 1L)));
+        when(documentRepository.findById(12L)).thenReturn(Optional.of(failedDoc(12L, 1L)));
+        when(documentRepository.findById(21L)).thenReturn(Optional.of(doc(21L, 2L)));
+        when(documentRepository.findById(22L)).thenReturn(Optional.of(doc(22L, 2L)));
 
         ReembedService svc = service();
         String jobId = svc.startReembed(ReembedService.Scope.APP, null);
@@ -103,6 +114,32 @@ class ReembedServiceTest {
         assertThat(p.status).isEqualTo("COMPLETED");
         assertThat(p.scope).isEqualTo("APP");
         assertThat(p.finishedAt).isNotNull();
+    }
+
+    @Test
+    void startReembed_QA重嵌抛异常_faisoft不中断且计入failed() {
+        // 覆盖文档路以外的另一条 fail-soft 路径：QaPairService.reembed 本身会抛异常（非吞异常置状态），
+        // ReembedService 的 catch 直接捕获计入 failed，与文档路"回读状态判成败"互为对称验证
+        KnowledgeBase kb = kb(9L);
+        when(knowledgeService.getKnowledgeBase(9L)).thenReturn(kb);
+        when(documentRepository.findByKnowledgeBaseIdAndStatus(9L, DocumentStatus.COMPLETED))
+                .thenReturn(List.of());
+        QaPair qa91 = qa(91L, 9L);
+        QaPair qa92 = qa(92L, 9L);
+        when(qaPairRepository.findByKnowledgeBaseIdAndStatus(9L, QaPairStatus.ACTIVE))
+                .thenReturn(List.of(qa91, qa92));
+        // 显式桩 qa91 的成功路径：避免 Mockito 严格模式下与 qa92 的失败桩产生"参数不匹配"误判
+        doNothing().when(qaPairService).reembed(qa91);
+        doThrow(new RuntimeException("嵌入服务异常")).when(qaPairService).reembed(qa92);
+
+        ReembedService svc = service();
+        String jobId = svc.startReembed(ReembedService.Scope.KB, 9L);
+
+        ReembedService.Progress p = svc.getProgress(jobId);
+        assertThat(p.total).isEqualTo(2);
+        assertThat(p.done.get()).isEqualTo(1);
+        assertThat(p.failed.get()).isEqualTo(1);
+        assertThat(p.status).isEqualTo("COMPLETED");
     }
 
     @Test

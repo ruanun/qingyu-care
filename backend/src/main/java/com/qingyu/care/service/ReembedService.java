@@ -140,10 +140,18 @@ public class ReembedService {
             for (Document d : docs) {
                 try {
                     knowledgeService.processDocument(d.getId());
-                    p.done.incrementAndGet();
+                    // processDocument 内部吞异常并置 FAILED（不重抛），故回读状态判定成败
+                    Document after = documentRepository.findById(d.getId()).orElse(null);
+                    if (after != null && after.getStatus() == DocumentStatus.FAILED) {
+                        p.failed.incrementAndGet();
+                        log.warn("文档重嵌失败(状态 FAILED) id={}", d.getId());
+                    } else {
+                        p.done.incrementAndGet();
+                    }
                 } catch (Exception e) {
+                    // processDocument 理论上不重抛，但保留兜底（如回读时异常）
                     p.failed.incrementAndGet();
-                    log.warn("文档重嵌失败 id={}: {}", d.getId(), e.getMessage());
+                    log.warn("文档重嵌异常 id={}: {}", d.getId(), e.getMessage());
                 }
             }
             for (QaPair q : qas) {
