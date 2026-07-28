@@ -6,6 +6,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.impl.ChatServiceImpl;
+import com.qingyu.care.service.realtime.RealtimeNotifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,6 +51,7 @@ class ChatSessionListScopeTest {
     @Mock HybridRetrievalService hybridRetrievalService;
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock RealtimeNotifier realtimeNotifier;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach

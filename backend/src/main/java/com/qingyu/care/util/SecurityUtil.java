@@ -31,6 +31,17 @@ public final class SecurityUtil {
         return UserRole.TENANT_ADMIN.name().equals(getRole());
     }
 
+    public static boolean isTenantMember() {
+        return UserRole.TENANT_MEMBER.name().equals(getRole());
+    }
+
+    /** 要求坐席身份（本租户管理员或成员），否则抛 403。平台管理员无租户上下文，不作为坐席。 */
+    public static void requireAgent() {
+        if (!isTenantAdmin() && !isTenantMember()) {
+            throw new BusinessException(403, "无权限：该操作仅限本租户坐席");
+        }
+    }
+
     /** 要求平台管理员，否则抛 403 业务异常（由 GlobalExceptionHandler 返回 403 响应） */
     public static void requirePlatformAdmin() {
         if (!isPlatformAdmin()) {

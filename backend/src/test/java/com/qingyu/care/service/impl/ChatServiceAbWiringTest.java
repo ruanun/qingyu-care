@@ -11,6 +11,7 @@ import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.realtime.RealtimeNotifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -48,6 +49,7 @@ class ChatServiceAbWiringTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock TransactionTemplate transactionTemplate;
     @Mock AbTestService abTestService;
+    @Mock RealtimeNotifier realtimeNotifier;
     @InjectMocks ChatServiceImpl chatService;
 
     @Test

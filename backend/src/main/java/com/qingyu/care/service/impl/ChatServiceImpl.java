@@ -22,6 +22,7 @@ import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -70,6 +71,7 @@ public class ChatServiceImpl implements ChatService {
     private final AbTestService abTestService;
     private final ConfigService configService;
     private final ChatToolService chatToolService;
+    private final RealtimeNotifier realtimeNotifier;
 
     // 自注入解决 @Transactional 同类自调用不经代理不生效问题（仿 KnowledgeServiceImpl.self）
     private ChatServiceImpl self;
@@ -86,17 +88,10 @@ public class ChatServiceImpl implements ChatService {
         // 获取或创建会话
         ChatSession session = getOrCreateSession(request);
         
-        // AI 静默模式：当会话由人工处理时，不调用 AI
-        if (session.getStatus() == SessionStatus.AGENT_PROCESSING || 
-            session.getStatus() == SessionStatus.WAITING_AGENT) {
-            // 仅保存用户消息，不调用 AI
-            ChatMessage userMsg = ChatMessage.builder()
-                    .session(session)
-                    .role(MessageRole.USER)
-                    .content(request.getMessage())
-                    .build();
-            messageRepository.save(userMsg);
-            
+        // AI 静默模式：当会话由人工处理时，不调用 AI（仅存用户消息 + 已接管则实时推给坐席）
+        if (isAgentControlled(session)) {
+            persistUserMessageDuringHandover(session, request.getMessage());
+
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
                     .content("[会话已转接人工客服，请等待回复]")
@@ -105,25 +100,9 @@ public class ChatServiceImpl implements ChatService {
                     .knowledgeHits(List.of())
                     .build();
         }
-        
+
         // 检查关键词触发转人工
-        if (handoverRuleService.checkKeywordTrigger(request.getMessage())) {
-            session.setStatus(SessionStatus.WAITING_AGENT);
-            sessionRepository.save(session);
-            log.info("关键词触发转人工: sessionId={}", session.getSessionId());
-
-            eventPublisher.publishEvent(new WebhookDomainEvent(
-                    "session.handover_requested", session.getAppId(), session.getTenantId(),
-                    session.getSessionId(), "keyword", LocalDateTime.now()));
-
-            // 保存用户消息
-            ChatMessage userMsg = ChatMessage.builder()
-                    .session(session)
-                    .role(MessageRole.USER)
-                    .content(request.getMessage())
-                    .build();
-            messageRepository.save(userMsg);
-            
+        if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
                     .content("正在为您转接人工客服，请稍候...")
@@ -132,7 +111,7 @@ public class ChatServiceImpl implements ChatService {
                     .knowledgeHits(List.of())
                     .build();
         }
-        
+
         // 获取策略配置（会话带 A/B 变体时用变体策略）
         ChatStrategy strategy = resolveStrategy(session);
 
@@ -241,6 +220,20 @@ public class ChatServiceImpl implements ChatService {
         // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索）；
         // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
         ChatSession session = getOrCreateSession(request);
+
+        // 与 chat() 严格同序：先判人工接管态静默，再判关键词触发，避免已接管会话被关键词打回 WAITING_AGENT
+        if (isAgentControlled(session)) {
+            persistUserMessageDuringHandover(session, request.getMessage());
+            onTokensUsed.accept(0);
+            onAiMessageSaved.accept(-1L);
+            return Flux.just("[会话已转接人工客服，请等待回复]");
+        }
+        if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
+            onTokensUsed.accept(0);
+            onAiMessageSaved.accept(-1L);
+            return Flux.just("正在为您转接人工客服，请稍候...");
+        }
+
         ChatStrategy strategy = resolveStrategy(session);
         // 同 chat()：经 self 走代理，检索在独立只读事务上执行
         List<Document> relevantDocs;
@@ -586,7 +579,41 @@ public class ChatServiceImpl implements ChatService {
             return List.of();
         }
     }
-    
+
+    /** 会话是否处于人工掌控（等待接管 / 已接管）。 */
+    private boolean isAgentControlled(ChatSession session) {
+        return session.getStatus() == SessionStatus.AGENT_PROCESSING
+                || session.getStatus() == SessionStatus.WAITING_AGENT;
+    }
+
+    /** 命中转人工关键词则置 WAITING_AGENT、存消息、发事件、广播新待接，返回是否命中。 */
+    private boolean triggerKeywordHandoverIfHit(ChatSession session, String message) {
+        if (!handoverRuleService.checkKeywordTrigger(message)) {
+            return false;
+        }
+        session.setStatus(SessionStatus.WAITING_AGENT);
+        sessionRepository.save(session);
+        log.info("关键词触发转人工: sessionId={}", session.getSessionId());
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.handover_requested", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), "keyword", LocalDateTime.now()));
+        ChatMessage userMsg = ChatMessage.builder().session(session)
+                .role(MessageRole.USER).content(message).build();
+        messageRepository.save(userMsg);
+        realtimeNotifier.newWaitingToTenantAgents(session.getTenantId(), session);
+        return true;
+    }
+
+    /** 人工掌控态：存用户消息；若已被坐席接管则实时推给该坐席。 */
+    private void persistUserMessageDuringHandover(ChatSession session, String message) {
+        ChatMessage userMsg = ChatMessage.builder().session(session)
+                .role(MessageRole.USER).content(message).build();
+        messageRepository.save(userMsg);
+        if (session.getStatus() == SessionStatus.AGENT_PROCESSING && session.getAgentId() != null) {
+            realtimeNotifier.toAgentMessage(session.getTenantId(), session.getAgentId(), userMsg);
+        }
+    }
+
     private String buildContext(List<Document> docs) {
         if (docs.isEmpty()) {
             return "暂无相关知识库内容。";
@@ -724,9 +751,16 @@ public class ChatServiceImpl implements ChatService {
         session.setAgentId(agentId);
         session.setHandoverTime(LocalDateTime.now());
         log.info("Session {} accepted by agent {}", sessionId, agentId);
-        return sessionRepository.save(session);
+        ChatSession saved = sessionRepository.save(session);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.accepted", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+        realtimeNotifier.toUserSessionEvent(session.getSessionId(), "accepted", "客服已接入，正在为您服务");
+
+        return saved;
     }
-    
+
     @Override
     @Transactional
     public void agentReply(String sessionId, String message, Long agentId) {
@@ -740,16 +774,28 @@ public class ChatServiceImpl implements ChatService {
                 .role(MessageRole.ASSISTANT)
                 .content(message)
                 .build();
-        messageRepository.save(agentMsg);
+        agentMsg = messageRepository.save(agentMsg);
         log.info("Agent {} replied to session {}", agentId, sessionId);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "agent.replied", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+        realtimeNotifier.toUserMessage(session.getSessionId(), agentMsg);
     }
-    
+
     @Override
     public org.springframework.data.domain.Page<ChatSession> getWaitingAgentSessions(org.springframework.data.domain.Pageable pageable) {
         // 应用级 list 平台管理员越权收口：无租户上下文（平台管理员）返空页，不裸查
         Long tenantId = TenantContext.getTenantId();
         if (tenantId == null) {
             return org.springframework.data.domain.Page.empty(pageable);
+        }
+        // appId 非空时按 tenantId+appId 双重收窄（防跨应用查到待接会话）；appId 为空退回仅 tenantId
+        // （兼容管理端无 appId 场景，避免炸空）
+        Long appId = TenantContext.getAppId();
+        if (appId != null) {
+            return sessionRepository.findByTenantIdAndAppIdAndStatusOrderByCreatedAtDesc(
+                    tenantId, appId, SessionStatus.WAITING_AGENT, pageable);
         }
         return sessionRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(
                 tenantId, SessionStatus.WAITING_AGENT, pageable);
@@ -759,6 +805,24 @@ public class ChatServiceImpl implements ChatService {
     public java.util.List<ChatMessage> getSessionMessages(String sessionId) {
         ChatSession session = getSession(sessionId);
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
+    }
+
+    @Override
+    @Transactional
+    public void returnToAI(String sessionId) {
+        ChatSession session = getSession(sessionId);
+        if (session.getStatus() != SessionStatus.AGENT_PROCESSING) {
+            throw new InvalidOperationException("该会话不在人工处理状态，无法交还 AI：" + session.getStatus());
+        }
+        session.setStatus(SessionStatus.AI_PROCESSING);
+        session.setAgentId(null);
+        sessionRepository.save(session);
+
+        eventPublisher.publishEvent(new WebhookDomainEvent(
+                "session.returned_to_ai", session.getAppId(), session.getTenantId(),
+                session.getSessionId(), null, LocalDateTime.now()));
+        realtimeNotifier.toUserSessionEvent(sessionId, "returned_to_ai", "已切回智能助手为您服务");
+        log.info("Session {} returned to AI by agent", sessionId);
     }
 }
 

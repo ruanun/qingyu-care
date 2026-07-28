@@ -11,6 +11,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
+import com.qingyu.care.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -121,33 +122,45 @@ public class ChatController {
     
     @PostMapping("/session/{sessionId}/accept")
     @Operation(summary = "接管会话", description = "客服接管等待中的会话")
-    public ApiResponse<ChatSession> acceptSession(
-            @PathVariable String sessionId,
-            @RequestParam Long agentId) {
+    public ApiResponse<ChatSession> acceptSession(@PathVariable String sessionId) {
+        SecurityUtil.requireAgent();
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
         ChatSession session = chatService.acceptSession(sessionId, agentId);
         return ApiResponse.success("会话已接管", session);
     }
-    
+
     @PostMapping("/agent/reply")
     @Operation(summary = "客服回复", description = "客服发送消息（绕过AI）")
     public ApiResponse<Void> agentReply(@Valid @RequestBody AgentReplyRequest request) {
-        chatService.agentReply(request.getSessionId(), request.getMessage(), request.getAgentId());
+        SecurityUtil.requireAgent();
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        chatService.agentReply(request.getSessionId(), request.getMessage(), agentId);
         return ApiResponse.success("消息已发送", null);
     }
-    
+
     @GetMapping("/sessions/waiting")
     @Operation(summary = "获取待接管会话", description = "获取所有等待人工接管的会话")
     public ApiResponse<PageDTO<ChatSession>> getWaitingAgentSessions(
             @PageableDefault(size = 20) Pageable pageable) {
+        SecurityUtil.requireAgent();
         Page<ChatSession> sessions = chatService.getWaitingAgentSessions(pageable);
         return ApiResponse.success(PageDTO.from(sessions));
     }
-    
+
     @GetMapping("/session/{sessionId}/messages")
     @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息")
     public ApiResponse<java.util.List<ChatMessage>> getSessionMessages(
             @PathVariable String sessionId) {
+        SecurityUtil.requireAgent();
         return ApiResponse.success(chatService.getSessionMessages(sessionId));
+    }
+
+    @PostMapping("/session/{sessionId}/return-to-ai")
+    @Operation(summary = "交还 AI", description = "坐席把会话交还 AI 续答")
+    public ApiResponse<Void> returnToAI(@PathVariable String sessionId) {
+        SecurityUtil.requireAgent();
+        chatService.returnToAI(sessionId);
+        return ApiResponse.success("已交还 AI", null);
     }
 
     @PostMapping("/session/{sessionId}/message/{messageId}/feedback")
