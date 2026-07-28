@@ -35,21 +35,24 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final VectorStore vectorStore;
     private final FileService fileService;
     private final com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository;
-    
+    private final com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider;
+
     // 自注入解决 @Async 同类调用不生效问题
     private KnowledgeServiceImpl self;
-    
+
     public KnowledgeServiceImpl(
             KnowledgeBaseRepository knowledgeBaseRepository,
             DocumentRepository documentRepository,
             VectorStore vectorStore,
             FileService fileService,
-            com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository) {
+            com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository,
+            com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
         this.vectorStore = vectorStore;
         this.fileService = fileService;
         this.vectorStoreRepository = vectorStoreRepository;
+        this.embeddingModelProvider = embeddingModelProvider;
     }
     
     @org.springframework.beans.factory.annotation.Autowired
@@ -252,7 +255,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）；
                         // docEnabled 取文档实际状态（硬编码 true 会让重新处理已禁用文档时静默重新启用）
                         "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
-                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true"
+                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true",
+                        "embeddingModel", embeddingModelProvider.getModel()
                 ));
             }
             

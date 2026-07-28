@@ -35,6 +35,7 @@ public class QaPairService {
     private final KnowledgeService knowledgeService;
     private final VectorStore vectorStore;
     private final VectorStoreRepository vectorStoreRepository;
+    private final EmbeddingModelProvider embeddingModelProvider;
 
     public List<QaPair> list(Long knowledgeBaseId) {
         knowledgeService.getKnowledgeBase(knowledgeBaseId); // 归属校验（越权抛）
@@ -128,6 +129,7 @@ public class QaPairService {
         md.put("visibility", "PUBLIC");
         md.put("docEnabled", "true");
         md.put("contentType", "qa");
+        md.put("embeddingModel", embeddingModelProvider.getModel());
         vectorStore.add(List.of(Document.builder().text(text).metadata(md).build()));
     }
 

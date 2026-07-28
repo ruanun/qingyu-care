@@ -27,10 +27,11 @@ class KnowledgeDocumentAccessTest {
     @Mock VectorStore vectorStore;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
 
     private KnowledgeServiceImpl service() {
         return new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository);
+                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider);
     }
 
     @Test

@@ -37,10 +37,11 @@ class KnowledgeIngestMetadataTest {
     @Mock VectorStore vectorStore;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
 
     private KnowledgeServiceImpl service() {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository);
+                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider);
         ReflectionTestUtils.setField(service, "chunkSize", 800);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);
         return service;
@@ -62,6 +63,7 @@ class KnowledgeIngestMetadataTest {
 
         when(documentRepository.findById(5L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         String content = "轻语客服知识内容，用于测试摄取元数据。".repeat(50);
         when(fileService.downloadFile(any())).thenReturn(content.getBytes(StandardCharsets.UTF_8));
