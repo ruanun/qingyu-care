@@ -26,11 +26,15 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds, Docume
 
     /**
      * 拼接 Spring AI 向量路 filterExpression：
-     * tenantId == 'T' && appId == 'A' && knowledgeBaseId in ['1','2'] && docEnabled == 'true' [&& visibility == 'PUBLIC']
+     * tenantId == 'T' && appId == 'A' && knowledgeBaseId in ['1','2'] && docEnabled == 'true'
+     * [&& visibility == 'PUBLIC'] && embeddingModel == 'M'
      * 一律等值条件（metadata 缺键行做 != 判断时 SQL 为 NULL→false 会静默筛掉，故靠摄取写全键+启动回填保证键存在）。
      * 仅在非空范围下调用，空范围抛 IllegalStateException。
+     *
+     * @param embeddingModel 当前 {@code EmbeddingModelProvider.getModel()}，用于护栏过滤——只匹配当前
+     *                       embedding 模型嵌的向量，跨模型/未标向量静默排除（防换模型后新旧向量混空间检索出垃圾）。
      */
-    public String toFilterExpression() {
+    public String toFilterExpression(String embeddingModel) {
         if (isEmpty()) {
             throw new IllegalStateException("空检索范围不可拼接过滤表达式（调用方应先判 isEmpty() 短路）");
         }
@@ -46,6 +50,8 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds, Docume
         if (accessLevel == DocumentVisibility.PUBLIC) {
             sb.append(" && visibility == 'PUBLIC'");
         }
+        // 护栏：只匹配当前 embedding 模型嵌的向量，跨模型/未标向量静默排除（防混空间检索出垃圾）
+        sb.append(" && embeddingModel == '").append(embeddingModel).append("'");
         return sb.toString();
     }
 }

@@ -3,6 +3,7 @@ package com.qingyu.care.repository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.enums.DocumentVisibility;
+import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.RetrievalScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,7 @@ public class KeywordSearchDao {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final EmbeddingModelProvider embeddingModelProvider;
 
     /** 一条命中：id 为 vector_store 主键（与向量路 Document.id 同源，供 RRF 对齐）。 */
     public record KeywordHit(String id, String content, Map<String, Object> metadata) {
@@ -57,6 +59,9 @@ public class KeywordSearchDao {
         }
         // 等值条件（摄取写全键 + 启动回填保证键存在；缺键行做 <> 判断会被 SQL NULL 语义静默筛掉，故不用）
         sql.append("AND metadata ->> 'docEnabled' = 'true' ");
+        // 护栏：只匹配当前 embedding 模型嵌的向量，跨模型/未标向量静默排除（与向量路 toFilterExpression 同源）
+        sql.append("AND metadata ->> 'embeddingModel' = ? ");
+        params.add(embeddingModelProvider.getModel());
         if (scope.accessLevel() == DocumentVisibility.PUBLIC) {
             sql.append("AND metadata ->> 'visibility' = 'PUBLIC' ");
         }

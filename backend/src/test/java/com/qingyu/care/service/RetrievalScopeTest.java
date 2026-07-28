@@ -10,19 +10,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RetrievalScopeTest {
 
+    private static final String MODEL = "qwen3.7-text-embedding";
+
     @Test
     void 拼接filterExpression_含tenant与多库IN() {
         RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L, 11L), DocumentVisibility.INTERNAL);
-        assertThat(scope.toFilterExpression())
+        assertThat(scope.toFilterExpression(MODEL))
                 .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10','11']"
-                        + " && docEnabled == 'true'");
+                        + " && docEnabled == 'true' && embeddingModel == '" + MODEL + "'");
     }
 
     @Test
     void 拼接filterExpression_无tenant省略子句() {
         RetrievalScope scope = new RetrievalScope(null, 2L, List.of(10L), DocumentVisibility.INTERNAL);
-        assertThat(scope.toFilterExpression())
-                .isEqualTo("appId == '2' && knowledgeBaseId in ['10'] && docEnabled == 'true'");
+        assertThat(scope.toFilterExpression(MODEL))
+                .isEqualTo("appId == '2' && knowledgeBaseId in ['10'] && docEnabled == 'true'"
+                        + " && embeddingModel == '" + MODEL + "'");
     }
 
     @Test
@@ -35,7 +38,7 @@ class RetrievalScopeTest {
 
     @Test
     void 空范围拼接filterExpression_抛IllegalStateException() {
-        assertThatThrownBy(() -> RetrievalScope.empty(1L).toFilterExpression())
+        assertThatThrownBy(() -> RetrievalScope.empty(1L).toFilterExpression(MODEL))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -49,16 +52,17 @@ class RetrievalScopeTest {
     @Test
     void 拼接filterExpression_INTERNAL级_只加docEnabled条件() {
         RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL);
-        assertThat(scope.toFilterExpression())
+        assertThat(scope.toFilterExpression(MODEL))
                 .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10']"
-                        + " && docEnabled == 'true'");
+                        + " && docEnabled == 'true' && embeddingModel == '" + MODEL + "'");
     }
 
     @Test
     void 拼接filterExpression_PUBLIC级_再加visibility条件() {
         RetrievalScope scope = new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.PUBLIC);
-        assertThat(scope.toFilterExpression())
+        assertThat(scope.toFilterExpression(MODEL))
                 .isEqualTo("tenantId == '1' && appId == '2' && knowledgeBaseId in ['10']"
-                        + " && docEnabled == 'true' && visibility == 'PUBLIC'");
+                        + " && docEnabled == 'true' && visibility == 'PUBLIC'"
+                        + " && embeddingModel == '" + MODEL + "'");
     }
 }

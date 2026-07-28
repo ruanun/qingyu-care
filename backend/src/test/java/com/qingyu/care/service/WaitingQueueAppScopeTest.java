@@ -55,6 +55,7 @@ class WaitingQueueAppScopeTest {
     @Mock ConfigService configService;
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach

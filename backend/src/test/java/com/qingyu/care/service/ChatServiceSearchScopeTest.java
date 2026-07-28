@@ -40,6 +40,7 @@ class ChatServiceSearchScopeTest {
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RealtimeNotifier realtimeNotifier;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks ChatServiceImpl chatService;
 
     @Test
@@ -72,6 +73,7 @@ class ChatServiceSearchScopeTest {
         strategy.setHybridEnabled(false);   // 显式关闭混合检索 → 走纯向量路
         when(chatStrategyService.getActiveStrategy("default")).thenReturn(strategy);
         when(retrievalScopeResolver.resolve()).thenReturn(new RetrievalScope(1L, 2L, List.of(10L), DocumentVisibility.INTERNAL));
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
 
         chatService.searchKnowledge("有什么产品");

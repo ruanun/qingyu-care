@@ -19,6 +19,7 @@ import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.ChatStrategyService;
+import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
@@ -72,6 +73,7 @@ public class ChatServiceImpl implements ChatService {
     private final ConfigService configService;
     private final ChatToolService chatToolService;
     private final RealtimeNotifier realtimeNotifier;
+    private final EmbeddingModelProvider embeddingModelProvider;
 
     // 自注入解决 @Transactional 同类自调用不经代理不生效问题（仿 KnowledgeServiceImpl.self）
     private ChatServiceImpl self;
@@ -571,7 +573,7 @@ public class ChatServiceImpl implements ChatService {
                     .query(query)
                     .topK(topK)
                     .similarityThreshold(threshold)
-                    .filterExpression(scope.toFilterExpression())
+                    .filterExpression(scope.toFilterExpression(embeddingModelProvider.getModel()))
                     .build();
             return vectorStore.similaritySearch(searchRequest);
         } catch (Exception e) {

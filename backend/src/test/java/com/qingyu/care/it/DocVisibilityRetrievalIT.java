@@ -30,6 +30,9 @@ class DocVisibilityRetrievalIT extends AbstractPostgresIT {
 
     private static final Long TID = 63001L;
     private static final Long APP = 63002L;
+    /** 与 test profile 的 spring.ai.openai.embedding.options.model 一致（application.yml 默认值），
+     * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
+    private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 
     @Autowired ChatService chatService;
     @Autowired KnowledgeBaseRepository knowledgeBaseRepository;
@@ -53,7 +56,8 @@ class DocVisibilityRetrievalIT extends AbstractPostgresIT {
                         "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
                 content, "{\"tenantId\":\"" + TID + "\",\"appId\":\"" + APP
                         + "\",\"knowledgeBaseId\":\"" + kbId + "\",\"documentId\":\"" + docId
-                        + "\",\"visibility\":\"" + visibility + "\",\"docEnabled\":\"" + docEnabled + "\"}");
+                        + "\",\"visibility\":\"" + visibility + "\",\"docEnabled\":\"" + docEnabled
+                        + "\",\"embeddingModel\":\"" + EMBEDDING_MODEL + "\"}");
     }
 
     /** 以指定访问级别发起检索（模拟鉴权拦截器写入的级别）。 */
