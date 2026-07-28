@@ -23,6 +23,19 @@ export interface ChatReply {
   messageId?: number;
 }
 
+/** 断线补拉会话响应：会话状态 + 消息历史（对应后端 OpenSessionResponse） */
+export interface OpenSessionResponse {
+  sessionId: string;
+  /** AI_PROCESSING / WAITING_AGENT / AGENT_PROCESSING / ENDED / TIMEOUT */
+  status: string;
+  messages: Array<{
+    /** USER / ASSISTANT / SYSTEM / AGENT */
+    role: string;
+    content: string;
+    createdAt: string;
+  }>;
+}
+
 export function createApi(cfg: WidgetConfig) {
   const headers = (): Record<string, string> => ({
     'Content-Type': 'application/json',
@@ -65,6 +78,34 @@ export function createApi(cfg: WidgetConfig) {
         });
       } catch {
         // 反馈失败静默：不打断对话、不产生未捕获 rejection
+      }
+    },
+
+    /** inbox SSE 完整 URL（供 sse.ts 连接，推送坐席消息/会话状态/typing） */
+    inboxUrl(sessionId: string): string {
+      return `${cfg.apiBase}/open/v1/sessions/${sessionId}/inbox`;
+    },
+
+    /** 用户正在输入：通知当前接管坐席（节流由调用方控制）；失败静默 */
+    sendTyping(sessionId: string): Promise<void> {
+      return fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}/typing`, {
+        method: 'POST',
+        headers: headers(),
+      })
+        .then(() => undefined)
+        .catch(() => {
+          // 通知失败静默：不打断对话
+        });
+    },
+
+    /** 断线补拉会话（含消息历史），用于 inbox 重连后同步状态；失败返回 null */
+    async getSession(sessionId: string): Promise<OpenSessionResponse | null> {
+      try {
+        const r = await fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}`, { headers: headers() });
+        if (!r.ok) return null;
+        return (await r.json()) as OpenSessionResponse;
+      } catch {
+        return null;
       }
     },
   };

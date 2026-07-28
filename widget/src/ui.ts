@@ -4,6 +4,8 @@ import type { WidgetBrand } from './api';
 export interface UiHandlers {
   onSend: (message: string) => void;
   onHandover: () => void;
+  /** 用户在输入框中输入（未节流，节流由调用方控制）；可选 */
+  onTyping?: () => void;
 }
 
 export interface BotFeedback {
@@ -13,6 +15,10 @@ export interface BotFeedback {
 export interface WidgetUi {
   addUserMessage: (text: string) => void;
   addBotMessage: (text: string, feedback?: BotFeedback) => void;
+  /** 渲染坐席（真人）消息，带「客服」标记以区分 AI 回复 */
+  addAgentMessage: (text: string) => void;
+  /** 消息区插入一条居中系统状态提示（如「客服已接入」） */
+  showSessionState: (text: string) => void;
   setTyping: (on: boolean) => void;
   setInputEnabled: (on: boolean) => void;
 }
@@ -79,6 +85,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
       doSend();
     }
   });
+  textarea.addEventListener('input', () => handlers.onTyping?.());
   handoverBtn.addEventListener('click', () => handlers.onHandover());
 
   function appendMsg(text: string, who: 'user' | 'bot'): HTMLDivElement {
@@ -126,6 +133,22 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     }
   }
 
+  function addAgentMessage(text: string) {
+    const row = appendMsg(text, 'bot');
+    const label = document.createElement('div');
+    label.textContent = '客服';
+    label.style.cssText = 'font-size:11px;color:#999;margin-bottom:2px;';
+    row.insertBefore(label, row.firstChild);
+  }
+
+  function showSessionState(text: string) {
+    const row = document.createElement('div');
+    row.style.cssText = 'text-align:center;color:#999;font-size:12px;margin:8px 0;';
+    row.textContent = text;
+    msgs.appendChild(row);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
   let typingRow: HTMLDivElement | null = null;
   function setTyping(on: boolean) {
     if (on && !typingRow) {
@@ -141,7 +164,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     sendBtn.disabled = !on;
   }
 
-  return { addUserMessage, addBotMessage, setTyping, setInputEnabled };
+  return { addUserMessage, addBotMessage, addAgentMessage, showSessionState, setTyping, setInputEnabled };
 }
 
 function escapeHtml(s: string): string {
