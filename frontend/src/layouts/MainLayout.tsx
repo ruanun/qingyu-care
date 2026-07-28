@@ -101,7 +101,8 @@ const sections: NavSection[] = [
         groups: [{
             items: [
                 { label: '智能问答', path: '/chat', icon: MessageSquare },
-                { label: '人工工作台', path: '/agent', icon: UserPen },
+                // 与后端 SecurityUtil.requireAgent 对齐：坐席端点只放行 TENANT_ADMIN/TENANT_MEMBER，平台管理员非坐席
+                { label: '人工工作台', path: '/agent', icon: UserPen, roles: ['TENANT_ADMIN', 'TENANT_MEMBER'] },
                 { label: '会话管理', path: '/sessions', icon: History },
             ],
         }],
