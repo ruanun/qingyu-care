@@ -131,10 +131,20 @@ public class HandoverRuleService {
     }
 
     /**
+     * 解析生效规则：租户自有优先（filter-bound findByRuleType 只命中当前租户行），
+     * 无自有则回退平台默认（native 绕过 @Filter 取 tenant_id IS NULL）。
+     * 闭合「平台默认被多租户过滤器挡掉致触发对租户静默失效」缺陷（同 getAllRules 范式）。
+     */
+    private java.util.Optional<HandoverRule> resolveActiveRule(HandoverRuleType type) {
+        java.util.Optional<HandoverRule> own = repository.findByRuleType(type);
+        return own.isPresent() ? own : repository.findPlatformDefaultByRuleType(type.name());
+    }
+
+    /**
      * 检查关键词触发
      */
     public boolean checkKeywordTrigger(String message) {
-        return repository.findByRuleType(HandoverRuleType.KEYWORD)
+        return resolveActiveRule(HandoverRuleType.KEYWORD)
                 .filter(HandoverRule::getEnabled)
                 .map(rule -> {
                     try {
@@ -160,7 +170,7 @@ public class HandoverRuleService {
      * 检查低置信度触发
      */
     public boolean checkLowConfidenceTrigger(double confidence) {
-        return repository.findByRuleType(HandoverRuleType.LOW_CONFIDENCE)
+        return resolveActiveRule(HandoverRuleType.LOW_CONFIDENCE)
                 .filter(HandoverRule::getEnabled)
                 .map(rule -> {
                     try {
@@ -182,7 +192,7 @@ public class HandoverRuleService {
      * 获取连续未命中触发阈值
      */
     public int getNoHitStreakThreshold() {
-        return repository.findByRuleType(HandoverRuleType.NO_HIT_STREAK)
+        return resolveActiveRule(HandoverRuleType.NO_HIT_STREAK)
                 .filter(HandoverRule::getEnabled)
                 .map(rule -> {
                     try {

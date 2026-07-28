@@ -4,6 +4,7 @@ import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -39,4 +40,12 @@ public interface HandoverRuleRepository extends JpaRepository<HandoverRule, Long
     @Query(value = "SELECT * FROM handover_rules WHERE tenant_id IS NULL ORDER BY priority ASC",
             nativeQuery = true)
     List<HandoverRule> findAllPlatformDefaults();
+
+    /**
+     * 按类型取平台默认规则（tenant_id IS NULL，绕过 Hibernate @Filter）；仿 findAllPlatformDefaults。
+     * rule_type 列存枚举 name 字符串，故传 HandoverRuleType.name()。
+     */
+    @Query(value = "SELECT * FROM handover_rules WHERE rule_type = :ruleType AND tenant_id IS NULL LIMIT 1",
+            nativeQuery = true)
+    Optional<HandoverRule> findPlatformDefaultByRuleType(@Param("ruleType") String ruleType);
 }
