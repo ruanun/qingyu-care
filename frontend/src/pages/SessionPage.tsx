@@ -154,7 +154,7 @@ const SessionPage: React.FC = () => {
 
     const handleManualTakeover = async (sessionId: string) => {
         try {
-            await agentService.acceptSession(sessionId, 1); // Mock agent ID = 1
+            await agentService.acceptSession(sessionId); // 去 agentId：后端从登录态取
             toast({ title: '已接管会话', description: '可到人工工作台回复用户' });
             fetchSessions();
         } catch (error: any) {
