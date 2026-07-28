@@ -8,6 +8,7 @@ import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.KnowledgeService;
+import com.qingyu.care.service.ReembedService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 知识库控制器
@@ -25,9 +27,10 @@ import java.util.List;
 @RequiredArgsConstructor
 @Tag(name = "Knowledge", description = "知识库管理接口")
 public class KnowledgeController {
-    
+
     private final KnowledgeService knowledgeService;
-    
+    private final ReembedService reembedService;
+
     @PostMapping
     @Operation(summary = "创建知识库", description = "创建新的知识库")
     public ApiResponse<KnowledgeBase> createKnowledgeBase(@Valid @RequestBody KnowledgeBaseRequest request) {
@@ -151,6 +154,22 @@ public class KnowledgeController {
     public ApiResponse<Void> reprocessDocument(@PathVariable Long documentId) {
         knowledgeService.reprocessDocument(documentId);
         return ApiResponse.success("文档重新处理已开始", null);
+    }
+
+    @PostMapping("/reembed")
+    @AuditLog(action = "VECTOR_REEMBED", targetType = "KnowledgeBase")
+    @Operation(summary = "重建向量索引", description = "换 embedding 模型后按范围重嵌 active 文档+QA")
+    public ApiResponse<Map<String, String>> reembed(
+            @RequestParam ReembedService.Scope scope,
+            @RequestParam(required = false) Long knowledgeBaseId) {
+        String jobId = reembedService.startReembed(scope, knowledgeBaseId);
+        return ApiResponse.success(Map.of("jobId", jobId));
+    }
+
+    @GetMapping("/reembed/{jobId}")
+    @Operation(summary = "重建进度")
+    public ApiResponse<ReembedService.Progress> reembedProgress(@PathVariable String jobId) {
+        return ApiResponse.success(reembedService.getProgress(jobId));
     }
 }
 

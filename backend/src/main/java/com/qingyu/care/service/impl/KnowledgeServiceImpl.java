@@ -216,11 +216,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         processDocument(documentId);
     }
     
+    @Override
     @Transactional
     public void processDocument(Long documentId) {
         Document doc = documentRepository.findById(documentId).orElse(null);
         if (doc == null) return;
-        
+
+        // 幂等：重嵌/重处理前先删旧向量，避免重复（初次上传时删 0 行无害；供重建向量索引批任务复用）
+        vectorStoreRepository.deleteByDocumentId(documentId.toString());
+
         try {
             doc.setStatus(DocumentStatus.PROCESSING);
             documentRepository.save(doc);

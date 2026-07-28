@@ -113,6 +113,12 @@ public class QaPairService {
         qaPairRepository.delete(qa);
     }
 
+    /** 重嵌一条 QA（删旧向量 + 用当前模型重嵌），供批量重建复用。 */
+    public void reembed(QaPair qa) {
+        vectorStoreRepository.deleteByQaPairId(qa.getId().toString());
+        embed(qa);
+    }
+
     /**
      * 组「问：{q}\n答：{a}」为一条不切分向量入库。metadata 带齐 RetrievalScope 过滤 5 必需键
      * （tenantId/appId/knowledgeBaseId/docEnabled/visibility）+ qaPairId/source/contentType。

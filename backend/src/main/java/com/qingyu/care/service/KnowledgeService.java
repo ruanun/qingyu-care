@@ -62,7 +62,12 @@ public interface KnowledgeService {
      * 重新处理文档
      */
     void reprocessDocument(Long documentId);
-    
+
+    /**
+     * 处理文档（解析+切分+嵌入）：起始先删旧向量，幂等，供重建向量索引批任务复用。
+     */
+    void processDocument(Long documentId);
+
     // ===== 新增方法 =====
     
     /**
