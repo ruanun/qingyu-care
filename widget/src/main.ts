@@ -79,6 +79,10 @@ async function init(): Promise<void> {
     onTyping: () => reportTyping(),
   });
 
+  // 刷新页面后若本地已恢复会话（可能已被坐席接管），立即建 inbox 长连接，
+  // 避免用户在再次发消息前收不到坐席实时回复；会话若已过期，connectSse 会自行退避重连即可，无需额外处理。
+  if (sessionId) ensureInbox(sessionId);
+
   async function handleSend(message: string): Promise<void> {
     ui.addUserMessage(message);
     ui.setInputEnabled(false);
