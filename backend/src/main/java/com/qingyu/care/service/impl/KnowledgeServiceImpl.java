@@ -35,21 +35,24 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final VectorStore vectorStore;
     private final FileService fileService;
     private final com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository;
-    
+    private final com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider;
+
     // 自注入解决 @Async 同类调用不生效问题
     private KnowledgeServiceImpl self;
-    
+
     public KnowledgeServiceImpl(
             KnowledgeBaseRepository knowledgeBaseRepository,
             DocumentRepository documentRepository,
             VectorStore vectorStore,
             FileService fileService,
-            com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository) {
+            com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository,
+            com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
         this.vectorStore = vectorStore;
         this.fileService = fileService;
         this.vectorStoreRepository = vectorStoreRepository;
+        this.embeddingModelProvider = embeddingModelProvider;
     }
     
     @org.springframework.beans.factory.annotation.Autowired
@@ -213,11 +216,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         processDocument(documentId);
     }
     
+    @Override
     @Transactional
     public void processDocument(Long documentId) {
         Document doc = documentRepository.findById(documentId).orElse(null);
         if (doc == null) return;
-        
+
+        // 幂等：重嵌/重处理前先删旧向量，避免重复（初次上传时删 0 行无害；供重建向量索引批任务复用）
+        vectorStoreRepository.deleteByDocumentId(documentId.toString());
+
         try {
             doc.setStatus(DocumentStatus.PROCESSING);
             documentRepository.save(doc);
@@ -252,7 +259,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）；
                         // docEnabled 取文档实际状态（硬编码 true 会让重新处理已禁用文档时静默重新启用）
                         "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
-                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true"
+                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true",
+                        "embeddingModel", embeddingModelProvider.getModel()
                 ));
             }
             

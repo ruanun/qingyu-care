@@ -31,6 +31,9 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
     private static final Long TID = 61001L;
     private static final Long APP_A = 61002L;
     private static final Long APP_B = 61003L;
+    /** 与 test profile 的 spring.ai.openai.embedding.options.model 一致（application.yml 默认值），
+     * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
+    private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 
     @Autowired ChatService chatService;
     @Autowired KnowledgeBaseRepository knowledgeBaseRepository;
@@ -53,7 +56,8 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
                         "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
                 content, "{\"tenantId\":\"" + TID + "\",\"appId\":\"" + appId
                         + "\",\"knowledgeBaseId\":\"" + kbId
-                        + "\",\"visibility\":\"PUBLIC\",\"docEnabled\":\"true\"}");
+                        + "\",\"visibility\":\"PUBLIC\",\"docEnabled\":\"true\""
+                        + ",\"embeddingModel\":\"" + EMBEDDING_MODEL + "\"}");
     }
 
     private List<Document> search(String q, Long appId) {

@@ -3,6 +3,7 @@ package com.qingyu.care.service;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.repository.KeywordSearchDao;
 import com.qingyu.care.service.impl.HybridRetrievalServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -24,7 +25,14 @@ class HybridRetrievalServiceTest {
 
     @Mock VectorStore vectorStore;
     @Mock KeywordSearchDao keywordSearchDao;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks HybridRetrievalServiceImpl service;
+
+    @BeforeEach
+    void stubEmbeddingModel() {
+        // 四个用例都会先走向量路拼 filterExpression（含护栏 embeddingModel 等值），故统一在 @BeforeEach 打桩
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
+    }
 
     private ChatStrategy strategy(boolean hybrid) {
         ChatStrategy s = new ChatStrategy();

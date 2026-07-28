@@ -7,6 +7,7 @@ import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ConfigService;
+import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
@@ -48,6 +49,7 @@ class ChatServiceModelScenarioTest {
     @Mock AbTestService abTestService;
     @Mock ConfigService configService;
     @Mock RealtimeNotifier realtimeNotifier;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach

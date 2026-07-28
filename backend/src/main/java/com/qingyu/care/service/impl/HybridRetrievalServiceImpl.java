@@ -2,6 +2,7 @@ package com.qingyu.care.service.impl;
 
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.repository.KeywordSearchDao;
+import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RrfFuser;
@@ -29,6 +30,7 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
 
     private final VectorStore vectorStore;
     private final KeywordSearchDao keywordSearchDao;
+    private final EmbeddingModelProvider embeddingModelProvider;
 
     @Override
     public List<Document> search(String query, RetrievalScope scope, ChatStrategy strategy) {
@@ -44,7 +46,7 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
                     .query(query)
                     .topK(topK)
                     .similarityThreshold(threshold)
-                    .filterExpression(scope.toFilterExpression())
+                    .filterExpression(scope.toFilterExpression(embeddingModelProvider.getModel()))
                     .build();
             for (Document d : vectorStore.similaritySearch(searchRequest)) {
                 String content = d.getText() != null ? d.getText() : "";

@@ -52,6 +52,7 @@ class ChatSessionListScopeTest {
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RealtimeNotifier realtimeNotifier;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach

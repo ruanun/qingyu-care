@@ -42,6 +42,7 @@ class KnowledgeOwnershipTest {
     @Mock VectorStore vectorStore;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
 
     @AfterEach
     void clear() {
@@ -50,7 +51,7 @@ class KnowledgeOwnershipTest {
 
     private KnowledgeServiceImpl service() {
         return new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository);
+                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider);
     }
 
     private KnowledgeBase kbOwnedBy(Long tenantId) {

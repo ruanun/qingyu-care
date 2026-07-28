@@ -17,6 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KeywordSearchDaoIT extends AbstractPostgresIT {
 
     private static final String T1 = "70001", T2 = "70002";
+    /** 与 test profile 的 spring.ai.openai.embedding.options.model 一致（application.yml 默认值），
+     * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
+    private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 
     @Autowired KeywordSearchDao keywordSearchDao;
     @Autowired JdbcTemplate jdbcTemplate;
@@ -38,7 +41,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
                         "VALUES (gen_random_uuid(), ?, ?::jsonb, array_fill(0::real, ARRAY[1536])::vector)",
                 content, "{\"tenantId\":\"" + tenantId + "\",\"appId\":\"" + appId
                         + "\",\"knowledgeBaseId\":\"" + kbId + "\",\"visibility\":\"" + visibility
-                        + "\",\"docEnabled\":\"" + docEnabled + "\"}");
+                        + "\",\"docEnabled\":\"" + docEnabled + "\",\"embeddingModel\":\"" + EMBEDDING_MODEL + "\"}");
     }
 
     @AfterEach

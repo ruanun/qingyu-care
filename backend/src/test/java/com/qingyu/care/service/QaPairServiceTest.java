@@ -27,9 +27,11 @@ class QaPairServiceTest {
     @Mock KnowledgeService knowledgeService;
     @Mock VectorStore vectorStore;
     @Mock VectorStoreRepository vectorStoreRepository;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
 
     private QaPairService service() {
-        return new QaPairService(qaPairRepository, knowledgeService, vectorStore, vectorStoreRepository);
+        return new QaPairService(qaPairRepository, knowledgeService, vectorStore, vectorStoreRepository,
+                embeddingModelProvider);
     }
 
     private KnowledgeBase kb() {
@@ -49,6 +51,7 @@ class QaPairServiceTest {
     @Test
     void create_savesActiveAndEmbedsSingleUnsplitVectorWithRequiredKeys() {
         when(knowledgeService.getKnowledgeBase(7L)).thenReturn(kb());
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         when(qaPairRepository.save(any())).thenAnswer(inv -> {
             QaPair q = inv.getArgument(0);
             q.setId(5L);
@@ -80,6 +83,7 @@ class QaPairServiceTest {
         draft.setStatus(QaPairStatus.DRAFT);
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(draft));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         QaPair result = service().approve(5L);
 
@@ -114,6 +118,7 @@ class QaPairServiceTest {
     void update_activeContentChanged_reEmbeds() {
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(active(5L)));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         service().update(5L, "怎么退货", "改后的答案");
 
@@ -127,6 +132,7 @@ class QaPairServiceTest {
         disabled.setStatus(QaPairStatus.DISABLED);
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(disabled));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         service().update(5L, "改后的问", "改后的答");
 

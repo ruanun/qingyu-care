@@ -10,6 +10,7 @@ import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ConfigService;
+import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
@@ -67,6 +68,7 @@ class ChatServiceRetrievalTxTest {
     @Mock ConfigService configService;
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
+    @Mock EmbeddingModelProvider embeddingModelProvider;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach
