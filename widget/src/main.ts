@@ -3,6 +3,7 @@ import { createApi, SessionExpiredError } from './api';
 import { loadSession, saveSession, clearSession } from './session';
 import { mountUi } from './ui';
 import { connectSse } from './sse';
+import { restoreHistory } from './history';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
 function sessionStateText(kind: string): string {
@@ -80,9 +81,20 @@ async function init(): Promise<void> {
     onAction: (value) => void handleSend(value),
   });
 
-  // 刷新页面后若本地已恢复会话（可能已被坐席接管），立即建 inbox 长连接，
-  // 避免用户在再次发消息前收不到坐席实时回复；会话若已过期，connectSse 会自行退避重连即可，无需额外处理。
-  if (sessionId) ensureInbox(sessionId);
+  // 刷新页面后若本地已恢复会话（可能已被坐席接管），先用 getSession 恢复历史消息（含历史卡片），
+  // 再建 inbox 长连接，避免用户在再次发消息前收不到坐席实时回复；
+  // 会话若已过期或补拉失败，getSession 静默返回 null，照常走 ensureInbox（connectSse 会自行退避重连）。
+  if (sessionId) {
+    // 本地已有 sessionId 即代表老用户此前交互过，欢迎语此时展示本就不合理：
+    // 在 await getSession 网络往返之前就乐观抑制首开欢迎，避免"面板已可点开但 markOpened 未执行"的竞态窗口
+    // （用户在等待窗口内点开面板会先插欢迎语、随后历史消息追加其后，导致「先欢迎后历史」错位）。
+    ui.markOpened();
+    const restored = await api.getSession(sessionId);
+    if (restored && restored.messages.length) {
+      restoreHistory(ui, restored.messages);
+    }
+    ensureInbox(sessionId);
+  }
 
   async function handleSend(message: string): Promise<void> {
     ui.addUserMessage(message);

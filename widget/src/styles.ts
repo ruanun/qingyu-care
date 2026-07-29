@@ -66,5 +66,11 @@ export function buildStyles(themeColor: string): string {
     .qy-list { margin:4px 0; padding-left:18px; }
     .qy-row { display:flex; gap:8px; }
     .qy-col { display:flex; flex-direction:column; gap:4px; }
+    .qy-form { display:flex; flex-direction:column; gap:8px; padding:8px 0; }
+    .qy-field-row { display:flex; flex-direction:column; gap:2px; }
+    .qy-field-label { font-size:12px; color:#6b7280; }
+    .qy-form-input, .qy-select { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; }
+    .qy-checkbox { display:flex; align-items:center; gap:6px; font-size:13px; }
+    .qy-form-submit { align-self:flex-start; padding:6px 14px; border:none; border-radius:6px; background:${themeColor}; color:#fff; cursor:pointer; font-size:13px; }
   `;
 }

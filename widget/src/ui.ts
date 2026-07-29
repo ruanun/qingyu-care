@@ -24,6 +24,8 @@ export interface WidgetUi {
   showSessionState: (text: string) => void;
   setTyping: (on: boolean) => void;
   setInputEnabled: (on: boolean) => void;
+  /** 标记「已开场」，抑制首次打开面板时的欢迎语插入（用于会话恢复出历史消息后，避免与历史重复问候）。 */
+  markOpened: () => void;
 }
 
 /**
@@ -195,7 +197,19 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     sendBtn.disabled = !on;
   }
 
-  return { addUserMessage, addBotMessage, addAgentMessage, showSessionState, setTyping, setInputEnabled };
+  function markOpened() {
+    firstOpen = false;
+  }
+
+  return {
+    addUserMessage,
+    addBotMessage,
+    addAgentMessage,
+    showSessionState,
+    setTyping,
+    setInputEnabled,
+    markOpened,
+  };
 }
 
 function escapeHtml(s: string): string {

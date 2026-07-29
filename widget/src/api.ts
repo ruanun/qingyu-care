@@ -49,6 +49,8 @@ export interface OpenSessionResponse {
     role: string;
     content: string;
     createdAt: string;
+    /** ASSISTANT 历史消息的结构化卡片片段（后端反序列化 ui_spec 而来，可空） */
+    uiParts?: UiPart[];
   }>;
 }
 

@@ -106,7 +106,20 @@ public class ChatServiceImpl implements ChatService {
               {"type":"actions","children":[{"type":"button","props":{"label":"查看物流","value":"查询订单10086物流"}}]}
             ]}
             ```
-            只在确实需要结构化展示（如订单、列表、可点击操作）时才使用卡片；不需要卡片时，直接正常回复纯文本即可，不要滥用。
+            表单类（收集用户输入）：form（表单容器）、input（文本框，props.name/props.label/props.placeholder）、
+            select（下拉，props.name/props.label/props.options 数组）、checkbox（勾选，props.name/props.label）、
+            datetime（日期，props.name/props.label）、submit（提交按钮，props.label）。
+            表单内各字段的 name 必须唯一（作为字段标识与提交时的键）。
+            表单示例：
+            ```spec
+            {"type":"form","children":[
+              {"type":"input","props":{"name":"姓名","label":"您的姓名"}},
+              {"type":"select","props":{"name":"日期","label":"预约日期","options":["今天","明天"]}},
+              {"type":"submit","props":{"label":"提交预约"}}
+            ]}
+            ```
+            用户填写并点击提交后，系统会把各字段值作为一条消息发给你，你据此继续处理。
+            只在确实需要结构化展示（如订单、列表、可点击操作、表单收集）时才使用卡片；不需要卡片时，直接正常回复纯文本即可，不要滥用。
             """;
 
     // 自注入解决 @Transactional 同类自调用不经代理不生效问题（仿 KnowledgeServiceImpl.self）
