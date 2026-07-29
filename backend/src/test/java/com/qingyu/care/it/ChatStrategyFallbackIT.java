@@ -112,4 +112,50 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
         assertThat(strategy.getKeywordTopK()).isEqualTo(10);
         assertThat(strategy.getRrfK()).isEqualTo(60);
     }
+
+    /**
+     * 平台管理员场景（无过滤器）：ChatStrategy 表内同键（scenario='default', enabled=true,
+     * isDefault=true）存在多个租户各一行 + 一行平台默认，裸 findByScenarioAndEnabledTrueAndIsDefaultTrue
+     * 会因过滤器缺失同时看到全部行而 NonUniqueResultException。修复后经 ConfigScopeResolver
+     * 按 X-App-Id 反查出应用 A 归属的租户 T，用 findActiveDefaultScoped 显式收窄，必须解析到
+     * 租户 T 自己的那一行——而非另一租户 T2 的同名行，也不是平台默认（验证「解析到正确租户」
+     * 而非仅「不抛异常」，避免重蹈转人工回退修复前的教训）。
+     */
+    @Test
+    void 平台管理员无过滤器_多租户同键行_精确解析到应用归属租户() {
+        Application appA = seedApp("chatstrategy_scope_a", "http://it.example.com");
+        Long tenantT = appA.getTenant().getId();
+
+        // 另一租户 T2，同 scenario/enabled/isDefault 键值，制造 NonUnique 触发条件
+        Application appB = seedApp("chatstrategy_scope_b", "http://it.example.com");
+        Long tenantT2 = appB.getTenant().getId();
+
+        ChatStrategy ownT = new ChatStrategy();
+        ownT.setTenantId(tenantT);
+        ownT.setAppId(appA.getId());
+        ownT.setName("租户T自有默认策略");
+        ownT.setScenario("default");
+        ownT.setEnabled(true);
+        ownT.setIsDefault(true);
+        chatStrategyRepository.saveAndFlush(ownT);
+
+        ChatStrategy ownT2 = new ChatStrategy();
+        ownT2.setTenantId(tenantT2);
+        ownT2.setAppId(appB.getId());
+        ownT2.setName("租户T2自有默认策略");
+        ownT2.setScenario("default");
+        ownT2.setEnabled(true);
+        ownT2.setIsDefault(true);
+        chatStrategyRepository.saveAndFlush(ownT2);
+
+        // 平台管理员：无租户上下文，仅带 X-App-Id（模拟平台管理员选中应用 A 后的会话态）
+        TenantContext.setTenantId(null);
+        TenantContext.setAppId(appA.getId());
+
+        ChatStrategy result = chatStrategyService.getActiveStrategy("default");
+
+        assertThat(result.getTenantId()).isEqualTo(tenantT);
+        assertThat(result.getName()).isEqualTo("租户T自有默认策略");
+        assertThat(result.getName()).isNotEqualTo("租户T2自有默认策略");
+    }
 }
