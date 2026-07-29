@@ -6,6 +6,7 @@ import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -32,6 +33,7 @@ public class OpenSessionController {
     private final ChatService chatService;
     private final RealtimeHub realtimeHub;
     private final RealtimeNotifier realtimeNotifier;
+    private final ObjectMapper objectMapper;
 
     /**
      * 查询会话详情（含消息历史）
@@ -40,7 +42,7 @@ public class OpenSessionController {
     @GetMapping("/{sessionId}")
     public OpenSessionResponse getSession(@PathVariable String sessionId) {
         ChatSession session = chatService.getSession(sessionId);
-        return OpenSessionResponse.of(session, chatService.getSessionMessages(sessionId));
+        return OpenSessionResponse.of(session, chatService.getSessionMessages(sessionId), objectMapper);
     }
 
     /**
