@@ -54,6 +54,11 @@ export function connectSse(url: string, handlers: SseHandlers): SseConnection {
       controller = new AbortController();
       try {
         const resp = await fetch(url, { headers: authHeaders(), signal: controller.signal });
+        if (resp.status === 401 || resp.status === 403) {
+          closed = true;                 // 鉴权失败不可恢复,停止重连避免空转
+          handlers.onError?.(new Error(`SSE 鉴权失败: ${resp.status}`));
+          return;                        // 直接退出,不进入下方 retry 退避
+        }
         if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
         retry = 0;
         handlers.onOpen?.();
