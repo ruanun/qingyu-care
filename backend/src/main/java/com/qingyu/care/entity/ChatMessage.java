@@ -88,6 +88,12 @@ public class ChatMessage {
     @Column(name = "is_read")
     private Boolean isRead = false;
 
+    /**
+     * 结构化卡片 uiParts 的 JSON（非流式带卡片回复才有；纯文本回复为 null）。
+     */
+    @Column(name = "ui_spec", columnDefinition = "TEXT")
+    private String uiSpec;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
