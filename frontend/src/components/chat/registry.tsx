@@ -61,8 +61,14 @@ export function renderNode(node: UiNode, onAction: (value: string) => void, key:
       );
     case 'actions':
       return <div key={key} className="flex flex-wrap">{kids}</div>;
-    case 'list':
-      return <ul key={key} className="list-disc pl-5">{kids}</ul>;
+    case 'list': {
+      const items = node.children ?? [];
+      return (
+        <ul key={key} className="list-disc pl-5 space-y-1">
+          {items.map((c, i) => <li key={i}>{renderNode(c, onAction, i)}</li>)}
+        </ul>
+      );
+    }
     case 'row':
       return <div key={key} className="flex gap-2">{kids}</div>;
     case 'column':
