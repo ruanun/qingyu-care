@@ -25,6 +25,7 @@ public class HandoverRuleService {
 
     private final HandoverRuleRepository repository;
     private final ObjectMapper objectMapper;
+    private final ConfigScopeResolver configScopeResolver;
 
     /**
      * 初始化默认规则
@@ -131,12 +132,16 @@ public class HandoverRuleService {
     }
 
     /**
-     * 解析生效规则：租户自有优先（filter-bound findByRuleType 只命中当前租户行），
+     * 解析生效规则：显式按 {@link ConfigScopeResolver} 解析出的有效 (tenantId, appId) 收窄取
+     * 租户自有规则（不依赖 Hibernate @Filter，避免平台管理员绕过过滤器裸扫全库 NonUnique）；
      * 无自有则回退平台默认（native 绕过 @Filter 取 tenant_id IS NULL）。
      * 闭合「平台默认被多租户过滤器挡掉致触发对租户静默失效」缺陷（同 getAllRules 范式）。
      */
     private java.util.Optional<HandoverRule> resolveActiveRule(HandoverRuleType type) {
-        java.util.Optional<HandoverRule> own = repository.findByRuleType(type);
+        ConfigScopeResolver.Scope scope = configScopeResolver.resolve();
+        java.util.Optional<HandoverRule> own = scope.tenantId() == null
+                ? java.util.Optional.empty()
+                : repository.findByRuleTypeScoped(type, scope.tenantId(), scope.appId()).stream().findFirst();
         return own.isPresent() ? own : repository.findPlatformDefaultByRuleType(type.name());
     }
 

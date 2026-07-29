@@ -19,11 +19,6 @@ public interface HandoverRuleRepository extends JpaRepository<HandoverRule, Long
     List<HandoverRule> findByEnabledTrueOrderByPriorityAsc();
 
     /**
-     * 按规则类型查找
-     */
-    Optional<HandoverRule> findByRuleType(HandoverRuleType ruleType);
-
-    /**
      * 获取所有规则，按优先级排序
      */
     List<HandoverRule> findAllByOrderByPriorityAsc();
@@ -48,4 +43,14 @@ public interface HandoverRuleRepository extends JpaRepository<HandoverRule, Long
     @Query(value = "SELECT * FROM handover_rules WHERE rule_type = :ruleType AND tenant_id IS NULL LIMIT 1",
             nativeQuery = true)
     Optional<HandoverRule> findPlatformDefaultByRuleType(@Param("ruleType") String ruleType);
+
+    /**
+     * 显式按 (tenantId, appId) 收窄取指定类型规则——不依赖 Hibernate @Filter，
+     * 使平台管理员(过滤器绕过)也能确定性取到目标租户的规则。List + ORDER BY id 杜绝 NonUnique。
+     */
+    @Query("SELECT r FROM HandoverRule r WHERE r.ruleType = :ruleType "
+         + "AND r.tenantId = :tenantId AND (:appId IS NULL OR r.appId = :appId) ORDER BY r.id")
+    List<HandoverRule> findByRuleTypeScoped(@Param("ruleType") HandoverRuleType ruleType,
+                                            @Param("tenantId") Long tenantId,
+                                            @Param("appId") Long appId);
 }

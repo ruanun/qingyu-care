@@ -21,6 +21,7 @@ import java.util.List;
 public class PromptTemplateService {
 
     private final PromptTemplateRepository repository;
+    private final ConfigScopeResolver configScopeResolver;
 
     @Value("${qingyu.care.prompt.system-template}")
     private String defaultTemplate;
@@ -47,13 +48,23 @@ public class PromptTemplateService {
 
     /**
      * 获取当前激活的模板
+     * 显式按有效作用域收窄，避免平台管理员绕过 @Filter 时 NonUnique。
+     * 1. 按 {@link ConfigScopeResolver} 解析出的有效 (tenantId, appId) 查自有激活模板
+     * 2. 回退平台级默认模板（tenant_id IS NULL，原生查询绕过 Hibernate 过滤器）——闭 bug 的唯一关键
      */
     public PromptTemplate getActiveTemplate() {
-        // 先取当前租户/应用范围内的激活模板；缺失时回退到平台级默认模板
-        // （@PostConstruct 建的默认模板 tenant_id 为空，会被租户过滤挡住，故需显式回退）。
-        return repository.findByIsActiveTrue()
+        ConfigScopeResolver.Scope scope = configScopeResolver.resolve();
+        return findScopedActive(scope)
                 .or(repository::findPlatformDefaultActive)
                 .orElseThrow(() -> new ResourceNotFoundException("没有激活的 Prompt 模板"));
+    }
+
+    /** 按有效作用域取租户自有激活模板；无有效租户则跳过、交由平台默认兜底。 */
+    private java.util.Optional<PromptTemplate> findScopedActive(ConfigScopeResolver.Scope scope) {
+        if (scope.tenantId() == null) {
+            return java.util.Optional.empty();
+        }
+        return repository.findActiveScoped(scope.tenantId(), scope.appId()).stream().findFirst();
     }
 
     /**

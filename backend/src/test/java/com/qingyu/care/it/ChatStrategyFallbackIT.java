@@ -8,9 +8,11 @@ import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import com.qingyu.care.support.SpringAiResponses;
+import com.qingyu.care.util.SecurityUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -19,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mockStatic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -111,5 +114,58 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
         assertThat(strategy.getHybridEnabled()).isTrue();
         assertThat(strategy.getKeywordTopK()).isEqualTo(10);
         assertThat(strategy.getRrfK()).isEqualTo(60);
+    }
+
+    /**
+     * 平台管理员场景（无过滤器）：ChatStrategy 表内同键（scenario='default', enabled=true,
+     * isDefault=true）存在多个租户各一行 + 一行平台默认，裸 findByScenarioAndEnabledTrueAndIsDefaultTrue
+     * 会因过滤器缺失同时看到全部行而 NonUniqueResultException。修复后经 ConfigScopeResolver
+     * 按 X-App-Id 反查出应用 A 归属的租户 T，用 findActiveDefaultScoped 显式收窄，必须解析到
+     * 租户 T 自己的那一行——而非另一租户 T2 的同名行，也不是平台默认（验证「解析到正确租户」
+     * 而非仅「不抛异常」，避免重蹈转人工回退修复前的教训）。
+     */
+    @Test
+    void 平台管理员无过滤器_多租户同键行_精确解析到应用归属租户() {
+        Application appA = seedApp("chatstrategy_scope_a", "http://it.example.com");
+        Long tenantT = appA.getTenant().getId();
+
+        // 另一租户 T2，同 scenario/enabled/isDefault 键值，制造 NonUnique 触发条件
+        Application appB = seedApp("chatstrategy_scope_b", "http://it.example.com");
+        Long tenantT2 = appB.getTenant().getId();
+
+        ChatStrategy ownT = new ChatStrategy();
+        ownT.setTenantId(tenantT);
+        ownT.setAppId(appA.getId());
+        ownT.setName("租户T自有默认策略");
+        ownT.setScenario("default");
+        ownT.setEnabled(true);
+        ownT.setIsDefault(true);
+        chatStrategyRepository.saveAndFlush(ownT);
+
+        ChatStrategy ownT2 = new ChatStrategy();
+        ownT2.setTenantId(tenantT2);
+        ownT2.setAppId(appB.getId());
+        ownT2.setName("租户T2自有默认策略");
+        ownT2.setScenario("default");
+        ownT2.setEnabled(true);
+        ownT2.setIsDefault(true);
+        chatStrategyRepository.saveAndFlush(ownT2);
+
+        // 平台管理员：无租户上下文，仅带 X-App-Id（模拟平台管理员选中应用 A 后的会话态）
+        TenantContext.setTenantId(null);
+        TenantContext.setAppId(appA.getId());
+
+        // ConfigScopeResolver.resolve() 新增了 SecurityUtil.isPlatformAdmin() 守卫，只有真正
+        // 平台管理员登录（Sa-Token 会话）才会触发按 X-App-Id 反查归属租户；本用例未真实登录，
+        // 用 mockStatic 忠实模拟"平台管理员"这一前提，让反查得以发生（与 ReembedServiceTest 同款用法）。
+        try (MockedStatic<SecurityUtil> secMock = mockStatic(SecurityUtil.class)) {
+            secMock.when(SecurityUtil::isPlatformAdmin).thenReturn(true);
+
+            ChatStrategy result = chatStrategyService.getActiveStrategy("default");
+
+            assertThat(result.getTenantId()).isEqualTo(tenantT);
+            assertThat(result.getName()).isEqualTo("租户T自有默认策略");
+            assertThat(result.getName()).isNotEqualTo("租户T2自有默认策略");
+        }
     }
 }

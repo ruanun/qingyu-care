@@ -12,11 +12,6 @@ import java.util.Optional;
 
 @Repository
 public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, Long> {
-    
-    /**
-     * 获取当前激活的模板
-     */
-    Optional<PromptTemplate> findByIsActiveTrue();
 
     /**
      * 平台级默认激活模板（tenant_id 为空）。
@@ -25,6 +20,14 @@ public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, 
     @Query(value = "SELECT * FROM prompt_templates WHERE is_active = true AND tenant_id IS NULL ORDER BY id LIMIT 1",
             nativeQuery = true)
     Optional<PromptTemplate> findPlatformDefaultActive();
+
+    /**
+     * 显式按 (tenantId, appId) 收窄取激活模板——不依赖 Hibernate @Filter，
+     * 使平台管理员(过滤器绕过)也能确定性取到目标租户的激活模板。List + ORDER BY id 杜绝 NonUnique。
+     */
+    @Query("SELECT t FROM PromptTemplate t WHERE t.isActive = true "
+         + "AND t.tenantId = :tenantId AND (:appId IS NULL OR t.appId = :appId) ORDER BY t.id")
+    List<PromptTemplate> findActiveScoped(@Param("tenantId") Long tenantId, @Param("appId") Long appId);
 
     /**
      * 获取所有版本，按版本号降序
