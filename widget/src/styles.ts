@@ -56,6 +56,7 @@ export function buildStyles(themeColor: string): string {
     .qy-emph { font-weight:600; }
     .qy-kv { display:flex; justify-content:space-between; font-size:13px; gap:8px; }
     .qy-kv-label { color:#6b7280; }
+    .qy-kv-value { color:#111827; font-weight:500; }
     .qy-badge { display:inline-block; padding:1px 8px; border-radius:9999px; background:#f3f4f6; color:#374151; font-size:12px; }
     .qy-divider { height:1px; background:#e5e7eb; margin:6px 0; }
     .qy-node-img { max-width:100%; border-radius:6px; }
