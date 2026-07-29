@@ -82,3 +82,29 @@ describe('addBotMessage uiParts 渲染', () => {
     expect(shadowText()).toContain('纯文本回复');
   });
 });
+
+describe('markOpened 抑制首开欢迎语', () => {
+  const brandWithWelcome: WidgetBrand = {
+    appName: '客服',
+    welcomeMessage: '你好，欢迎咨询',
+    avatar: '',
+    themeColor: '#6366f1',
+  };
+
+  it('未调用 markOpened 时，首次打开面板照常插入欢迎语（零回归）', () => {
+    mountUi(brandWithWelcome, { onSend: () => {}, onHandover: () => {} });
+    const host = lastHost();
+    const bubble = host?.shadowRoot?.querySelector('.qy-bubble') as HTMLButtonElement;
+    bubble.dispatchEvent(new Event('click'));
+    expect(shadowText()).toContain('你好，欢迎咨询');
+  });
+
+  it('已调用 markOpened（会话恢复出历史）后，首次打开面板不再插入欢迎语', () => {
+    const ui = mountUi(brandWithWelcome, { onSend: () => {}, onHandover: () => {} });
+    ui.markOpened();
+    const host = lastHost();
+    const bubble = host?.shadowRoot?.querySelector('.qy-bubble') as HTMLButtonElement;
+    bubble.dispatchEvent(new Event('click'));
+    expect(shadowText()).not.toContain('你好，欢迎咨询');
+  });
+});

@@ -1,7 +1,9 @@
 import { resolveConfig } from './config';
 import { createApi, SessionExpiredError } from './api';
+import type { OpenSessionResponse } from './api';
 import { loadSession, saveSession, clearSession } from './session';
 import { mountUi } from './ui';
+import type { WidgetUi } from './ui';
 import { connectSse } from './sse';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
@@ -17,6 +19,28 @@ function sessionStateText(kind: string): string {
       return '正在为您转接人工…';
     default:
       return '';
+  }
+}
+
+/** 恢复历史消息到 UI（各角色分派；ASSISTANT 带历史卡片 uiParts）。历史消息不带反馈（避免重复计量/messageId 缺失）。 */
+export function restoreHistory(ui: WidgetUi, messages: OpenSessionResponse['messages']): void {
+  for (const m of messages) {
+    switch (m.role) {
+      case 'USER':
+        ui.addUserMessage(m.content);
+        break;
+      case 'ASSISTANT':
+        ui.addBotMessage(m.content, undefined, m.uiParts);
+        break;
+      case 'AGENT':
+        ui.addAgentMessage(m.content);
+        break;
+      case 'SYSTEM':
+        ui.showSessionState(m.content);
+        break;
+      default:
+        break; // 未知角色忽略
+    }
   }
 }
 
@@ -80,9 +104,17 @@ async function init(): Promise<void> {
     onAction: (value) => void handleSend(value),
   });
 
-  // 刷新页面后若本地已恢复会话（可能已被坐席接管），立即建 inbox 长连接，
-  // 避免用户在再次发消息前收不到坐席实时回复；会话若已过期，connectSse 会自行退避重连即可，无需额外处理。
-  if (sessionId) ensureInbox(sessionId);
+  // 刷新页面后若本地已恢复会话（可能已被坐席接管），先用 getSession 恢复历史消息（含历史卡片），
+  // 再建 inbox 长连接，避免用户在再次发消息前收不到坐席实时回复；
+  // 会话若已过期或补拉失败，getSession 静默返回 null，照常走 ensureInbox（connectSse 会自行退避重连）。
+  if (sessionId) {
+    const restored = await api.getSession(sessionId);
+    if (restored && restored.messages?.length) {
+      ui.markOpened(); // 已有历史，视为已开场，打开面板不再插欢迎语
+      restoreHistory(ui, restored.messages);
+    }
+    ensureInbox(sessionId);
+  }
 
   async function handleSend(message: string): Promise<void> {
     ui.addUserMessage(message);
