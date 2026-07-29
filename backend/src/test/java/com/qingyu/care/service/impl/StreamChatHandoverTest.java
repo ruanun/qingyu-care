@@ -17,7 +17,9 @@ import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -68,6 +70,8 @@ class StreamChatHandoverTest {
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock UiSpecService uiSpecService;
+    @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;
 
     @BeforeEach

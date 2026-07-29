@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -41,6 +42,8 @@ class ChatServiceSearchScopeTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RealtimeNotifier realtimeNotifier;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock UiSpecService uiSpecService;
+    @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;
 
     @Test

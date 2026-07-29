@@ -2,6 +2,7 @@ package com.qingyu.care.service.impl;
 
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
+import com.qingyu.care.dto.UiPart;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
@@ -23,10 +24,12 @@ import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -74,6 +77,37 @@ public class ChatServiceImpl implements ChatService {
     private final ChatToolService chatToolService;
     private final RealtimeNotifier realtimeNotifier;
     private final EmbeddingModelProvider embeddingModelProvider;
+    private final UiSpecService uiSpecService;
+    private final ObjectMapper objectMapper;
+
+    // 结构化卡片：是否向系统 Prompt 注入卡片能力片段（仅非流式 chat() 生效，streamChat 恒不注入）
+    @Value("${qingyu.care.cards.enabled:true}")
+    private boolean cardsEnabled;
+
+    /**
+     * 结构化卡片能力 Prompt 片段：追加在系统提示末尾，告知模型可用 ```spec 围栏内联输出结构化 UI
+     * 节点（与普通文字交错）。仅在 cardsEnabled 开启且 buildMessages(withCards=true) 时注入
+     * （即仅非流式 chat() 主路；streamChat 恒不注入，流式卡片留 SP3）。
+     */
+    private static final String CARD_PROMPT = """
+
+
+            ---
+            【结构化卡片能力】
+            除了普通文字，你还可以在回复中内联输出结构化卡片：用 ```spec 围栏包裹一段完整的 JSON UI 树，可与文字交错出现（围栏外的文字仍按普通文本展示）。
+            节点格式：{"type":"组件名","props":{...},"children":[子节点...]}
+            可用组件：card（卡片容器，props.title）、text（文本，props.value，可选 props.emphasis 高亮）、kv（标签:值，props.label/props.value）、
+            badge（徽标，props.text）、divider（分割线）、image（图片，props.src）、button（按钮，props.label/props.value，点击会把 value 作为用户消息发出）、
+            actions（按钮组容器）、list（列表）、row（横排容器）、column（竖排容器）。
+            示例：
+            ```spec
+            {"type":"card","props":{"title":"订单 #10086"},"children":[
+              {"type":"kv","props":{"label":"金额","value":"¥199"}},
+              {"type":"actions","children":[{"type":"button","props":{"label":"查看物流","value":"查询订单10086物流"}}]}
+            ]}
+            ```
+            只在确实需要结构化展示（如订单、列表、可点击操作）时才使用卡片；不需要卡片时，直接正常回复纯文本即可，不要滥用。
+            """;
 
     // 自注入解决 @Transactional 同类自调用不经代理不生效问题（仿 KnowledgeServiceImpl.self）
     private ChatServiceImpl self;
@@ -139,7 +173,7 @@ public class ChatServiceImpl implements ChatService {
         // 如果知识库未命中且不允许自由发挥（兜底回复也落库：fallback 标记 + messageId 回传）
         if (relevantDocs.isEmpty() && Boolean.FALSE.equals(strategy.getAllowNoKnowledge())) {
             ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
-                    strategy.getFallbackMessage(), 0.0, null, null, true);
+                    strategy.getFallbackMessage(), 0.0, null, null, true, null);
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
                     .messageId(fallbackMsg.getId())
@@ -155,8 +189,9 @@ public class ChatServiceImpl implements ChatService {
 
         // 解析当前应用的 skill/工具（请求线程内，依赖 TenantContext）
         ChatToolService.ToolBundle toolBundle = chatToolService.resolve();
+        // withCards=true：仅非流式 chat() 注入卡片能力 Prompt 片段（streamChat 恒传 false，见下）
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
-                toolBundle.skillMarkdowns());
+                toolBundle.skillMarkdowns(), true);
 
         // 调用AI（动态模型路由，场景取租户配置 tenant.default.model.scenario）；取完整响应以拿到 token 用量
         final List<Message> finalMessages = messages;
@@ -181,16 +216,23 @@ public class ChatServiceImpl implements ChatService {
                 ? aiResp.getMetadata().getUsage().getTotalTokens().intValue()
                 : null;
 
-        // 保存消息（埋点：命中文档 + token 用量）
+        // 结构化卡片：解析原始回复里内联的 ```spec 围栏为有序 uiParts，content 落为剥离围栏的纯文本
+        // （fail-soft：UiSpecService.parse 自身不抛异常，无围栏时 uiParts 只含一个 text 片段，逐字节兼容旧行为）
+        UiSpecService.ParseResult parsed = uiSpecService.parse(response);
+        String plainText = parsed.plainText();
+        String uiSpecJson = writeUiSpec(parsed.uiParts());
+
+        // 保存消息（埋点：命中文档 + token 用量 + 卡片 JSON）
         String hitDocumentIds = extractHitDocumentIds(relevantDocs);
-        ChatMessage aiMsg = saveMessages(session, request.getMessage(), response, maxScore,
-                hitDocumentIds, tokenUsage, false);
+        ChatMessage aiMsg = saveMessages(session, request.getMessage(), plainText, maxScore,
+                hitDocumentIds, tokenUsage, false, uiSpecJson);
 
         // 构建响应（tokenUsage 由开放控制器用于计量；内部对话同样填入供前端展示）
         return ChatResponse.builder()
                 .sessionId(session.getSessionId())
                 .messageId(aiMsg.getId())
-                .content(response)
+                .content(plainText)
+                .uiParts(parsed.uiParts())
                 .confidenceScore(maxScore)
                 .tokenUsage(tokenUsage)
                 .suggestHandover(handoverRuleService.checkLowConfidenceTrigger(maxScore))
@@ -247,8 +289,9 @@ public class ChatServiceImpl implements ChatService {
             relevantDocs = List.of();
         }
         String context = buildContext(relevantDocs);
+        // withCards=false：streamChat 恒不注入卡片能力 Prompt 片段（流式卡片留 SP3）
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
-                java.util.List.of());
+                java.util.List.of(), false);
 
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
                 relevantDocs.stream().mapToDouble(ChatServiceImpl::resolveConfidenceScore).max().orElse(0.0);
@@ -331,7 +374,7 @@ public class ChatServiceImpl implements ChatService {
         try {
             if (!aiResponse.isEmpty()) {
                 ChatMessage aiMsg = transactionTemplate.execute(status ->
-                        saveMessages(session, userMessage, aiResponse, confidence, hitDocumentIds, null, false));
+                        saveMessages(session, userMessage, aiResponse, confidence, hitDocumentIds, null, false, null));
                 savedId = aiMsg.getId();
             }
         } catch (Exception e) {
@@ -626,13 +669,19 @@ public class ChatServiceImpl implements ChatService {
     }
     
     private List<Message> buildMessages(ChatSession session, String userMessage, String context,
-                                        ChatStrategy strategy, java.util.List<String> skillMarkdowns) {
+                                        ChatStrategy strategy, java.util.List<String> skillMarkdowns,
+                                        boolean withCards) {
         List<Message> messages = new ArrayList<>();
 
         // 系统消息 - 策略绑定模板优先，否则全局激活模板
         String systemTemplate = resolveSystemTemplate(strategy);
         String systemPrompt = systemTemplate.replace("{context}", context);
         systemPrompt = appendSkillMarkdowns(systemPrompt, skillMarkdowns);
+        // 结构化卡片能力 Prompt 片段：仅 withCards=true（非流式 chat() 传入）且 config 开关开启时注入；
+        // streamChat 恒传 withCards=false，绝不给流式回复引入卡片指令（流式卡片留 SP3）
+        if (withCards && cardsEnabled) {
+            systemPrompt = systemPrompt + CARD_PROMPT;
+        }
         messages.add(new SystemMessage(systemPrompt));
         
         // 历史消息
@@ -655,10 +704,11 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 保存一轮问答（用户消息 + AI 回复），返回 AI 消息（供响应回传 messageId）。
      * fallback 只在兜底时置 TRUE（其余 null 避免 FALSE 噪声；rollup 按 = TRUE 统计）。
+     * uiSpec 为结构化卡片 uiParts 的 JSON（仅非流式 chat() 主路可能非空，兜底/流式恒传 null）。
      */
     private ChatMessage saveMessages(ChatSession session, String userMessage, String aiResponse,
                                      double confidence, String hitDocumentIds,
-                                     Integer tokenUsage, boolean fallback) {
+                                     Integer tokenUsage, boolean fallback, String uiSpec) {
         // 保存用户消息
         ChatMessage userMsg = ChatMessage.builder()
                 .session(session)
@@ -667,7 +717,7 @@ public class ChatServiceImpl implements ChatService {
                 .build();
         messageRepository.save(userMsg);
 
-        // 保存AI回复（埋点：命中文档 + token + 兜底标记）
+        // 保存AI回复（埋点：命中文档 + token + 兜底标记 + 卡片 JSON）
         ChatMessage aiMsg = ChatMessage.builder()
                 .session(session)
                 .role(MessageRole.ASSISTANT)
@@ -676,10 +726,29 @@ public class ChatServiceImpl implements ChatService {
                 .hitDocumentIds(hitDocumentIds)
                 .tokenUsage(tokenUsage)
                 .fallback(fallback ? Boolean.TRUE : null)
+                .uiSpec(uiSpec)
                 .build();
         return messageRepository.save(aiMsg);
     }
-    
+
+    /**
+     * uiParts 只含单个 text 片段（无卡片，即模型回复未使用 ```spec 围栏）时返回 null，
+     * 不落 ui_spec 噪声；含至少一个 ui 片段则序列化为 JSON。fail-soft：序列化异常不抛，仅告警返回 null
+     * （不能让卡片序列化失败拖垮整轮对话落库）。
+     */
+    private String writeUiSpec(List<UiPart> uiParts) {
+        boolean hasUi = uiParts.stream().anyMatch(p -> "ui".equals(p.getKind()));
+        if (!hasUi) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(uiParts);
+        } catch (Exception e) {
+            log.warn("uiParts 序列化失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * 截断内容，避免返回过长的文本
      */

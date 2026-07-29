@@ -50,7 +50,12 @@ public class ChatResponse {
      * Token 使用量
      */
     private Integer tokenUsage;
-    
+
+    /**
+     * 结构化卡片有序片段（文本/卡片交错；非流式带卡片回复才有，其余为单个 text 片段或 null）
+     */
+    private List<UiPart> uiParts;
+
     /**
      * 知识命中信息
      */

@@ -11,7 +11,9 @@ import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -58,6 +60,8 @@ class ChatStreamPersistenceTest {
     @Mock TransactionTemplate transactionTemplate;
     @Mock RealtimeNotifier realtimeNotifier;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock UiSpecService uiSpecService;
+    @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl service;
 
     @Test
