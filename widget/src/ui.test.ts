@@ -1,0 +1,84 @@
+/**
+ * @author ruan
+ */
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mountUi } from './ui';
+import type { WidgetBrand } from './api';
+
+const brand: WidgetBrand = { appName: '客服', welcomeMessage: '', avatar: '', themeColor: '#6366f1' };
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+/** mountUi 把 host 挂到 document.body；jsdom 下同一用例只 mount 一次，取最后一个 host 即可。 */
+function lastHost(): HTMLDivElement | null {
+  const hosts = document.body.querySelectorAll('div');
+  return hosts.length ? (hosts[hosts.length - 1] as HTMLDivElement) : null;
+}
+
+function shadowText(): string {
+  const host = lastHost();
+  return host?.shadowRoot?.querySelector('.qy-msgs')?.textContent ?? '';
+}
+
+describe('addBotMessage uiParts 渲染', () => {
+  it('有 ui 片段按序渲染卡片，text 片段渲染文本', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addBotMessage('原始纯文本', undefined, [
+      { kind: 'text', text: '前言' },
+      {
+        kind: 'ui',
+        node: {
+          type: 'card',
+          props: { title: '订单#1' },
+          children: [{ type: 'kv', props: { label: '状态', value: '已发货' } }],
+        },
+      },
+    ]);
+    const txt = shadowText();
+    expect(txt).toContain('前言');
+    expect(txt).toContain('订单#1');
+    expect(txt).toContain('已发货');
+    // 有 ui 片段时不走纯文本 appendMsg 路径，原始 text 参数不应出现
+    expect(txt).not.toContain('原始纯文本');
+  });
+
+  it('无 uiParts 回退纯文本 reply（零回归）', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addBotMessage('纯文本回复');
+    expect(shadowText()).toContain('纯文本回复');
+  });
+
+  it('卡片按钮点击触发 onSend(value) 回填', () => {
+    const onSend = vi.fn();
+    const ui = mountUi(brand, { onSend, onHandover: () => {} });
+    ui.addBotMessage('', undefined, [
+      { kind: 'ui', node: { type: 'button', props: { label: '查看物流', value: '查询物流' } } },
+    ]);
+    const host = lastHost();
+    const btn = host?.shadowRoot?.querySelector('.qy-card-btn') as HTMLButtonElement;
+    btn.dispatchEvent(new Event('click'));
+    expect(onSend).toHaveBeenCalledWith('查询物流');
+  });
+
+  it('提供 onAction 时卡片按钮走 onAction 而非 onSend', () => {
+    const onSend = vi.fn();
+    const onAction = vi.fn();
+    const ui = mountUi(brand, { onSend, onHandover: () => {}, onAction });
+    ui.addBotMessage('', undefined, [
+      { kind: 'ui', node: { type: 'button', props: { label: '查看物流', value: '查询物流' } } },
+    ]);
+    const host = lastHost();
+    const btn = host?.shadowRoot?.querySelector('.qy-card-btn') as HTMLButtonElement;
+    btn.dispatchEvent(new Event('click'));
+    expect(onAction).toHaveBeenCalledWith('查询物流');
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('空 uiParts 数组回退纯文本路径（零回归）', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addBotMessage('纯文本回复', undefined, []);
+    expect(shadowText()).toContain('纯文本回复');
+  });
+});

@@ -1,11 +1,14 @@
 import { buildStyles } from './styles';
-import type { WidgetBrand } from './api';
+import { renderNode } from './render';
+import type { WidgetBrand, UiPart } from './api';
 
 export interface UiHandlers {
   onSend: (message: string) => void;
   onHandover: () => void;
   /** 用户在输入框中输入（未节流，节流由调用方控制）；可选 */
   onTyping?: () => void;
+  /** 卡片按钮点击回填；未提供时复用 onSend */
+  onAction?: (value: string) => void;
 }
 
 export interface BotFeedback {
@@ -14,7 +17,7 @@ export interface BotFeedback {
 
 export interface WidgetUi {
   addUserMessage: (text: string) => void;
-  addBotMessage: (text: string, feedback?: BotFeedback) => void;
+  addBotMessage: (text: string, feedback?: BotFeedback, uiParts?: UiPart[]) => void;
   /** 渲染坐席（真人）消息，带「客服」标记以区分 AI 回复 */
   addAgentMessage: (text: string) => void;
   /** 消息区插入一条居中系统状态提示（如「客服已接入」） */
@@ -100,11 +103,39 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     return row;
   }
 
+  /** 按序渲染 uiParts（text 片段渲染为文本节点，ui 片段经 renderNode 渲染），供 addBotMessage 复用消息行/反馈逻辑。 */
+  function appendUiMsg(uiParts: UiPart[]): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'qy-msg bot';
+    const container = document.createElement('div');
+    container.className = 'qy-text';
+    const onAction = handlers.onAction ?? handlers.onSend;
+    for (const part of uiParts) {
+      if (part.kind === 'text') {
+        const str = part.text ?? '';
+        if (str) {
+          const t = document.createElement('div');
+          t.className = 'qy-node-text';
+          t.textContent = str;
+          container.appendChild(t);
+        }
+      } else if (part.kind === 'ui' && part.node) {
+        const c = renderNode(part.node, onAction);
+        if (c) container.appendChild(c);
+      }
+    }
+    row.appendChild(container);
+    msgs.appendChild(row);
+    msgs.scrollTop = msgs.scrollHeight;
+    return row;
+  }
+
   function addUserMessage(text: string) {
     appendMsg(text, 'user');
   }
-  function addBotMessage(text: string, feedback?: BotFeedback) {
-    const row = appendMsg(text, 'bot');
+  function addBotMessage(text: string, feedback?: BotFeedback, uiParts?: UiPart[]) {
+    const hasUi = Array.isArray(uiParts) && uiParts.some((p) => p.kind === 'ui' && p.node);
+    const row = hasUi ? appendUiMsg(uiParts!) : appendMsg(text, 'bot');
     if (feedback) {
       // 竖排：气泡在上、反馈按钮在下方左对齐；不影响无反馈消息的横排布局
       row.classList.add('has-feedback');
