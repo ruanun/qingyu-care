@@ -32,7 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * 行为：某租户/应用无自有激活模板时，ChatServiceImpl.buildMessages 调
  * promptTemplateService.getActiveTemplateContent()：
- *   - 修复存在：findByIsActiveTrue 被租户过滤挡住 → 回退 findPlatformDefaultActive
+ *   - 修复存在：findActiveScoped 被有效作用域收窄挡空 → 回退 findPlatformDefaultActive
  *     命中 @PostConstruct 平台默认模板 → 对话成功（200）。
  *   - 删掉回退（.or(findPlatformDefaultActive)）：getActiveTemplate 抛
  *     ResourceNotFoundException「没有激活的 Prompt 模板」→ 开放 API 映射为 404 → IT 变红。
@@ -84,7 +84,7 @@ class PromptTemplateFallbackIT extends AbstractPostgresIT {
 
     /**
      * 平台管理员场景（无过滤器）：prompt_templates 表内同键（is_active=true）存在多个租户各
-     * 一行 + 一行平台默认，裸 findByIsActiveTrue 会因过滤器缺失同时看到全部行而
+     * 一行 + 一行平台默认，若不做作用域收窄裸查 is_active=true 会因过滤器缺失同时看到全部行而
      * NonUniqueResultException。修复后经 ConfigScopeResolver 按 X-App-Id 反查出应用 A 归属的
      * 租户 T，用 findActiveScoped 显式收窄，必须解析到租户 T 自己的那一行——而非另一租户 T2
      * 的同名行，也不是平台默认（验证「解析到正确租户」而非仅「不抛异常」，避免重蹈转人工

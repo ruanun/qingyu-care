@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.repository.ApplicationRepository;
+import com.qingyu.care.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +13,8 @@ import org.springframework.stereotype.Component;
  * {@link TenantContext#getTenantId()} 恒为空，则由当前 X-App-Id 反查应用归属租户，
  * 使多级配置回退解析到「该应用真实使用的那一份配置」（与该应用租户用户所见一致），
  * 而非依赖 Hibernate @Filter（平台管理员绕过过滤器会裸扫全库致单结果查询 NonUnique）。
+ *
+ * @author ruan
  */
 @Component
 @RequiredArgsConstructor
@@ -22,7 +25,9 @@ public class ConfigScopeResolver {
     public Scope resolve() {
         Long appId = TenantContext.getAppId();
         Long tenantId = TenantContext.getTenantId();
-        if (tenantId == null && appId != null) {
+        // 仅平台管理员(合法绕过 @Filter)才由应用反查归属租户；其余无租户上下文一律留空 → 交回退链
+        // 落平台默认，避免异常态(已登录非管理员却缺上下文,原 @Filter 以 -1 拒绝)经反查串到他租户配置。
+        if (tenantId == null && appId != null && SecurityUtil.isPlatformAdmin()) {
             tenantId = applicationRepository.findTenantIdById(appId).orElse(null);
         }
         return new Scope(tenantId, appId);

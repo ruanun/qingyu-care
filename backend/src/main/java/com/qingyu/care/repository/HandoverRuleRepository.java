@@ -19,11 +19,6 @@ public interface HandoverRuleRepository extends JpaRepository<HandoverRule, Long
     List<HandoverRule> findByEnabledTrueOrderByPriorityAsc();
 
     /**
-     * 按规则类型查找
-     */
-    Optional<HandoverRule> findByRuleType(HandoverRuleType ruleType);
-
-    /**
      * 获取所有规则，按优先级排序
      */
     List<HandoverRule> findAllByOrderByPriorityAsc();

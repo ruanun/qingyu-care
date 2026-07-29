@@ -12,11 +12,6 @@ import java.util.Optional;
 
 @Repository
 public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, Long> {
-    
-    /**
-     * 获取当前激活的模板
-     */
-    Optional<PromptTemplate> findByIsActiveTrue();
 
     /**
      * 平台级默认激活模板（tenant_id 为空）。
