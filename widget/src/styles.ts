@@ -72,5 +72,6 @@ export function buildStyles(themeColor: string): string {
     .qy-form-input, .qy-select { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; }
     .qy-checkbox { display:flex; align-items:center; gap:6px; font-size:13px; }
     .qy-form-submit { align-self:flex-start; padding:6px 14px; border:none; border-radius:6px; background:${themeColor}; color:#fff; cursor:pointer; font-size:13px; }
+    .qy-field-invalid { border-color:#ef4444; }
   `;
 }

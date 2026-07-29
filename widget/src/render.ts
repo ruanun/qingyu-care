@@ -21,14 +21,14 @@ function el(tag: string, className?: string): HTMLElement {
   return e;
 }
 
-/** 字段带标签的行容器：有 label 则「标签 + 控件」竖排，否则只返回控件。 */
-function wrapField(label: string, field: HTMLElement): HTMLElement {
+/** 字段带标签的行容器：有 label 则「标签 + 控件」竖排，否则只返回控件；required 时标签追加必填星号。 */
+function wrapField(label: string, field: HTMLElement, required?: boolean): HTMLElement {
   if (!label) return field;
   const wrap = document.createElement('div');
   wrap.className = 'qy-field-row';
   const lab = document.createElement('div');
   lab.className = 'qy-field-label';
-  lab.textContent = label;
+  lab.textContent = required ? `${label} *` : label;
   wrap.appendChild(lab);
   wrap.appendChild(field);
   return wrap;
@@ -136,24 +136,30 @@ export function renderNode(
       input.type = 'text';
       if (p.placeholder != null) input.placeholder = str(p.placeholder);
       input.setAttribute('data-qy-field', str(p.name));
-      return wrapField(str(p.label), input);
+      const required = p.required === true;
+      if (required) input.setAttribute('data-qy-required', 'true');
+      return wrapField(str(p.label), input, required);
     }
     case 'datetime': {
       const input = document.createElement('input');
       input.className = 'qy-field qy-form-input';
       input.type = 'date';
       input.setAttribute('data-qy-field', str(p.name));
-      return wrapField(str(p.label), input);
+      const required = p.required === true;
+      if (required) input.setAttribute('data-qy-required', 'true');
+      return wrapField(str(p.label), input, required);
     }
     case 'checkbox': {
       const input = document.createElement('input');
       input.className = 'qy-field';
       input.type = 'checkbox';
       input.setAttribute('data-qy-field', str(p.name));
+      const required = p.required === true;
+      if (required) input.setAttribute('data-qy-required', 'true');
       const label = el('label', 'qy-checkbox');
       label.appendChild(input);
       const span = document.createElement('span');
-      span.textContent = str(p.label ?? p.name);
+      span.textContent = required ? `${str(p.label ?? p.name)} *` : str(p.label ?? p.name);
       label.appendChild(span);
       return label;
     }
@@ -161,6 +167,8 @@ export function renderNode(
       const sel = document.createElement('select');
       sel.className = 'qy-field qy-select';
       sel.setAttribute('data-qy-field', str(p.name));
+      const required = p.required === true;
+      if (required) sel.setAttribute('data-qy-required', 'true');
       // 空首项：未选择时提交为空值，与前端 FormNode 一致（不默认替用户选中首项）
       const placeholder = document.createElement('option');
       placeholder.value = '';
@@ -172,7 +180,7 @@ export function renderNode(
         opt.textContent = str(o);
         sel.appendChild(opt);
       }
-      return wrapField(str(p.label), sel);
+      return wrapField(str(p.label), sel, required);
     }
     case 'form': {
       const f = el('div', 'qy-form');
@@ -186,16 +194,35 @@ export function renderNode(
       btn.addEventListener('click', () => {
         const form = btn.closest('.qy-form');
         if (!form) return;
+        const fieldEls = Array.from(form.querySelectorAll('[data-qy-field]'));
+        // 必填校验先行：text/datetime/select 按 trim 后是否为空判断，checkbox 按是否勾选判断；
+        // 每次点击先清掉上一轮的 qy-field-invalid 标记再重新判定，任一未通过则中止、不组装提交。
+        let hasError = false;
+        for (const f2 of fieldEls) {
+          f2.classList.remove('qy-field-invalid');
+          if (f2.getAttribute('data-qy-required') !== 'true') continue;
+          let invalid = false;
+          if (f2 instanceof HTMLInputElement && f2.type === 'checkbox') {
+            invalid = !f2.checked;
+          } else if (f2 instanceof HTMLInputElement || f2 instanceof HTMLSelectElement) {
+            invalid = f2.value.trim() === '';
+          }
+          if (invalid) {
+            f2.classList.add('qy-field-invalid');
+            hasError = true;
+          }
+        }
+        if (hasError) return;
         const parts: string[] = [];
-        form.querySelectorAll('[data-qy-field]').forEach((f2) => {
+        for (const f2 of fieldEls) {
           const name = f2.getAttribute('data-qy-field') ?? '';
-          if (!name) return; // 空 name 字段无法在提交文本里定位，跳过不收集
+          if (!name) continue; // 空 name 字段无法在提交文本里定位，跳过不收集
           if (f2 instanceof HTMLInputElement && f2.type === 'checkbox') {
             parts.push(`${name}: ${f2.checked ? '是' : '否'}`);
           } else if (f2 instanceof HTMLInputElement || f2 instanceof HTMLSelectElement) {
             parts.push(`${name}: ${(f2 as HTMLInputElement | HTMLSelectElement).value}`);
           }
-        });
+        }
         onAction(parts.join('\n'));
       });
       return btn;
