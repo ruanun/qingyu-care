@@ -35,6 +35,20 @@ export interface ChatMessage {
     role: MessageRole;
     content: string;
     createdAt: string;
+    uiParts?: UiPart[];
+}
+
+// 结构化卡片：AI 回复的有序 text/ui 片段（Task 3 渲染引擎消费）
+export interface UiPart {
+    kind: 'text' | 'ui';
+    text?: string;
+    node?: UiNode;
+}
+
+export interface UiNode {
+    type: string;
+    props?: Record<string, unknown>;
+    children?: UiNode[];
 }
 
 export interface KnowledgeBase {
@@ -86,6 +100,7 @@ export interface ChatResponse {
     knowledgeHits: KnowledgeHit[];
     suggestHandover: boolean;
     tokenUsage?: number;
+    uiParts?: UiPart[];
 }
 
 // 多租户管理相关类型

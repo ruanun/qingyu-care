@@ -11,6 +11,7 @@ import { chatService } from '@/api/chat';
 import type { ChatMessage, KnowledgeHit } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { JsonRender } from '@/components/chat/JsonRender';
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -32,13 +33,13 @@ const ChatPage: React.FC = () => {
         }
     }, [messages]);
 
-    const handleSend = async () => {
-        if (!input.trim() || isLoading) return;
+    const send = async (text: string) => {
+        if (!text.trim() || isLoading) return;
 
         const userMessage: ChatMessage = {
             id: Date.now(),
             role: 'USER',
-            content: input,
+            content: text,
             createdAt: new Date().toISOString(),
         };
 
@@ -50,7 +51,7 @@ const ChatPage: React.FC = () => {
             const response = await chatService.sendMessage({
                 userId,
                 sessionId,
-                message: input,
+                message: text,
             });
 
             if (response.code === 200) {
@@ -59,6 +60,7 @@ const ChatPage: React.FC = () => {
                     role: 'ASSISTANT',
                     content: response.data.content,
                     createdAt: new Date().toISOString(),
+                    uiParts: response.data.uiParts,
                 };
                 setMessages((prev) => [...prev, aiResponse]);
                 setSessionId(response.data.sessionId);
@@ -82,6 +84,11 @@ const ChatPage: React.FC = () => {
             setIsLoading(false);
         }
     };
+
+    const handleSend = () => send(input);
+
+    // 卡片按钮回填：把按钮 value/label 作为用户消息重新发送
+    const handleAction = (value: string) => send(value);
 
     const handleRequestHandover = async () => {
         if (!sessionId) return;
@@ -149,7 +156,9 @@ const ChatPage: React.FC = () => {
                                             ? "bg-primary text-primary-foreground rounded-tr-none shadow-md"
                                             : "bg-muted rounded-tl-none border shadow-sm"
                                     )}>
-                                        {msg.content}
+                                        {msg.role === 'ASSISTANT' && msg.uiParts?.length
+                                            ? <JsonRender parts={msg.uiParts} onAction={handleAction} />
+                                            : msg.content}
                                     </div>
                                     <span className="text-[10px] text-muted-foreground px-1">
                                         {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
