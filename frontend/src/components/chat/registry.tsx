@@ -26,8 +26,10 @@ function str(v: unknown): string {
  * 所有文本均以 React 文本节点渲染，不使用 dangerouslySetInnerHTML；image/link 类 URL 经 safeUrl 白名单收窄。
  */
 export function renderNode(node: UiNode, onAction: (value: string) => void, key: React.Key): React.ReactNode {
+  // 结构守卫：模型吐出的畸形节点（null/非对象）一律静默忽略，不抛错、不阻断其余卡片渲染（fail-soft）。
+  if (!node || typeof node !== 'object') return null;
   const p = node.props ?? {};
-  const kids = (node.children ?? []).map((c, i) => renderNode(c, onAction, i));
+  const kids = (Array.isArray(node.children) ? node.children : []).map((c, i) => renderNode(c, onAction, i));
   switch (node.type) {
     case 'card':
       return (
@@ -62,7 +64,7 @@ export function renderNode(node: UiNode, onAction: (value: string) => void, key:
     case 'actions':
       return <div key={key} className="flex flex-wrap">{kids}</div>;
     case 'list': {
-      const items = node.children ?? [];
+      const items = Array.isArray(node.children) ? node.children : [];
       return (
         <ul key={key} className="list-disc pl-5 space-y-1">
           {items.map((c, i) => <li key={i}>{renderNode(c, onAction, i)}</li>)}

@@ -12,6 +12,7 @@ import type { ChatMessage, KnowledgeHit } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { JsonRender } from '@/components/chat/JsonRender';
+import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -157,7 +158,11 @@ const ChatPage: React.FC = () => {
                                             : "bg-muted rounded-tl-none border shadow-sm"
                                     )}>
                                         {msg.role === 'ASSISTANT' && msg.uiParts?.length
-                                            ? <JsonRender parts={msg.uiParts} onAction={handleAction} />
+                                            ? (
+                                                <CardErrorBoundary fallback={msg.content}>
+                                                    <JsonRender parts={msg.uiParts} onAction={handleAction} />
+                                                </CardErrorBoundary>
+                                            )
                                             : msg.content}
                                     </div>
                                     <span className="text-[10px] text-muted-foreground px-1">
