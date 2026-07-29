@@ -161,6 +161,10 @@ export function renderNode(
       const sel = document.createElement('select');
       sel.className = 'qy-field qy-select';
       sel.setAttribute('data-qy-field', str(p.name));
+      // 空首项：未选择时提交为空值，与前端 FormNode 一致（不默认替用户选中首项）
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      sel.appendChild(placeholder);
       const opts = Array.isArray(p.options) ? p.options : [];
       for (const o of opts) {
         const opt = document.createElement('option');
