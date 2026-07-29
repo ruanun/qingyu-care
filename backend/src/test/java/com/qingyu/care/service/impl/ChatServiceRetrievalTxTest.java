@@ -116,6 +116,9 @@ class ChatServiceRetrievalTxTest {
         when(chatStrategyService.getActiveStrategy("default")).thenReturn(
                 ChatStrategy.builder().name("默认").scenario("default")
                         .allowNoKnowledge(false).fallbackMessage("请稍等").build());
+        // 本用例只关心检索失败的 fail-soft 兜底，不关心连续未命中转人工特性：
+        // 阈值设为「禁用」语义（MAX_VALUE）避免 noHitStreak 计数干扰 suggestHandover 断言
+        when(handoverRuleService.getNoHitStreakThreshold()).thenReturn(Integer.MAX_VALUE);
 
         ChatRequest request = ChatRequest.builder().message("你好").build();
 

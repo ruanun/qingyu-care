@@ -79,6 +79,18 @@ public class ChatSession extends BaseTenantEntity {
     private LocalDateTime handoverTime;
 
     /**
+     * 连续未命中知识库的轮次计数：本轮检索未命中则 +1、命中则归 0；
+     * 达到 NO_HIT_STREAK 转人工规则阈值时建议转人工。
+     * @Builder.Default 必需：否则 @Builder 会忽略字段初始值，builder().build() 未显式设置时留 null，
+     * 后续 getNoHitStreak() + 1 拆箱 NPE（同 tags 字段惯例）。
+     * 列可空（不加 nullable=false）：ddl-auto:update 在已有存量行的表上加 NOT NULL 列会失败；
+     * 存量行读回为 null，消费侧（ChatServiceImpl）已 null 归 0 兜底。
+     */
+    @Column(name = "no_hit_streak")
+    @Builder.Default
+    private Integer noHitStreak = 0;
+
+    /**
      * 会话消息
      */
     @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true)

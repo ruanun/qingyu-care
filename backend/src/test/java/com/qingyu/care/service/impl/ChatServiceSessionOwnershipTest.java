@@ -145,6 +145,8 @@ class ChatServiceSessionOwnershipTest {
 
         // 他租户会话按未找到处理，走 createNewSession 新建，不复用越权 sessionId
         assertThat(resp.getSessionId()).isNotEqualTo("sess-1");
-        verify(sessionRepository).save(any(ChatSession.class));
+        // atLeastOnce：createNewSession 落一次 + 连续未命中计数更新落一次，本用例只关心「确实新建并落库」，
+        // 不耦合与本用例无关的 noHitStreak 特性精确调用次数
+        verify(sessionRepository, org.mockito.Mockito.atLeastOnce()).save(any(ChatSession.class));
     }
 }
