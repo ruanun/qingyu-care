@@ -9,14 +9,16 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Optional;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
- * getActiveTemplate 的模板解析：当前租户/应用优先，缺失时回退平台级默认模板。
+ * getActiveTemplate 的作用域解析：经 {@link ConfigScopeResolver} 显式按有效 (tenantId, appId)
+ * 收窄取自有激活模板，避免平台管理员绕过 Hibernate @Filter 时 NonUniqueResultException。
  *
  * @author ruan
  */
@@ -26,33 +28,52 @@ class PromptTemplateServiceTest {
     @Mock
     private PromptTemplateRepository repository;
 
+    @Mock
+    private ConfigScopeResolver configScopeResolver;
+
     @InjectMocks
     private PromptTemplateService service;
 
     @Test
-    void 当前范围有激活模板时直接返回不回退() {
-        PromptTemplate own = PromptTemplate.builder().name("own").content("c").isActive(true).build();
-        when(repository.findByIsActiveTrue()).thenReturn(Optional.of(own));
+    void getActiveTemplate_有有效作用域_取自有激活模板() {
+        when(configScopeResolver.resolve())
+                .thenReturn(new ConfigScopeResolver.Scope(4L, 3L));
+        PromptTemplate own = PromptTemplate.builder().name("租户4").content("C").isActive(true).build();
+        when(repository.findActiveScoped(4L, 3L)).thenReturn(java.util.List.of(own));
 
-        assertThat(service.getActiveTemplate()).isSameAs(own);
+        assertThat(service.getActiveTemplate().getName()).isEqualTo("租户4");
         verify(repository, never()).findPlatformDefaultActive();
     }
 
     @Test
-    void 当前范围无激活模板时回退平台级默认模板() {
-        PromptTemplate platform = PromptTemplate.builder().name("default").content("c").isActive(true).build();
-        when(repository.findByIsActiveTrue()).thenReturn(Optional.empty());
-        when(repository.findPlatformDefaultActive()).thenReturn(Optional.of(platform));
+    void getActiveTemplate_作用域无租户_跳过自有落平台默认() {
+        when(configScopeResolver.resolve())
+                .thenReturn(new ConfigScopeResolver.Scope(null, 3L));
+        PromptTemplate platform = PromptTemplate.builder().name("平台").content("P").isActive(true).build();
+        when(repository.findPlatformDefaultActive()).thenReturn(java.util.Optional.of(platform));
 
-        assertThat(service.getActiveTemplate()).isSameAs(platform);
+        assertThat(service.getActiveTemplate().getName()).isEqualTo("平台");
+        verify(repository, never()).findActiveScoped(any(), any());
     }
 
     @Test
-    void 当前范围与平台级都没有时抛资源不存在() {
-        when(repository.findByIsActiveTrue()).thenReturn(Optional.empty());
-        when(repository.findPlatformDefaultActive()).thenReturn(Optional.empty());
+    void getActiveTemplate_均无_抛ResourceNotFound() {
+        when(configScopeResolver.resolve())
+                .thenReturn(new ConfigScopeResolver.Scope(null, 3L));
+        when(repository.findPlatformDefaultActive()).thenReturn(java.util.Optional.empty());
 
         assertThatThrownBy(() -> service.getActiveTemplate())
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void getActiveTemplate_自有多行_findFirst不抛NonUnique() {
+        when(configScopeResolver.resolve())
+                .thenReturn(new ConfigScopeResolver.Scope(4L, 3L));
+        when(repository.findActiveScoped(4L, 3L)).thenReturn(java.util.List.of(
+                PromptTemplate.builder().name("第一").content("c1").isActive(true).build(),
+                PromptTemplate.builder().name("第二").content("c2").isActive(true).build()));
+
+        assertThat(service.getActiveTemplate().getName()).isEqualTo("第一"); // ORDER BY id → findFirst
     }
 }

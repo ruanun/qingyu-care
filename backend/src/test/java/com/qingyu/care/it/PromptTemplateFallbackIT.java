@@ -1,9 +1,14 @@
 package com.qingyu.care.it;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.Application;
+import com.qingyu.care.entity.PromptTemplate;
+import com.qingyu.care.repository.PromptTemplateRepository;
 import com.qingyu.care.service.ModelRouterService;
+import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import com.qingyu.care.support.SpringAiResponses;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -13,6 +18,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -42,9 +48,20 @@ class PromptTemplateFallbackIT extends AbstractPostgresIT {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private PromptTemplateRepository promptTemplateRepository;
+
+    @Autowired
+    private PromptTemplateService promptTemplateService;
+
     /** 打桩模型路由，让对话在到达 buildMessages(prompt) 之后能返回固定回复，不触达真实 LLM。 */
     @MockitoBean
     private ModelRouterService modelRouterService;
+
+    @AfterEach
+    void 清理租户上下文() {
+        TenantContext.clear();
+    }
 
     @Test
     void 租户无自有模板时走对话端点应回退平台默认并成功() throws Exception {
@@ -63,5 +80,53 @@ class PromptTemplateFallbackIT extends AbstractPostgresIT {
                         .content("{\"message\":\"你好\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reply").value("MOCK_AI_REPLY"));
+    }
+
+    /**
+     * 平台管理员场景（无过滤器）：prompt_templates 表内同键（is_active=true）存在多个租户各
+     * 一行 + 一行平台默认，裸 findByIsActiveTrue 会因过滤器缺失同时看到全部行而
+     * NonUniqueResultException。修复后经 ConfigScopeResolver 按 X-App-Id 反查出应用 A 归属的
+     * 租户 T，用 findActiveScoped 显式收窄，必须解析到租户 T 自己的那一行——而非另一租户 T2
+     * 的同名行，也不是平台默认（验证「解析到正确租户」而非仅「不抛异常」，避免重蹈转人工
+     * 回退修复前的教训）。
+     */
+    @Test
+    void 平台管理员无过滤器_多租户同键行_精确解析到应用归属租户() {
+        Application appA = seedApp("prompt_scope_a", "http://it.example.com");
+        Long tenantT = appA.getTenant().getId();
+
+        // 另一租户 T2，同 is_active=true 键值，制造 NonUnique 触发条件
+        Application appB = seedApp("prompt_scope_b", "http://it.example.com");
+        Long tenantT2 = appB.getTenant().getId();
+
+        PromptTemplate ownT = PromptTemplate.builder()
+                .name("租户T自有模板")
+                .content("C-T")
+                .version(1)
+                .isActive(true)
+                .build();
+        ownT.setTenantId(tenantT);
+        ownT.setAppId(appA.getId());
+        promptTemplateRepository.saveAndFlush(ownT);
+
+        PromptTemplate ownT2 = PromptTemplate.builder()
+                .name("租户T2自有模板")
+                .content("C-T2")
+                .version(1)
+                .isActive(true)
+                .build();
+        ownT2.setTenantId(tenantT2);
+        ownT2.setAppId(appB.getId());
+        promptTemplateRepository.saveAndFlush(ownT2);
+
+        // 平台管理员：无租户上下文，仅带 X-App-Id（模拟平台管理员选中应用 A 后的会话态）
+        TenantContext.setTenantId(null);
+        TenantContext.setAppId(appA.getId());
+
+        PromptTemplate result = promptTemplateService.getActiveTemplate();
+
+        assertThat(result.getTenantId()).isEqualTo(tenantT);
+        assertThat(result.getName()).isEqualTo("租户T自有模板");
+        assertThat(result.getName()).isNotEqualTo("租户T2自有模板");
     }
 }

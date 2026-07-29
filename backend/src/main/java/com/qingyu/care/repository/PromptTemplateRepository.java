@@ -27,6 +27,14 @@ public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, 
     Optional<PromptTemplate> findPlatformDefaultActive();
 
     /**
+     * 显式按 (tenantId, appId) 收窄取激活模板——不依赖 Hibernate @Filter，
+     * 使平台管理员(过滤器绕过)也能确定性取到目标租户的激活模板。List + ORDER BY id 杜绝 NonUnique。
+     */
+    @Query("SELECT t FROM PromptTemplate t WHERE t.isActive = true "
+         + "AND t.tenantId = :tenantId AND (:appId IS NULL OR t.appId = :appId) ORDER BY t.id")
+    List<PromptTemplate> findActiveScoped(@Param("tenantId") Long tenantId, @Param("appId") Long appId);
+
+    /**
      * 获取所有版本，按版本号降序
      */
     List<PromptTemplate> findAllByOrderByVersionDesc();
