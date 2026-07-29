@@ -324,6 +324,17 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
+     * 纯方法：卡片能力开启（withCards 且 cardsEnabled）时把卡片指令片段追加到系统提示末尾，否则原样返回。
+     * static 免容器单测，同 appendSkillMarkdowns 惯例——让「开关生效」这条产出机制可被直接单测。
+     */
+    static String appendCardPrompt(String systemPrompt, boolean withCards, boolean cardsEnabled) {
+        if (!withCards || !cardsEnabled) {
+            return systemPrompt;
+        }
+        return systemPrompt + CARD_PROMPT;
+    }
+
+    /**
      * 纯方法：从 Spring AI 响应流中 tap 末尾 usage、映射为内容、结束时回调 total_tokens。
      * 无实例状态依赖（static），可在不启动 Spring 容器的单元测试中直接调用。
      *
@@ -679,9 +690,7 @@ public class ChatServiceImpl implements ChatService {
         systemPrompt = appendSkillMarkdowns(systemPrompt, skillMarkdowns);
         // 结构化卡片能力 Prompt 片段：仅 withCards=true（非流式 chat() 传入）且 config 开关开启时注入；
         // streamChat 恒传 withCards=false，绝不给流式回复引入卡片指令（流式卡片留 SP3）
-        if (withCards && cardsEnabled) {
-            systemPrompt = systemPrompt + CARD_PROMPT;
-        }
+        systemPrompt = appendCardPrompt(systemPrompt, withCards, cardsEnabled);
         messages.add(new SystemMessage(systemPrompt));
         
         // 历史消息

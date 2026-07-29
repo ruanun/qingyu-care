@@ -129,4 +129,20 @@ class ChatCardWiringTest {
         assertThat(aiMsg.getUiSpec()).contains("\"kind\"");
         assertThat(aiMsg.getContent()).doesNotContain("```spec");
     }
+
+    @Test
+    void appendCardPrompt_开启且withCards_追加卡片指令() {
+        String out = ChatServiceImpl.appendCardPrompt("系统提示", true, true);
+        assertThat(out).startsWith("系统提示").isNotEqualTo("系统提示");   // 追加了 CARD_PROMPT
+    }
+
+    @Test
+    void appendCardPrompt_cardsEnabled关_不追加() {
+        assertThat(ChatServiceImpl.appendCardPrompt("系统提示", true, false)).isEqualTo("系统提示");
+    }
+
+    @Test
+    void appendCardPrompt_非withCards流式路_不追加() {
+        assertThat(ChatServiceImpl.appendCardPrompt("系统提示", false, true)).isEqualTo("系统提示");
+    }
 }
