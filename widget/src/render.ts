@@ -21,6 +21,19 @@ function el(tag: string, className?: string): HTMLElement {
   return e;
 }
 
+/** 字段带标签的行容器：有 label 则「标签 + 控件」竖排，否则只返回控件。 */
+function wrapField(label: string, field: HTMLElement): HTMLElement {
+  if (!label) return field;
+  const wrap = document.createElement('div');
+  wrap.className = 'qy-field-row';
+  const lab = document.createElement('div');
+  lab.className = 'qy-field-label';
+  lab.textContent = label;
+  wrap.appendChild(lab);
+  wrap.appendChild(field);
+  return wrap;
+}
+
 /**
  * 纯 DOM 递归渲染单个 UiNode（SP1 registry.tsx 的 DOM 移植）。
  * 结构守卫：node 非对象/null、未知 type 一律返回 null（静默忽略、不抛、不阻断其余卡片）——fail-soft。
@@ -116,6 +129,71 @@ export function renderNode(
       const col = el('div', 'qy-col');
       renderKids(col);
       return col;
+    }
+    case 'input': {
+      const input = document.createElement('input');
+      input.className = 'qy-field qy-input';
+      input.type = 'text';
+      if (p.placeholder != null) input.placeholder = str(p.placeholder);
+      input.setAttribute('data-qy-field', str(p.name));
+      return wrapField(str(p.label), input);
+    }
+    case 'datetime': {
+      const input = document.createElement('input');
+      input.className = 'qy-field qy-input';
+      input.type = 'date';
+      input.setAttribute('data-qy-field', str(p.name));
+      return wrapField(str(p.label), input);
+    }
+    case 'checkbox': {
+      const input = document.createElement('input');
+      input.className = 'qy-field';
+      input.type = 'checkbox';
+      input.setAttribute('data-qy-field', str(p.name));
+      const label = el('label', 'qy-checkbox');
+      label.appendChild(input);
+      const span = document.createElement('span');
+      span.textContent = str(p.label ?? p.name);
+      label.appendChild(span);
+      return label;
+    }
+    case 'select': {
+      const sel = document.createElement('select');
+      sel.className = 'qy-field qy-select';
+      sel.setAttribute('data-qy-field', str(p.name));
+      const opts = Array.isArray(p.options) ? p.options : [];
+      for (const o of opts) {
+        const opt = document.createElement('option');
+        opt.value = str(o);
+        opt.textContent = str(o);
+        sel.appendChild(opt);
+      }
+      return wrapField(str(p.label), sel);
+    }
+    case 'form': {
+      const f = el('div', 'qy-form');
+      renderKids(f);
+      return f;
+    }
+    case 'submit': {
+      const btn = el('button', 'qy-form-submit');
+      (btn as HTMLButtonElement).type = 'button';
+      btn.textContent = str(p.label ?? '提交');
+      btn.addEventListener('click', () => {
+        const form = btn.closest('.qy-form');
+        if (!form) return;
+        const parts: string[] = [];
+        form.querySelectorAll('[data-qy-field]').forEach((f2) => {
+          const name = f2.getAttribute('data-qy-field') ?? '';
+          if (f2 instanceof HTMLInputElement && f2.type === 'checkbox') {
+            parts.push(`${name}: ${f2.checked ? '是' : '否'}`);
+          } else if (f2 instanceof HTMLInputElement || f2 instanceof HTMLSelectElement) {
+            parts.push(`${name}: ${(f2 as HTMLInputElement | HTMLSelectElement).value}`);
+          }
+        });
+        onAction(parts.join('\n'));
+      });
+      return btn;
     }
     default:
       return null; // 未知 type 忽略，不报错

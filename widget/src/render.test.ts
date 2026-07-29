@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderNode, safeUrl } from './render';
 import type { UiNode } from './api';
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
 
 describe('safeUrl', () => {
   it('放行 http/https', () => {
@@ -70,5 +74,45 @@ describe('renderNode 渲染与 XSS', () => {
     const el2 = renderNode({ type: 'button', props: { label: '仅label' } }, onAction)!;
     el2.dispatchEvent(new Event('click'));
     expect(onAction).toHaveBeenLastCalledWith('仅label');
+  });
+});
+
+describe('表单组件', () => {
+  it('form 提交组装字段值为文本走 onAction', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '姓名' } },
+      { type: 'select', props: { name: '日期', options: ['今天', '明天'] } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('[data-qy-field="姓名"]') as HTMLInputElement).value = '张三';
+    const sel = form.querySelector('[data-qy-field="日期"]') as HTMLSelectElement;
+    sel.value = '明天';
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    const sent = onAction.mock.calls[0][0] as string;
+    expect(sent).toContain('姓名');
+    expect(sent).toContain('张三');
+    expect(sent).toContain('日期');
+    expect(sent).toContain('明天');
+    document.body.removeChild(form);
+  });
+
+  it('checkbox 勾选反映在组装文本', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'checkbox', props: { name: '同意', label: '同意条款' } },
+      { type: 'submit', props: { label: 'ok' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('[data-qy-field="同意"]') as HTMLInputElement).checked = true;
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction.mock.calls[0][0]).toContain('同意');
+    document.body.removeChild(form);
+  });
+
+  it('孤立 input（无 form）渲染不崩', () => {
+    expect(renderNode({ type: 'input', props: { name: 'x' } }, () => {})).not.toBeNull();
   });
 });
