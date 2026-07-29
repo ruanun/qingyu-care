@@ -83,8 +83,10 @@ public class ChatSession extends BaseTenantEntity {
      * 达到 NO_HIT_STREAK 转人工规则阈值时建议转人工。
      * @Builder.Default 必需：否则 @Builder 会忽略字段初始值，builder().build() 未显式设置时留 null，
      * 后续 getNoHitStreak() + 1 拆箱 NPE（同 tags 字段惯例）。
+     * 列可空（不加 nullable=false）：ddl-auto:update 在已有存量行的表上加 NOT NULL 列会失败；
+     * 存量行读回为 null，消费侧（ChatServiceImpl）已 null 归 0 兜底。
      */
-    @Column(name = "no_hit_streak", nullable = false)
+    @Column(name = "no_hit_streak")
     @Builder.Default
     private Integer noHitStreak = 0;
 

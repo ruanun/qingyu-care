@@ -184,8 +184,10 @@ public class ChatServiceImpl implements ChatService {
                 .orElse(0.0);
 
         // 连续未命中转人工：本轮是否未命中知识库 → 更新会话连续未命中计数（命中归 0），显式落库
+        // 存量行（加列前创建）读回 no_hit_streak 可能为 null，null 归 0 兜底防拆箱 NPE
         boolean noHit = relevantDocs.isEmpty();
-        session.setNoHitStreak(noHit ? session.getNoHitStreak() + 1 : 0);
+        int currentStreak = session.getNoHitStreak() == null ? 0 : session.getNoHitStreak();
+        session.setNoHitStreak(noHit ? currentStreak + 1 : 0);
         sessionRepository.save(session);
         // 达阈值建议转人工（getNoHitStreakThreshold 禁用时返 Integer.MAX_VALUE，天然不触发）
         boolean noHitStreakHandover = noHit
