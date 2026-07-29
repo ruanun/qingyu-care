@@ -108,9 +108,12 @@ async function init(): Promise<void> {
   // 再建 inbox 长连接，避免用户在再次发消息前收不到坐席实时回复；
   // 会话若已过期或补拉失败，getSession 静默返回 null，照常走 ensureInbox（connectSse 会自行退避重连）。
   if (sessionId) {
+    // 本地已有 sessionId 即代表老用户此前交互过，欢迎语此时展示本就不合理：
+    // 在 await getSession 网络往返之前就乐观抑制首开欢迎，避免"面板已可点开但 markOpened 未执行"的竞态窗口
+    // （用户在等待窗口内点开面板会先插欢迎语、随后历史消息追加其后，导致「先欢迎后历史」错位）。
+    ui.markOpened();
     const restored = await api.getSession(sessionId);
-    if (restored && restored.messages?.length) {
-      ui.markOpened(); // 已有历史，视为已开场，打开面板不再插欢迎语
+    if (restored && restored.messages.length) {
       restoreHistory(ui, restored.messages);
     }
     ensureInbox(sessionId);
