@@ -1,9 +1,13 @@
 package com.qingyu.care.dto.open;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.dto.UiPart;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import lombok.Builder;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,6 +19,7 @@ import java.util.List;
  */
 @Data
 @Builder
+@Slf4j
 public class OpenSessionResponse {
 
     /**
@@ -56,7 +61,7 @@ public class OpenSessionResponse {
         /**
          * 结构化卡片片段：历史 ASSISTANT 消息含卡片时非空，由 ui_spec 反序列化而来（fail-soft，解析失败为 null）。
          */
-        private java.util.List<com.qingyu.care.dto.UiPart> uiParts;
+        private List<UiPart> uiParts;
     }
 
     /**
@@ -65,7 +70,7 @@ public class OpenSessionResponse {
      * 均调用 .name() 转为字符串暴露给外部。
      */
     public static OpenSessionResponse of(ChatSession session, List<ChatMessage> messages,
-                                         com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper) {
         return OpenSessionResponse.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus() != null ? session.getStatus().name() : null)
@@ -81,15 +86,15 @@ public class OpenSessionResponse {
     }
 
     /** 反序列化 ui_spec JSON 为 uiParts；空/非法一律返回 null（fail-soft，历史卡片解析失败不阻断会话恢复）。 */
-    private static List<com.qingyu.care.dto.UiPart> parseUiParts(
-            String uiSpec, com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+    private static List<UiPart> parseUiParts(String uiSpec, ObjectMapper objectMapper) {
         if (uiSpec == null || uiSpec.isBlank()) {
             return null;
         }
         try {
-            return objectMapper.readValue(uiSpec,
-                    new com.fasterxml.jackson.core.type.TypeReference<List<com.qingyu.care.dto.UiPart>>() {});
+            return objectMapper.readValue(uiSpec, new TypeReference<List<UiPart>>() {});
         } catch (Exception e) {
+            // fail-soft：解析失败该条消息不渲染卡片，不阻断整个会话恢复；记 warn 供运维排查（如 schema 漂移）
+            log.warn("历史消息 ui_spec 反序列化失败，该条不渲染卡片: {}", e.getMessage());
             return null;
         }
     }
