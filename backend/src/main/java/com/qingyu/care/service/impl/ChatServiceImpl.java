@@ -182,7 +182,15 @@ public class ChatServiceImpl implements ChatService {
                 .mapToDouble(ChatServiceImpl::resolveConfidenceScore)
                 .max()
                 .orElse(0.0);
-        
+
+        // 连续未命中转人工：本轮是否未命中知识库 → 更新会话连续未命中计数（命中归 0），显式落库
+        boolean noHit = relevantDocs.isEmpty();
+        session.setNoHitStreak(noHit ? session.getNoHitStreak() + 1 : 0);
+        sessionRepository.save(session);
+        // 达阈值建议转人工（getNoHitStreakThreshold 禁用时返 Integer.MAX_VALUE，天然不触发）
+        boolean noHitStreakHandover = noHit
+                && session.getNoHitStreak() >= handoverRuleService.getNoHitStreakThreshold();
+
         // 如果知识库未命中且不允许自由发挥（兜底回复也落库：fallback 标记 + messageId 回传）
         if (relevantDocs.isEmpty() && Boolean.FALSE.equals(strategy.getAllowNoKnowledge())) {
             ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
@@ -192,7 +200,7 @@ public class ChatServiceImpl implements ChatService {
                     .messageId(fallbackMsg.getId())
                     .content(strategy.getFallbackMessage())
                     .confidenceScore(0.0)
-                    .suggestHandover(false)
+                    .suggestHandover(noHitStreakHandover)
                     .knowledgeHits(List.of())
                     .build();
         }
@@ -248,7 +256,7 @@ public class ChatServiceImpl implements ChatService {
                 .uiParts(parsed.uiParts())
                 .confidenceScore(maxScore)
                 .tokenUsage(tokenUsage)
-                .suggestHandover(handoverRuleService.checkLowConfidenceTrigger(maxScore))
+                .suggestHandover(handoverRuleService.checkLowConfidenceTrigger(maxScore) || noHitStreakHandover)
                 .knowledgeHits(relevantDocs.stream()
                         .map(doc -> ChatResponse.KnowledgeHit.builder()
                                 .content(truncateContent(doc.getText(), 100))
