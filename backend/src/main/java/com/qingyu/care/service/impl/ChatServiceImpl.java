@@ -109,6 +109,7 @@ public class ChatServiceImpl implements ChatService {
             表单类（收集用户输入）：form（表单容器）、input（文本框，props.name/props.label/props.placeholder）、
             select（下拉，props.name/props.label/props.options 数组）、checkbox（勾选，props.name/props.label）、
             datetime（日期，props.name/props.label）、submit（提交按钮，props.label）。
+            表单内各字段的 name 必须唯一（作为字段标识与提交时的键）。
             表单示例：
             ```spec
             {"type":"form","children":[

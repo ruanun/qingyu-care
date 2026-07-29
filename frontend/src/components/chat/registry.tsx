@@ -65,7 +65,7 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
     <div className="my-2 flex flex-col gap-2">
       {fields.map((f, i) => (
         <div key={i} className="flex flex-col gap-1">
-          {f.label ? <span className="text-xs text-muted-foreground">{f.label}</span> : null}
+          {f.label && f.type !== 'checkbox' ? <span className="text-xs text-muted-foreground">{f.label}</span> : null}
           {f.type === 'checkbox' ? (
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
