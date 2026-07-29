@@ -15,12 +15,28 @@ export interface WidgetBrand {
   themeColor: string;
 }
 
+/** 结构化卡片 UI 节点（镜像后端 UiNode）。 */
+export interface UiNode {
+  type: string;
+  props?: Record<string, unknown>;
+  children?: UiNode[];
+}
+
+/** 有序回复片段：text（纯文本）或 ui（卡片节点）（镜像后端 UiPart）。 */
+export interface UiPart {
+  kind: string;
+  text?: string | null;
+  node?: UiNode | null;
+}
+
 export interface ChatReply {
   sessionId: string;
   reply: string;
   handoverSuggested: boolean;
   /** AI 消息 ID（提交赞/踩时使用；后端旧版本可能缺省） */
   messageId?: number;
+  /** 结构化卡片片段（后端旧版本可能缺省）；有 ui 片段时按序渲染，否则回退 reply 纯文本 */
+  uiParts?: UiPart[];
 }
 
 /** 断线补拉会话响应：会话状态 + 消息历史（对应后端 OpenSessionResponse） */
