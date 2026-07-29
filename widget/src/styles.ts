@@ -49,5 +49,21 @@ export function buildStyles(themeColor: string): string {
     @media (max-width: 480px) {
       .qy-panel { right: 0; bottom: 0; width: 100vw; height: 100vh; border-radius: 0; }
     }
+    .qy-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin:6px 0; background:#fff; }
+    .qy-card-title { font-weight:600; margin-bottom:6px; }
+    .qy-card-body { display:flex; flex-direction:column; gap:4px; }
+    .qy-node-text { font-size:14px; }
+    .qy-emph { font-weight:600; }
+    .qy-kv { display:flex; justify-content:space-between; font-size:13px; gap:8px; }
+    .qy-kv-label { color:#6b7280; }
+    .qy-badge { display:inline-block; padding:1px 8px; border-radius:9999px; background:#f3f4f6; color:#374151; font-size:12px; }
+    .qy-divider { height:1px; background:#e5e7eb; margin:6px 0; }
+    .qy-node-img { max-width:100%; border-radius:6px; }
+    .qy-card-btn { margin:4px 6px 0 0; padding:4px 10px; border:1px solid ${themeColor}; color:${themeColor}; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
+    .qy-card-btn:hover { background:${themeColor}; color:#fff; }
+    .qy-actions { display:flex; flex-wrap:wrap; }
+    .qy-list { margin:4px 0; padding-left:18px; }
+    .qy-row { display:flex; gap:8px; }
+    .qy-col { display:flex; flex-direction:column; gap:4px; }
   `;
 }

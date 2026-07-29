@@ -77,6 +77,7 @@ async function init(): Promise<void> {
     onSend: (message) => void handleSend(message),
     onHandover: () => void handleHandover(),
     onTyping: () => reportTyping(),
+    onAction: (value) => void handleSend(value),
   });
 
   // 刷新页面后若本地已恢复会话（可能已被坐席接管），立即建 inbox 长连接，
@@ -97,6 +98,7 @@ async function init(): Promise<void> {
         mid
           ? { onFeedback: (v) => void api.feedback(reply.sessionId, mid, v) }
           : undefined,
+        reply.uiParts,
       );
     } catch (e) {
       ui.setTyping(false);
