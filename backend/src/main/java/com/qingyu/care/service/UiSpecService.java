@@ -55,6 +55,7 @@ public class UiSpecService {
         }
         String after = raw.substring(last);   // 含未闭合围栏残余 → 当文本，fail-soft
         if (!after.isBlank()) { parts.add(UiPart.text(after)); plain.append(after); }
+        // 输入整体空白(无文本无围栏)时的兜底:保证 uiParts 至少含一个片段,非死代码
         if (parts.isEmpty()) { parts.add(UiPart.text(raw)); plain.append(raw); }
         return new ParseResult(parts, plain.toString().trim());
     }

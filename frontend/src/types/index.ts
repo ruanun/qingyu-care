@@ -15,7 +15,7 @@ export interface PageResponse<T> {
 
 export type SessionStatus = 'AI_PROCESSING' | 'AGENT_PROCESSING' | 'WAITING_AGENT' | 'ENDED' | 'TIMEOUT';
 export type SessionTag = 'PRE_SALES' | 'AFTER_SALES' | 'COMPLAINT' | 'TECH_SUPPORT' | 'OTHER';
-export type MessageRole = 'USER' | 'ASSISTANT' | 'SYSTEM';
+export type MessageRole = 'USER' | 'ASSISTANT' | 'SYSTEM' | 'AGENT';
 export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'DISABLED';
 
 export interface ChatSession {

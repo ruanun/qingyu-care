@@ -189,6 +189,7 @@ export function renderNode(
         const parts: string[] = [];
         form.querySelectorAll('[data-qy-field]').forEach((f2) => {
           const name = f2.getAttribute('data-qy-field') ?? '';
+          if (!name) return; // 空 name 字段无法在提交文本里定位，跳过不收集
           if (f2 instanceof HTMLInputElement && f2.type === 'checkbox') {
             parts.push(`${name}: ${f2.checked ? '是' : '否'}`);
           } else if (f2 instanceof HTMLInputElement || f2 instanceof HTMLSelectElement) {

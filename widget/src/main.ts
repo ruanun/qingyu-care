@@ -51,7 +51,9 @@ async function init(): Promise<void> {
       } catch {
         return; // 非法负载忽略，不影响对话
       }
-      if (event === 'message' && p.role === 'ASSISTANT') {
+      // 坐席消息目前后端标 role=ASSISTANT，但 MessageRole 枚举本有 AGENT；
+      // 两者都当坐席消息渲染，防止后端未来切换标注值时客户端静默丢消息。
+      if (event === 'message' && (p.role === 'ASSISTANT' || p.role === 'AGENT')) {
         ui.addAgentMessage(p.content);
       } else if (event === 'session') {
         ui.showSessionState(p.text || sessionStateText(p.kind));

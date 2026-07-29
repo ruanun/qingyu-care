@@ -28,6 +28,10 @@ export function connectSse(
           headers: { 'X-App-Id': appKey, Accept: 'text/event-stream' },
           signal: controller.signal,
         });
+        if (resp.status === 401 || resp.status === 403) {
+          closed = true;                 // 鉴权失败不可恢复,停止重连(widget 无错误回调,静默停)
+          return;
+        }
         if (!resp.ok || !resp.body) throw new Error('SSE ' + resp.status);
         retry = 0;
         const reader = resp.body.getReader();

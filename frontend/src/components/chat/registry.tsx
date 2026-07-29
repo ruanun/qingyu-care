@@ -29,7 +29,9 @@ function collectFields(node: UiNode): Field[] {
     if (!c || typeof c !== 'object') continue;
     if (['input', 'select', 'checkbox', 'datetime'].includes(c.type)) {
       const p = c.props ?? {};
-      out.push({ type: c.type, name: str(p.name), label: p.label ? str(p.label) : undefined,
+      const nm = str(p.name);
+      if (nm === '') continue; // 空 name 字段无法在提交文本里定位，直接跳过不收集
+      out.push({ type: c.type, name: nm, label: p.label ? str(p.label) : undefined,
                  placeholder: p.placeholder ? str(p.placeholder) : undefined,
                  options: Array.isArray(p.options) ? p.options.map(str) : undefined });
     }
@@ -47,15 +49,17 @@ function collectFields(node: UiNode): Field[] {
 // eslint-disable-next-line react-refresh/only-export-components
 function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => void }) {
   const fields = collectFields(node);
-  const [values, setValues] = useState<Record<string, string | boolean>>({});
+  // state key 用字段索引而非 f.name：同名字段（模型偶发吐出重复 name）用 name 作 key 会共享一个
+  // state 槽位、互相镜像输入值，改用索引彻底隔离；提交组装文本时仍用 f.name（对外语义不变）。
+  const [values, setValues] = useState<Record<number, string | boolean>>({});
   const submitLabel = (() => {
     const s = (Array.isArray(node.children) ? node.children : []).find((c) => c?.type === 'submit');
     return s?.props?.label ? str(s.props.label) : '提交';
   })();
-  const set = (name: string, v: string | boolean) => setValues((prev) => ({ ...prev, [name]: v }));
+  const set = (i: number, v: string | boolean) => setValues((prev) => ({ ...prev, [i]: v }));
   const submit = () => {
-    const parts = fields.map((f) => {
-      const v = values[f.name];
+    const parts = fields.map((f, i) => {
+      const v = values[i];
       const shown = f.type === 'checkbox' ? (v ? '是' : '否') : str(v ?? '');
       return `${f.name}: ${shown}`;
     });
@@ -68,17 +72,17 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
           {f.label && f.type !== 'checkbox' ? <span className="text-xs text-muted-foreground">{f.label}</span> : null}
           {f.type === 'checkbox' ? (
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
+              <input type="checkbox" checked={!!values[i]} onChange={(e) => set(i, e.target.checked)} />
               <span>{f.label ?? f.name}</span>
             </label>
           ) : f.type === 'select' ? (
-            <select className="border rounded px-2 py-1 text-sm" value={str(values[f.name] ?? '')} onChange={(e) => set(f.name, e.target.value)}>
+            <select className="border rounded px-2 py-1 text-sm" value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)}>
               <option value=""></option>
               {(f.options ?? []).map((o, j) => <option key={j} value={o}>{o}</option>)}
             </select>
           ) : (
             <input type={f.type === 'datetime' ? 'date' : 'text'} className="border rounded px-2 py-1 text-sm"
-                   placeholder={f.placeholder} value={str(values[f.name] ?? '')} onChange={(e) => set(f.name, e.target.value)} />
+                   placeholder={f.placeholder} value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)} />
           )}
         </div>
       ))}
@@ -101,7 +105,7 @@ export function renderNode(node: UiNode, onAction: (value: string) => void, key:
     case 'card':
       return (
         <Card key={key} className="my-2">
-          {p.title ? <CardHeader><CardTitle>{str(p.title)}</CardTitle></CardHeader> : null}
+          {p.title != null && str(p.title) !== '' ? <CardHeader><CardTitle>{str(p.title)}</CardTitle></CardHeader> : null}
           <CardContent className="space-y-1">{kids}</CardContent>
         </Card>
       );
