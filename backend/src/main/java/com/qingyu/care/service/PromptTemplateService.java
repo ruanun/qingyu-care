@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.PromptTemplate;
@@ -32,8 +33,7 @@ public class PromptTemplateService {
     @PostConstruct
     @Transactional
     public void init() {
-        if (repository.count() == 0) {
-            log.info("Initializing default prompt template...");
+        PlatformSeeder.seedIfEmpty(repository.count(), "Prompt 模板", () -> {
             PromptTemplate template = PromptTemplate.builder()
                     .name("default")
                     .content(defaultTemplate)
@@ -42,8 +42,7 @@ public class PromptTemplateService {
                     .description("系统默认模板")
                     .build();
             repository.save(template);
-            log.info("Default prompt template created");
-        }
+        });
     }
 
     /**

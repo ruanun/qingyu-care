@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.ChatStrategy;
@@ -36,9 +37,7 @@ public class ChatStrategyService {
     @PostConstruct
     @Transactional
     public void init() {
-        if (repository.count() == 0) {
-            log.info("Initializing default chat strategies...");
-            
+        PlatformSeeder.seedIfEmpty(repository.count(), "问答策略", () -> {
             // 默认场景策略
             repository.save(ChatStrategy.builder()
                     .name("通用默认策略")
@@ -67,9 +66,7 @@ public class ChatStrategyService {
                     .keywordTopK(10)
                     .rrfK(60)
                     .build());
-
-            log.info("Default chat strategies initialized");
-        }
+        });
     }
 
     /**
