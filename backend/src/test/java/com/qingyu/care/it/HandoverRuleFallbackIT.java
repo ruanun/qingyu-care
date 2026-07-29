@@ -7,14 +7,17 @@ import com.qingyu.care.enums.HandoverRuleType;
 import com.qingyu.care.repository.HandoverRuleRepository;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.support.AbstractPostgresIT;
+import com.qingyu.care.util.SecurityUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mockStatic;
 
 /**
  * 转人工触发规则平台默认回退（真库）：验证租户上下文下，三个运行时触发读取
@@ -136,9 +139,16 @@ class HandoverRuleFallbackIT extends AbstractPostgresIT {
         TenantContext.setTenantId(null);
         TenantContext.setAppId(appA.getId());
 
-        // 命中租户 T 自有规则关键词「退货」，不抛 NonUniqueResultException
-        assertThat(handoverRuleService.checkKeywordTrigger("我要退货")).isTrue();
-        // 租户 T2 的关键词「退款」不应被命中——证明解析到的确实是租户 T 的规则而非误配/合并
-        assertThat(handoverRuleService.checkKeywordTrigger("我要退款")).isFalse();
+        // ConfigScopeResolver.resolve() 新增了 SecurityUtil.isPlatformAdmin() 守卫，只有真正
+        // 平台管理员登录（Sa-Token 会话）才会触发按 X-App-Id 反查归属租户；本用例未真实登录，
+        // 用 mockStatic 忠实模拟"平台管理员"这一前提，让反查得以发生（与 ReembedServiceTest 同款用法）。
+        try (MockedStatic<SecurityUtil> secMock = mockStatic(SecurityUtil.class)) {
+            secMock.when(SecurityUtil::isPlatformAdmin).thenReturn(true);
+
+            // 命中租户 T 自有规则关键词「退货」，不抛 NonUniqueResultException
+            assertThat(handoverRuleService.checkKeywordTrigger("我要退货")).isTrue();
+            // 租户 T2 的关键词「退款」不应被命中——证明解析到的确实是租户 T 的规则而非误配/合并
+            assertThat(handoverRuleService.checkKeywordTrigger("我要退款")).isFalse();
+        }
     }
 }

@@ -8,9 +8,11 @@ import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import com.qingyu.care.support.SpringAiResponses;
+import com.qingyu.care.util.SecurityUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -19,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mockStatic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -152,10 +155,17 @@ class ChatStrategyFallbackIT extends AbstractPostgresIT {
         TenantContext.setTenantId(null);
         TenantContext.setAppId(appA.getId());
 
-        ChatStrategy result = chatStrategyService.getActiveStrategy("default");
+        // ConfigScopeResolver.resolve() 新增了 SecurityUtil.isPlatformAdmin() 守卫，只有真正
+        // 平台管理员登录（Sa-Token 会话）才会触发按 X-App-Id 反查归属租户；本用例未真实登录，
+        // 用 mockStatic 忠实模拟"平台管理员"这一前提，让反查得以发生（与 ReembedServiceTest 同款用法）。
+        try (MockedStatic<SecurityUtil> secMock = mockStatic(SecurityUtil.class)) {
+            secMock.when(SecurityUtil::isPlatformAdmin).thenReturn(true);
 
-        assertThat(result.getTenantId()).isEqualTo(tenantT);
-        assertThat(result.getName()).isEqualTo("租户T自有默认策略");
-        assertThat(result.getName()).isNotEqualTo("租户T2自有默认策略");
+            ChatStrategy result = chatStrategyService.getActiveStrategy("default");
+
+            assertThat(result.getTenantId()).isEqualTo(tenantT);
+            assertThat(result.getName()).isEqualTo("租户T自有默认策略");
+            assertThat(result.getName()).isNotEqualTo("租户T2自有默认策略");
+        }
     }
 }
