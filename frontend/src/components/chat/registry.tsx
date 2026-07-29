@@ -20,7 +20,7 @@ function str(v: unknown): string {
   return v == null ? '' : String(v);
 }
 
-interface Field { type: string; name: string; label?: string; placeholder?: string; options?: string[]; }
+interface Field { type: string; name: string; label?: string; placeholder?: string; options?: string[]; required: boolean; }
 
 /** 从 form 节点的 children 里提取字段定义（input/select/checkbox/datetime），忽略其余子节点。 */
 function collectFields(node: UiNode): Field[] {
@@ -33,7 +33,8 @@ function collectFields(node: UiNode): Field[] {
       if (nm === '') continue; // 空 name 字段无法在提交文本里定位，直接跳过不收集
       out.push({ type: c.type, name: nm, label: p.label ? str(p.label) : undefined,
                  placeholder: p.placeholder ? str(p.placeholder) : undefined,
-                 options: Array.isArray(p.options) ? p.options.map(str) : undefined });
+                 options: Array.isArray(p.options) ? p.options.map(str) : undefined,
+                 required: p.required === true });
     }
   }
   return out;
@@ -52,12 +53,31 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
   // state key 用字段索引而非 f.name：同名字段（模型偶发吐出重复 name）用 name 作 key 会共享一个
   // state 槽位、互相镜像输入值，改用索引彻底隔离；提交组装文本时仍用 f.name（对外语义不变）。
   const [values, setValues] = useState<Record<number, string | boolean>>({});
+  // 必填校验的错误标记：key 为 fields 索引，true 表示该字段未通过必填校验（submit 时计算，输入时不清除单个字段，整体重新校验后刷新）。
+  const [errors, setErrors] = useState<Record<number, boolean>>({});
   const submitLabel = (() => {
     const s = (Array.isArray(node.children) ? node.children : []).find((c) => c?.type === 'submit');
     return s?.props?.label ? str(s.props.label) : '提交';
   })();
   const set = (i: number, v: string | boolean) => setValues((prev) => ({ ...prev, [i]: v }));
   const submit = () => {
+    // 必填校验：text/select/datetime 按 trim 后是否为空判断，checkbox 按是否勾选判断；未通过的字段索引记入 errors 并中止提交。
+    const nextErrors: Record<number, boolean> = {};
+    let hasError = false;
+    fields.forEach((f, i) => {
+      if (!f.required) return;
+      const v = values[i];
+      const invalid = f.type === 'checkbox' ? !v : str(v ?? '').trim() === '';
+      if (invalid) {
+        nextErrors[i] = true;
+        hasError = true;
+      }
+    });
+    if (hasError) {
+      setErrors(nextErrors);
+      return;
+    }
+    setErrors({});
     const parts = fields.map((f, i) => {
       const v = values[i];
       const shown = f.type === 'checkbox' ? (v ? '是' : '否') : str(v ?? '');
@@ -67,25 +87,32 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
   };
   return (
     <div className="my-2 flex flex-col gap-2">
-      {fields.map((f, i) => (
-        <div key={i} className="flex flex-col gap-1">
-          {f.label && f.type !== 'checkbox' ? <span className="text-xs text-muted-foreground">{f.label}</span> : null}
-          {f.type === 'checkbox' ? (
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={!!values[i]} onChange={(e) => set(i, e.target.checked)} />
-              <span>{f.label ?? f.name}</span>
-            </label>
-          ) : f.type === 'select' ? (
-            <select className="border rounded px-2 py-1 text-sm" value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)}>
-              <option value=""></option>
-              {(f.options ?? []).map((o, j) => <option key={j} value={o}>{o}</option>)}
-            </select>
-          ) : (
-            <input type={f.type === 'datetime' ? 'date' : 'text'} className="border rounded px-2 py-1 text-sm"
-                   placeholder={f.placeholder} value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)} />
-          )}
-        </div>
-      ))}
+      {fields.map((f, i) => {
+        const invalid = !!errors[i];
+        return (
+          <div key={i} className="flex flex-col gap-1">
+            {f.label && f.type !== 'checkbox' ? (
+              <span className="text-xs text-muted-foreground">{f.label}{f.required ? ' *' : ''}</span>
+            ) : null}
+            {f.type === 'checkbox' ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={!!values[i]} onChange={(e) => set(i, e.target.checked)} />
+                <span>{f.label ?? f.name}{f.required ? ' *' : ''}</span>
+              </label>
+            ) : f.type === 'select' ? (
+              <select className={`border rounded px-2 py-1 text-sm ${invalid ? 'border-red-500' : ''}`}
+                      value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)}>
+                <option value=""></option>
+                {(f.options ?? []).map((o, j) => <option key={j} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <input type={f.type === 'datetime' ? 'date' : 'text'} className={`border rounded px-2 py-1 text-sm ${invalid ? 'border-red-500' : ''}`}
+                     placeholder={f.placeholder} value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)} />
+            )}
+            {invalid ? <span className="text-xs text-red-500">必填</span> : null}
+          </div>
+        );
+      })}
       <Button size="sm" className="self-start" onClick={submit}>{submitLabel}</Button>
     </div>
   );

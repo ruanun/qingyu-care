@@ -116,3 +116,89 @@ describe('表单组件', () => {
     expect(renderNode({ type: 'input', props: { name: 'x' } }, () => {})).not.toBeNull();
   });
 });
+
+describe('表单必填校验', () => {
+  it('required 字段为空时 submit 不触发 onAction，且该字段被标记 qy-field-invalid', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '姓名', label: '姓名', required: true } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction).not.toHaveBeenCalled();
+    const input = form.querySelector('[data-qy-field="姓名"]') as HTMLInputElement;
+    expect(input.classList.contains('qy-field-invalid')).toBe(true);
+    document.body.removeChild(form);
+  });
+
+  it('required 字段仅空白字符也视为未填', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '姓名', required: true } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('[data-qy-field="姓名"]') as HTMLInputElement).value = '   ';
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction).not.toHaveBeenCalled();
+    document.body.removeChild(form);
+  });
+
+  it('required checkbox 未勾选时 submit 不触发 onAction', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'checkbox', props: { name: '同意', label: '同意条款', required: true } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction).not.toHaveBeenCalled();
+    const checkbox = form.querySelector('[data-qy-field="同意"]') as HTMLInputElement;
+    expect(checkbox.classList.contains('qy-field-invalid')).toBe(true);
+    document.body.removeChild(form);
+  });
+
+  it('required 字段填写/勾选后 submit 正常触发 onAction，且清除 invalid 标记', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '姓名', required: true } },
+      { type: 'checkbox', props: { name: '同意', required: true } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    const submitBtn = form.querySelector('.qy-form-submit') as HTMLButtonElement;
+    // 先触发一次失败，产生 invalid 标记
+    submitBtn.dispatchEvent(new Event('click'));
+    expect(onAction).not.toHaveBeenCalled();
+    // 补全必填项后重试
+    (form.querySelector('[data-qy-field="姓名"]') as HTMLInputElement).value = '张三';
+    (form.querySelector('[data-qy-field="同意"]') as HTMLInputElement).checked = true;
+    submitBtn.dispatchEvent(new Event('click'));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction.mock.calls[0][0]).toContain('姓名: 张三');
+    expect(onAction.mock.calls[0][0]).toContain('同意: 是');
+    const input = form.querySelector('[data-qy-field="姓名"]') as HTMLInputElement;
+    expect(input.classList.contains('qy-field-invalid')).toBe(false);
+    document.body.removeChild(form);
+  });
+
+  it('非必填字段为空不阻止 submit', () => {
+    const onAction = vi.fn();
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '备注' } },
+      { type: 'submit', props: { label: '提交' } },
+    ]}, onAction)!;
+    document.body.appendChild(form);
+    (form.querySelector('.qy-form-submit') as HTMLButtonElement).dispatchEvent(new Event('click'));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    document.body.removeChild(form);
+  });
+
+  it('label 渲染必填星号', () => {
+    const form = renderNode({ type: 'form', children: [
+      { type: 'input', props: { name: '姓名', label: '姓名', required: true } },
+    ]}, () => {})!;
+    expect(form.textContent).toContain('姓名 *');
+  });
+});

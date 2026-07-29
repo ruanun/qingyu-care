@@ -106,14 +106,14 @@ public class ChatServiceImpl implements ChatService {
               {"type":"actions","children":[{"type":"button","props":{"label":"查看物流","value":"查询订单10086物流"}}]}
             ]}
             ```
-            表单类（收集用户输入）：form（表单容器）、input（文本框，props.name/props.label/props.placeholder）、
-            select（下拉，props.name/props.label/props.options 数组）、checkbox（勾选，props.name/props.label）、
-            datetime（日期，props.name/props.label）、submit（提交按钮，props.label）。
+            表单类（收集用户输入）：form（表单容器）、input（文本框，props.name/props.label/props.placeholder，可选 props.required=true 标记必填，用户未填/未勾则无法提交）、
+            select（下拉，props.name/props.label/props.options 数组，可选 props.required=true）、checkbox（勾选，props.name/props.label，可选 props.required=true 表示必须勾选）、
+            datetime（日期，props.name/props.label，可选 props.required=true）、submit（提交按钮，props.label）。
             表单内各字段的 name 必须唯一（作为字段标识与提交时的键）。
             表单示例：
             ```spec
             {"type":"form","children":[
-              {"type":"input","props":{"name":"姓名","label":"您的姓名"}},
+              {"type":"input","props":{"name":"姓名","label":"您的姓名","required":true}},
               {"type":"select","props":{"name":"日期","label":"预约日期","options":["今天","明天"]}},
               {"type":"submit","props":{"label":"提交预约"}}
             ]}
