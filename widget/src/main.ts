@@ -1,10 +1,9 @@
 import { resolveConfig } from './config';
 import { createApi, SessionExpiredError } from './api';
-import type { OpenSessionResponse } from './api';
 import { loadSession, saveSession, clearSession } from './session';
 import { mountUi } from './ui';
-import type { WidgetUi } from './ui';
 import { connectSse } from './sse';
+import { restoreHistory } from './history';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
 function sessionStateText(kind: string): string {
@@ -19,28 +18,6 @@ function sessionStateText(kind: string): string {
       return '正在为您转接人工…';
     default:
       return '';
-  }
-}
-
-/** 恢复历史消息到 UI（各角色分派；ASSISTANT 带历史卡片 uiParts）。历史消息不带反馈（避免重复计量/messageId 缺失）。 */
-export function restoreHistory(ui: WidgetUi, messages: OpenSessionResponse['messages']): void {
-  for (const m of messages) {
-    switch (m.role) {
-      case 'USER':
-        ui.addUserMessage(m.content);
-        break;
-      case 'ASSISTANT':
-        ui.addBotMessage(m.content, undefined, m.uiParts);
-        break;
-      case 'AGENT':
-        ui.addAgentMessage(m.content);
-        break;
-      case 'SYSTEM':
-        ui.showSessionState(m.content);
-        break;
-      default:
-        break; // 未知角色忽略
-    }
   }
 }
 

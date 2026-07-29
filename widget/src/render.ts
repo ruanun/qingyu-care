@@ -132,7 +132,7 @@ export function renderNode(
     }
     case 'input': {
       const input = document.createElement('input');
-      input.className = 'qy-field qy-input';
+      input.className = 'qy-field qy-form-input';
       input.type = 'text';
       if (p.placeholder != null) input.placeholder = str(p.placeholder);
       input.setAttribute('data-qy-field', str(p.name));
@@ -140,7 +140,7 @@ export function renderNode(
     }
     case 'datetime': {
       const input = document.createElement('input');
-      input.className = 'qy-field qy-input';
+      input.className = 'qy-field qy-form-input';
       input.type = 'date';
       input.setAttribute('data-qy-field', str(p.name));
       return wrapField(str(p.label), input);

@@ -2,7 +2,7 @@
  * @author ruan
  */
 import { describe, it, expect, vi } from 'vitest';
-import { restoreHistory } from './main';
+import { restoreHistory } from './history';
 import type { WidgetUi } from './ui';
 
 function fakeUi() {
