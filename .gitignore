@@ -40,6 +40,3 @@ test-output/
 
 # 参考项目目录（仅本地参考，不纳入版本控制）
 /references/
-
-# 架构图工具产物（本地生成的运行时架构图，不纳入版本控制）
-docs/architecture/
