@@ -1,6 +1,10 @@
 package com.qingyu.care.it;
 
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.entity.Application;
+import com.qingyu.care.entity.HandoverRule;
+import com.qingyu.care.enums.HandoverRuleType;
+import com.qingyu.care.repository.HandoverRuleRepository;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +46,8 @@ class HandoverRuleFallbackIT extends AbstractPostgresIT {
     private HandoverRuleService handoverRuleService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private HandoverRuleRepository handoverRuleRepository;
 
     /** native 播种一条 tenant_id IS NULL 平台默认规则（绕过 JPA 的 TenantEntityListener 回填）。 */
     private void seedPlatformDefault(String ruleType, String config) {
@@ -87,5 +93,52 @@ class HandoverRuleFallbackIT extends AbstractPostgresIT {
         TenantContext.setAppId(90302L);
 
         assertThat(handoverRuleService.getNoHitStreakThreshold()).isEqualTo(3);
+    }
+
+    /**
+     * 平台管理员场景（无过滤器）：handover_rules 表内同类型（rule_type='KEYWORD'）存在多个租户
+     * 各一行 + 一行平台默认（@BeforeEach 播种），裸 findByRuleType 会因过滤器缺失同时看到全部
+     * 行而 NonUniqueResultException。修复后经 ConfigScopeResolver 按 X-App-Id 反查出应用 A
+     * 归属的租户 T，用 findByRuleTypeScoped 显式收窄，checkKeywordTrigger 必须命中租户 T 自己
+     * 的规则——而非另一租户 T2 的规则，也不是平台默认（验证「解析到正确租户」而非仅「不抛
+     * 异常」，避免重蹈本 IT 曾把静默失效误判为合理降级、只测"不抛"的教训）。
+     */
+    @Test
+    void 平台管理员无过滤器_多租户同类型规则_精确解析到应用归属租户() {
+        Application appA = seedApp("handover_scope_a", "http://it.example.com");
+        Long tenantT = appA.getTenant().getId();
+
+        // 另一租户 T2，同 rule_type='KEYWORD' 键值，制造 NonUnique 触发条件
+        Application appB = seedApp("handover_scope_b", "http://it.example.com");
+        Long tenantT2 = appB.getTenant().getId();
+
+        HandoverRule ownT = HandoverRule.builder()
+                .ruleType(HandoverRuleType.KEYWORD)
+                .name("租户T自有关键词规则")
+                .enabled(true)
+                .config("{\"keywords\":[\"退货\"]}")
+                .build();
+        ownT.setTenantId(tenantT);
+        ownT.setAppId(appA.getId());
+        handoverRuleRepository.saveAndFlush(ownT);
+
+        HandoverRule ownT2 = HandoverRule.builder()
+                .ruleType(HandoverRuleType.KEYWORD)
+                .name("租户T2自有关键词规则")
+                .enabled(true)
+                .config("{\"keywords\":[\"退款\"]}")
+                .build();
+        ownT2.setTenantId(tenantT2);
+        ownT2.setAppId(appB.getId());
+        handoverRuleRepository.saveAndFlush(ownT2);
+
+        // 平台管理员：无租户上下文，仅带 X-App-Id（模拟平台管理员选中应用 A 后的会话态）
+        TenantContext.setTenantId(null);
+        TenantContext.setAppId(appA.getId());
+
+        // 命中租户 T 自有规则关键词「退货」，不抛 NonUniqueResultException
+        assertThat(handoverRuleService.checkKeywordTrigger("我要退货")).isTrue();
+        // 租户 T2 的关键词「退款」不应被命中——证明解析到的确实是租户 T 的规则而非误配/合并
+        assertThat(handoverRuleService.checkKeywordTrigger("我要退款")).isFalse();
     }
 }
