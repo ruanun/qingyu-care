@@ -254,7 +254,7 @@ const AbTestPage: React.FC = () => {
                     </Button>
                 </div>
 
-                <div className="border rounded-xl bg-background shadow-sm">
+                <div className="border rounded-xl bg-background shadow-xs">
                     <Table>
                         <TableHeader>
                             <TableRow>

@@ -197,10 +197,10 @@ const SessionPage: React.FC = () => {
                 </Button>
             </div>
 
-            <div className="flex-1 overflow-hidden border rounded-xl bg-background shadow-sm">
+            <div className="flex-1 overflow-hidden border rounded-xl bg-background shadow-xs">
                 <ScrollArea className="h-full">
                     <Table>
-                        <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
+                        <TableHeader className="sticky top-0 bg-background z-10 shadow-xs">
                             <TableRow>
                                 <TableHead className="w-32">创建时间</TableHead>
                                 <TableHead>用户 ID</TableHead>

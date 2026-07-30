@@ -240,7 +240,7 @@ const KnowledgePage: React.FC = () => {
 
                 <div className="md:col-span-3 space-y-6">
                     {selectedKb ? (
-                        <Card className="shadow-sm">
+                        <Card className="shadow-xs">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0">
                                 <div>
                                     <CardTitle>{selectedKb.name}</CardTitle>

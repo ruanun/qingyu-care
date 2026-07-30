@@ -85,7 +85,7 @@ const LoginPage: React.FC = () => {
 
             <div className="w-full max-w-[1100px] grid lg:grid-cols-2 gap-0 bg-white rounded-3xl shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)] overflow-hidden relative z-10 border border-slate-100">
                 {/* 左侧：品牌展示区 */}
-                <div className="hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-slate-900 to-slate-800 text-white relative overflow-hidden">
+                <div className="hidden lg:flex flex-col justify-between p-12 bg-linear-to-br from-slate-900 to-slate-800 text-white relative overflow-hidden">
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none" />
 
                     <div className="relative z-10">
@@ -132,10 +132,10 @@ const LoginPage: React.FC = () => {
 
                     <Tabs defaultValue="login" className="w-full">
                         <TabsList className="grid w-full grid-cols-2 h-12 p-1 bg-slate-100 rounded-xl mb-8">
-                            <TabsTrigger value="login" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-slate-600">
+                            <TabsTrigger value="login" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-xs text-slate-600">
                                 账号登录
                             </TabsTrigger>
-                            <TabsTrigger value="register" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-slate-600">
+                            <TabsTrigger value="register" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-xs text-slate-600">
                                 免费注册
                             </TabsTrigger>
                         </TabsList>

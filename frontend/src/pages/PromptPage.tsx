@@ -155,7 +155,7 @@ const PromptPage: React.FC = () => {
                                         value={newPrompt.content}
                                         onChange={(e) => setNewPrompt({ ...newPrompt, content: e.target.value })}
                                         placeholder="你是轻语，一个专业、友好的AI智能客服助手..."
-                                        className="w-full h-64 p-3 text-sm border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="w-full h-64 p-3 text-sm border rounded-lg resize-none focus:outline-hidden focus:ring-2 focus:ring-primary"
                                     />
                                 </div>
                             </div>

@@ -175,7 +175,7 @@ const ChatPage: React.FC = () => {
                                     msg.role === 'USER' ? "flex-row-reverse" : "flex-row"
                                 )}
                             >
-                                <Avatar className="w-9 h-9 border shadow-sm shrink-0">
+                                <Avatar className="w-9 h-9 border shadow-xs shrink-0">
                                     {msg.role === 'USER' ? (
                                         <>
                                             <AvatarImage src="" />
@@ -197,7 +197,7 @@ const ChatPage: React.FC = () => {
                                         "px-4 py-2.5 rounded-2xl text-sm leading-relaxed",
                                         msg.role === 'USER'
                                             ? "bg-primary text-primary-foreground rounded-tr-none shadow-md"
-                                            : "bg-muted rounded-tl-none border shadow-sm"
+                                            : "bg-muted rounded-tl-none border shadow-xs"
                                     )}>
                                         {msg.role === 'ASSISTANT' && msg.uiParts?.length
                                             ? (
@@ -238,7 +238,7 @@ const ChatPage: React.FC = () => {
                 </ScrollArea>
 
                 {/* Input Area */}
-                <div className="p-4 border-t bg-background/50 backdrop-blur-sm shrink-0">
+                <div className="p-4 border-t bg-background/50 backdrop-blur-xs shrink-0">
                     {isWaitingAgent ? (
                         /* Waiting for Agent State */
                         <div className="max-w-3xl mx-auto text-center py-4">
