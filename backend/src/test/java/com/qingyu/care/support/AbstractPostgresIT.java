@@ -13,7 +13,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+// Testcontainers 2.0 起容器类下沉到模块专属包（旧包仅作兼容保留）
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.utility.DockerImageName;
 
@@ -37,8 +38,9 @@ public abstract class AbstractPostgresIT {
      * 因此先同步构建镜像（.get() 触发 docker build 并返回镜像 tag），再包成兼容 DockerImageName 传入。
      * 首次构建含编译 zhparser 扩展，耗时数分钟；之后 Docker 本地镜像缓存复用，秒级启动。
      */
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse(buildZhparserImage())
+    // Testcontainers 2.0 起 PostgreSQLContainer 不再是泛型类
+    static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse(buildZhparserImage())
                     .asCompatibleSubstituteFor("postgres"))
                     .withInitScript("db/init-vector.sql");
 
