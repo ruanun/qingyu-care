@@ -1,5 +1,5 @@
 import api from './client';
-import type { ChatRequest, ChatResponse, ChatSession, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
+import type { ChatRequest, ChatResponse, ChatSession, ChatMessageEntity, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
 
 export const chatService = {
     // 发送消息
@@ -38,8 +38,8 @@ export const chatService = {
     updateSessionSummary: (sessionId: string, summary: string): Promise<ApiResponse<ChatSession>> =>
         api.put(`/chat/session/${sessionId}/summary`, summary),
 
-    // 获取会话消息历史
-    getSessionMessages: (sessionId: string): Promise<ApiResponse<any[]>> =>
+    // 获取会话消息历史（管理端坐席专用，requireAgent；返回原始实体，uiSpec 未解析）
+    getSessionMessages: (sessionId: string): Promise<ApiResponse<ChatMessageEntity[]>> =>
         api.get(`/chat/session/${sessionId}/messages`),
 
     // 消息反馈（1=赞 / -1=踩，重复提交覆盖）
