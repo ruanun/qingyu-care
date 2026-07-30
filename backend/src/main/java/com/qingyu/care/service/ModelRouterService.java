@@ -192,6 +192,12 @@ public class ModelRouterService {
      * {@code OpenAiChatModel.Builder#build()} 在未显式给 openAiClient 时，
      * 会用 options 上的 baseUrl/apiKey 自行装配 SDK 客户端——正好承载我们
      * 按租户动态换端点的路由需求。
+     *
+     * <p><b>⚠️ 不要在调用方传 per-request options</b>：Spring AI 2.0 起
+     * OpenAiChatModel#buildRequestPrompt() 对 prompt 携带的 options 是「替换」而非「合并」，
+     * 一旦调用方设了任何 options，这里的 model / baseUrl / apiKey / streamUsage(true) 会被整体丢弃
+     * —— streamUsage 丢失是静默的（token 计量记 0 不抛），直接打到计费面。
+     * 确需 per-request 覆盖时，必须从本方法的 options 复制一份再改。
      */
     private ChatClient createOpenAiCompatibleClient(AiModelConfig config) {
         String baseUrl = config.getEndpoint();

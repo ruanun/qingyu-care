@@ -221,6 +221,8 @@ public class ChatServiceImpl implements ChatService {
         final List<ToolCallback> tools = toolBundle.toolCallbacks();
         org.springframework.ai.chat.model.ChatResponse aiResp =
                 modelRouterService.callWithFallback(resolveModelScenario(), client -> {
+                    // 不要在这里 .options(...)，会整体替换掉模型默认 options（含 streamUsage(true)），
+                    // 见 ModelRouterService#createOpenAiCompatibleClient
                     var spec = client.prompt().messages(finalMessages);
                     if (!tools.isEmpty()) {
                         spec = spec.toolCallbacks(tools);   // 无工具时不挂载 → 与现状逐字节一致
@@ -324,6 +326,8 @@ public class ChatServiceImpl implements ChatService {
         // 场景解析读租户配置（依赖 TenantContext），须在请求线程完成，不能挪进响应式管道
         ChatClient chatClient = modelRouterService.getChatClientForScenario(resolveModelScenario());
         // stream().chatResponse() 返回 Flux<org.springframework.ai.chat.model.ChatResponse>
+        // 不要在这里 .options(...)，会整体替换掉模型默认 options（含 streamUsage(true)，
+        // 丢失后本方法的 token 计量会静默记 0），见 ModelRouterService#createOpenAiCompatibleClient
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 chatClient.prompt().messages(messages).stream().chatResponse();
         return withStreamPersistence(meterContentStream(source, onTokensUsed),
@@ -514,7 +518,9 @@ public class ChatServiceImpl implements ChatService {
             // 调用 AI 生成摘要（使用动态模型）
             String prompt = "请用一句简短的话总结以下客服对话的主要内容和用户需求（不超过50字）：\n\n" + sb.toString();
             
-            String summary = modelRouterService.callWithFallback("default", client -> 
+            // 不要在这里 .options(...)，会整体替换掉模型默认 options，
+            // 见 ModelRouterService#createOpenAiCompatibleClient
+            String summary = modelRouterService.callWithFallback("default", client ->
                 client.prompt()
                     .user(prompt)
                     .call()
