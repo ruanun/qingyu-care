@@ -1,8 +1,8 @@
 package com.qingyu.care.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
@@ -160,7 +160,7 @@ public class HandoverRuleService {
                                 }
                             }
                         }
-                    } catch (JsonProcessingException e) {
+                    } catch (JacksonException e) {
                         log.error("Failed to parse keyword config", e);
                     }
                     return false;
@@ -182,7 +182,7 @@ public class HandoverRuleService {
                             log.info("Low confidence trigger: {} < {}", confidence, threshold);
                             return true;
                         }
-                    } catch (JsonProcessingException e) {
+                    } catch (JacksonException e) {
                         log.error("Failed to parse low confidence config", e);
                     }
                     return false;
@@ -200,7 +200,7 @@ public class HandoverRuleService {
                     try {
                         JsonNode config = objectMapper.readTree(rule.getConfig());
                         return config.get("count").asInt(3);
-                    } catch (JsonProcessingException e) {
+                    } catch (JacksonException e) {
                         log.error("Failed to parse no hit streak config", e);
                         return 3;
                     }

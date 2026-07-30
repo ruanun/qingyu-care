@@ -12,7 +12,7 @@ import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.service.ConfigService;
 import com.qingyu.care.support.AbstractPostgresIT;
 import cn.dev33.satoken.secure.BCrypt;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;

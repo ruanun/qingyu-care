@@ -1,7 +1,7 @@
 package com.qingyu.care.service.realtime;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import lombok.RequiredArgsConstructor;
@@ -91,7 +91,7 @@ public class RealtimeNotifier {
     private String json(Map<String, ?> m) {
         try {
             return objectMapper.writeValueAsString(m);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("实时事件 JSON 序列化失败: {}", e.getMessage());
             return "{}";
         }

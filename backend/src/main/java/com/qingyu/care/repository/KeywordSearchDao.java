@@ -1,7 +1,7 @@
 package com.qingyu.care.repository;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.RetrievalScope;

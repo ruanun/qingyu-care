@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KeywordSearchDaoIT extends AbstractPostgresIT {
 
     private static final String T1 = "70001", T2 = "70002";
-    /** 与 test profile 的 spring.ai.openai.embedding.options.model 一致（application.yml 默认值），
+    /** 与 test profile 的 spring.ai.openai.embedding.model 一致（application.yml 默认值），
      * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
     private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 

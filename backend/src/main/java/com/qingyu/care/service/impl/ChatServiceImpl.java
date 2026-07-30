@@ -29,7 +29,7 @@ import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;

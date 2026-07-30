@@ -37,7 +37,7 @@ public class ModelRouterService {
     @Value("${spring.ai.openai.base-url:https://api.openai.com}")
     private String defaultBaseUrl;
     
-    @Value("${spring.ai.openai.chat.options.model:gpt-4o-mini}")
+    @Value("${spring.ai.openai.chat.model:gpt-4o-mini}")
     private String defaultModel;
 
     /**

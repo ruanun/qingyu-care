@@ -1,7 +1,7 @@
 package com.qingyu.care.service.webhook;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +30,7 @@ public class WebhookPayloadBuilder {
         envelope.put("data", data);
         try {
             return objectMapper.writeValueAsString(envelope);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Webhook payload 序列化失败", e);
         }
     }

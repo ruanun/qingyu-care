@@ -8,7 +8,8 @@ import com.qingyu.care.repository.ApplicationRepository;
 import com.qingyu.care.repository.TenantRepository;
 import org.junit.jupiter.api.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+// Boot 4 按技术栈拆分测试切片，MockMvc 支持迁到 spring-boot-webmvc-test 模块的新包
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;

@@ -1,7 +1,7 @@
 package com.qingyu.care.it;
 
 import cn.dev33.satoken.secure.BCrypt;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
