@@ -178,6 +178,19 @@ C4 不绿是「一把梭」的固有代价（2.1 已论证 AI 1.1.8 与 Boot 4 �
 
 **留给后人的规则**：`AI_BASE_URL` / `ai_model_config.endpoint` **必须包含 `/v1`**（已同步写进 `CLAUDE.md` 与 `application.yml` 注释）。
 
+**部署步骤（终审 Critical-1，合并前必须补）**：上面三处修法只覆盖了代码侧的默认值，覆盖不到 **已存在于 `ai_model_config` 表里的行**——平台默认模型行只在表为空时由 `ModelRouterService.init()` 播种，任何在本次迁移之前跑过的库（dev/staging/prod）这行早已存在且不带 `/v1`，而 `createOpenAiCompatibleClient` 优先取 DB 里的 `endpoint`、新默认值对存量行完全无效。**任何存量库合并此分支前，必须先执行一次性迁移脚本**：
+
+```bash
+# 执行前建议先人工核对待更新的行，避免误改租户自建的、本就不该加 /v1 的端点
+docker exec -i qingyu-postgres psql -U postgres -d qingyu_care \
+  -c "SELECT id, name, endpoint FROM ai_model_config;"
+
+docker exec -i qingyu-postgres psql -U postgres -d qingyu_care \
+  < backend/src/main/resources/migration/2026-07-30-append-v1-to-model-endpoint.sql
+```
+
+脚本（`backend/src/main/resources/migration/2026-07-30-append-v1-to-model-endpoint.sql`）幂等，只处理"去掉末尾斜杠后不以 `/v1` 结尾"的行。全新库（表为空、走 `init()` 新播种）不受影响，可跳过此步骤。
+
 ### 8.2 Jackson 3 隐式创建器缺陷（设计稿完全未预见）
 
 **缺陷本质**：Jackson 3 会把 Lombok `@AllArgsConstructor` 当成**隐式属性创建器**（靠 `-parameters` 取参数名），**即使类同时有无参构造**，优先级高于「无参构造 + setter」。于是请求体里缺省的属性被当作 `null` 传进构造器：
@@ -191,7 +204,10 @@ C4 不绿是「一把梭」的固有代价（2.1 已论证 AI 1.1.8 与 Boot 4 �
 
 **修法**（提交 `bf675cb`）：给这 8 个类的无参构造显式标 `@JsonCreator`（`@NoArgsConstructor(onConstructor_ = @JsonCreator)`），恢复 Jackson 2 的「无参构造 + setter」填充语义。**不采用**「全局关闭隐式创建器」——`UiPart` 这类只有 `@AllArgsConstructor` 的类合法依赖隐式创建器（正是上面 P1 关心的那条路径），全局关会推坏结构化卡片反序列化；新增的 `RequestBodyDeserializationTest` 里专门留了一条反向守护用例盯住它。
 
-另两个同模式的类经核验非缺陷、未改动：`AgentReplyRequest`（两字段皆 `@NotBlank` String，缺省被校验拦成 400，行为不变）、`KnowledgeBaseRequest`（`enabled` 初值虽被覆盖，但 `KnowledgeServiceImpl` 建/改两处均已有 null 兜底）。
+另两个同模式的类经核验非缺陷、未改动：
+
+- `AgentReplyRequest`：两个字段都是无初值的 `String`。**行为不变的准确原因是根本没有行为差异**——隐式创建器与「无参构造 + setter」对逐字段的产出完全相同（都是 `null` 起步），`@NotBlank` 校验不参与这个判断，缺省属性触发的是校验层 400，与创建器选型无关。
+- `KnowledgeBaseRequest`（`private Boolean enabled = true;`）：**行为有变，且变好了**，不是简单的"行为不变"。隐式创建器把 `enabled` 置 null 后，更新路径的语义从「未传 `enabled` 即强制置 `true`」变成「未传即保持不变」（`KnowledgeServiceImpl` 建/改两处均已有 null 兜底，故不崩）。旧行为下，编辑一个**已停用**的知识库（只改名称/描述、不传 `enabled`）会把它**静默重新启用**；新行为不会——而 `enabled` 本就有独立的 toggle 端点，编辑表单不该携带它。语义变化是这次迁移意外修好的一个潜在 bug，特此记录，以免将来有人发现语义变了误以为是回归。
 
 **最该记住的事实**：**390 单测 + 99 IT 全数漏掉了它**，是真机冒烟准备阶段才发现的。原因是 IT 构造请求体时习惯把字段填满，恰好绕开了「缺省属性」这一触发条件。这与 `6a62d83`（转人工平台默认回退静默失效）、`RealtimeRedisBridge` 可选依赖击穿 fail-open 是同一类教训：**测试全绿不等于功能可用，凡是「默认值 / 降级路径」都要有真机或缺省态用例**。
 
