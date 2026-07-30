@@ -135,3 +135,71 @@ C4 不绿是「一把梭」的固有代价（2.1 已论证 AI 1.1.8 与 Boot 4 �
 - 简体中文（对话 / 注释 / commit）
 - 本仓允许 `git commit`；已从 master 建特性分支 `chore/boot4-springai2`；**未获授权不 `git push`**
 - 改动留工作树，逐步与用户确认；合入 master 在本地进行
+
+## 8. 迁移结论（实施后回填）
+
+- **实际落地版本**：Spring Boot 4.1.0 / Spring AI 2.0.0 / JDK 17（Testcontainers 2.0.5、bucket4j 8.19.0、Sa-Token 1.45.0、springdoc 3.0.3）
+- **P0「bucket4j × Lettuce 7」**：**兼容，未启用任何退路**。`lettuce-core` 实际收敛到 `7.5.2.RELEASE`，`bucket4j_jdk17-lettuce:8.19.0` 直接可用。C2 预埋的真 Redis `RateLimitRedisIT` 升级后仍绿；真机复验「配额 3/分钟连打 6 次 → 前 3 次 200、后 3 次 429 + `Retry-After: 60`」，确认限流未静默退化成 fail-open。
+- **P0「base-url 语义」**：**需要补 `/v1`，且不是「语义微调」而是契约完全翻转**，详见下方专节。
+- **P1「Jackson 3 构造参数名绑定」**：**成立，无需显式注册**（Jackson 3 已把 parameter-names 支持并入 databind），`UiPart` 的隐式创建器照常工作。但同一机制反向暴露了一个设计稿未预见的 Critical，详见下方专节。
+- **P1「tika-core 版本收敛」**：收敛到 `3.3.1`（Spring AI 侧胜出），**未加 exclusion**，与 Boot 3.5 时期一致。
+- **P2「Hibernate 7 隐式 SELECT」**：**未命中**。配置回退类的 native 查询（`findPlatformDefaultBy*`、`findAllSharedModels` 等）零改动，`*FallbackIT` / `ModelRouterDefaultIT` 全绿。`repository/` 包在整条迁移里只改了 `KeywordSearchDao` 的 Jackson 包名（`com.fasterxml.jackson` → `tools.jackson`）。
+- **P2「springdoc 3.0.3 跑在 Boot 4.1」**：可用。`/api/swagger-ui.html` 与 `/api/swagger-ui/index.html` 均 200，`/api/v3/api-docs` 正常输出 `openapi: 3.1.0`。
+- **P2「okhttp 4.12.0 传递依赖」**：确认引入 `4.12.0`，无版本冲突；工具调用 SSRF 钉 IP 仍走 `httpclient5` 自定义 `DnsResolver`，不受影响。
+- **P2「Hibernate 7 `char` 映射变化」**：本仓实体未使用 `char`/`Character` 字段，未命中。
+- **最终测试规模**：**398 单测 + 99 IT 全绿**（`mvn clean verify` BUILD SUCCESS）。单测由 390 增至 398，新增的 8 例即下方 Jackson 缺陷的回归网。
+- **真机冒烟通过项**：管理端非流式对话（真实 DashScope）、文档上传 → 摄取 → 向量落库 → RAG 检索命中、开放 API 流式 SSE + token 计量落 `sys_api_usage`（`token_count=1139`）、开放 API 限流 429 + `Retry-After`、Webhook 投递 `SUCCESS` + HMAC 签名头、坐席 SSE 实时收 `event:message`、Swagger UI、文件上传（RustFS）、前端 `pnpm build`。
+
+### 8.1 P0「baseUrl 契约翻转」——本次迁移最危险的一处
+
+设计稿原文只写「换官方 SDK 后**可能**要求完整 base」。实际情况比这严重：**契约方向完全反了过来**。
+
+| | Spring AI 1.1.8 | Spring AI 2.0.0 |
+| --- | --- | --- |
+| 默认 baseUrl 常量 | `https://api.openai.com`（**不带** `/v1`） | `https://api.openai.com/v1`（**自带** `/v1`） |
+| 库往 baseUrl 后拼的路径 | `/v1/chat/completions`、`/v1/embeddings` | `chat/completions`、`embeddings`（**不含 `v1`**） |
+| 因此 `base-url` 配置要求 | **必须不带** `/v1` | **必须带** `/v1` |
+
+即：1.x 时代写全 `/v1` 会打成 `/v1/v1/...`，2.0 时代不写 `/v1` 会打成 `/chat/completions`——两边都是 404，**且方向相反**，照抄旧配置必然全线失效。`OpenAiSetup.calculateBaseUrl()` 对 OPEN_AI provider 原样返回、不做补全。
+
+**三处修法**（提交 `0df486b`）：
+
+1. `application.yml` 的 `spring.ai.openai.base-url` 默认值 → `https://dashscope.aliyuncs.com/compatible-mode/v1`（该项同时喂给自动装配的 ChatModel 与 EmbeddingModel）
+2. `ModelRouterService.defaultBaseUrl` 的 `@Value` 兜底值 → `https://api.openai.com/v1`（它会被 `init()` 播种成平台默认模型行的 endpoint）
+3. `ModelRouterService.getDefaultEndpoint()` 四个 provider 分支统一自带 `/v1`（`openai` 分支原为 `https://api.openai.com`）
+
+刻意**不做**「缺 `/v1` 就自动补全」的归一化：404 是可见错误，自动补全只会把配置错误掩盖成难查的行为漂移。
+
+**这个修复测试证明不了**——`/v1` 缺失前后 398 单测 + 99 IT 都是绿的，因为**整套 IT 没有一条发真实模型请求**（`VectorStore` 与 `ChatClient` 在测试里都被 mock）。最终靠真机冒烟的两路证据闭合：
+
+- **直接证据**：把 `AI_BASE_URL` 与平台模型行的 endpoint 临时指向本机 HTTP 监听器，抓到的原始请求行为
+  `POST /v1/chat/completions HTTP/1.1` 与 `POST /v1/embeddings HTTP/1.1`——baseUrl 给的是 `http://127.0.0.1:9999/v1`，说明 SDK 只补了 `chat/completions` / `embeddings`。同一监听器上用迁移前提交（Spring AI 1.1.8）以不带 `/v1` 的 baseUrl 复打，抓到的同样是 `POST /v1/chat/completions`——两版落到同一路径，正是契约翻转的直接印证。
+- **端到端证据**：真实 DashScope key 打通对话与摄取，返回正常内容而非 404。
+
+**留给后人的规则**：`AI_BASE_URL` / `ai_model_config.endpoint` **必须包含 `/v1`**（已同步写进 `CLAUDE.md` 与 `application.yml` 注释）。
+
+### 8.2 Jackson 3 隐式创建器缺陷（设计稿完全未预见）
+
+**缺陷本质**：Jackson 3 会把 Lombok `@AllArgsConstructor` 当成**隐式属性创建器**（靠 `-parameters` 取参数名），**即使类同时有无参构造**，优先级高于「无参构造 + setter」。于是请求体里缺省的属性被当作 `null` 传进构造器：
+
+1. 原始类型直接抛 `Cannot map null into type boolean`（Jackson 3 默认开启 `FAIL_ON_NULL_FOR_PRIMITIVES`）→ HTTP 400；
+2. 字段初值 / `@Builder.Default` 被 `null` 静默覆盖。
+
+设计稿的 P1 只想到「参数名绑定**还能不能用**」（怕它失效），完全没想到反方向——**它太能用了，把本不该当创建器的构造器也认了**。
+
+**影响面**：8 个「同时有 `@NoArgsConstructor` 与 `@AllArgsConstructor`」且用作 `@RequestBody` 的类。其中 **`ChatRequest` 是致命的**：它的 `openChannel` 带 `@JsonIgnore`、**永远无法从请求体提供**，所以管理端 `/chat` 与 `/chat/stream` 对**任何**请求体都必然 400——整条管理后台对话链路不可用。其余（`Application` / `ChatStrategy` / `AiModelConfig` / `AiTool` / `AiSkill` / `AbExperiment` / `Tenant`）表现为丢默认值：`enabled`、`topK=5`、`similarityThreshold=0.7`、`scenario=default`、`httpMethod=GET`、`TenantStatus.ACTIVE` 等，轻则破坏 RAG 检索参数，重则 NOT NULL 列落库 500。
+
+**修法**（提交 `bf675cb`）：给这 8 个类的无参构造显式标 `@JsonCreator`（`@NoArgsConstructor(onConstructor_ = @JsonCreator)`），恢复 Jackson 2 的「无参构造 + setter」填充语义。**不采用**「全局关闭隐式创建器」——`UiPart` 这类只有 `@AllArgsConstructor` 的类合法依赖隐式创建器（正是上面 P1 关心的那条路径），全局关会推坏结构化卡片反序列化；新增的 `RequestBodyDeserializationTest` 里专门留了一条反向守护用例盯住它。
+
+另两个同模式的类经核验非缺陷、未改动：`AgentReplyRequest`（两字段皆 `@NotBlank` String，缺省被校验拦成 400，行为不变）、`KnowledgeBaseRequest`（`enabled` 初值虽被覆盖，但 `KnowledgeServiceImpl` 建/改两处均已有 null 兜底）。
+
+**最该记住的事实**：**390 单测 + 99 IT 全数漏掉了它**，是真机冒烟准备阶段才发现的。原因是 IT 构造请求体时习惯把字段填满，恰好绕开了「缺省属性」这一触发条件。这与 `6a62d83`（转人工平台默认回退静默失效）、`RealtimeRedisBridge` 可选依赖击穿 fail-open 是同一类教训：**测试全绿不等于功能可用，凡是「默认值 / 降级路径」都要有真机或缺省态用例**。
+
+### 8.3 冒烟顺带发现的两处存量缺陷（与本次迁移无关）
+
+真机冒烟上传文档时整条摄取链路不可用，定位到两个互相掩盖的缺陷。用**迁移前提交（`5e6c698^`，Boot 3.5.16 + Spring AI 1.1.8）跑同样流程**做对照，两者表现完全一致，确认**与本次迁移无关**，已单独提交（`d3ea4ef`）：
+
+1. **上传必 500**：`FileStorageConfig` 的自定义 amazon-s3-v2 工厂返回裸 `S3Client`，而 `AmazonS3V2FileStorage.getClient()` 对工厂产物做的是无条件 `checkcast` 到 `AmazonS3V2Client`（字节码已核）。引入于 `42d3c34`（AWS SDK v1→v2），即 **2026-07-22 起文件上传一直是坏的**。
+2. **摄取静默失败**：`processDocumentAsync` 直调 `processDocument` 属同类自调用、不经代理，`@Transactional` 失效；而 `processDocument` 首行 `deleteByDocumentId` 是 `@Modifying` 原生删除，无环绕事务直接抛 `TransactionRequiredException`，异常烂在 `@Async` 线程里、文档永远停在 PENDING。被缺陷 1 掩盖（上传早就 500，摄取压根跑不到）。
+
+两者均逃过 398 单测 + 99 IT——**摄取全链路（S3 + Embedding）此前明确不做 IT 覆盖**，这正是该决定的代价：一条完全没有自动化守护的链路，坏了 9 天没人知道。
