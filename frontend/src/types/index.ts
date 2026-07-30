@@ -38,6 +38,16 @@ export interface ChatMessage {
     uiParts?: UiPart[];
 }
 
+// 会话历史原始消息实体：GET /chat/session/{id}/messages 返回的后端 ChatMessage 实体，
+// uiSpec 是结构化卡片 uiParts 的 JSON 原始字符串（未解析，可空），需前端自行 JSON.parse。
+export interface ChatMessageEntity {
+    id: number;
+    role: MessageRole;
+    content: string;
+    createdAt: string;
+    uiSpec?: string | null;
+}
+
 // 结构化卡片：AI 回复的有序 text/ui 片段（Task 3 渲染引擎消费）
 export interface UiPart {
     kind: 'text' | 'ui';

@@ -8,11 +8,22 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { chatService } from '@/api/chat';
-import type { ChatMessage, KnowledgeHit } from '@/types';
+import type { ChatMessage, ChatMessageEntity, KnowledgeHit, UiPart } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { JsonRender } from '@/components/chat/JsonRender';
 import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
+import { loadChatSession, saveChatSession, clearChatSession } from '@/lib/chatSession';
+
+/** 解析历史消息的 uiSpec JSON 字符串为 UiPart[]；空/损坏时返回 undefined（fail-soft，退纯文本渲染）。 */
+function parseUiSpec(uiSpec?: string | null): UiPart[] | undefined {
+    if (!uiSpec) return undefined;
+    try {
+        return JSON.parse(uiSpec) as UiPart[];
+    } catch {
+        return undefined;
+    }
+}
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -33,6 +44,34 @@ const ChatPage: React.FC = () => {
             scrollRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [messages]);
+
+    // 刷新恢复：从 localStorage 取上次持久化的 sessionId，加载历史消息（含结构化卡片）。
+    // 任何失败（403/会话过期/网络异常）都静默降级为空态，不阻断使用。
+    useEffect(() => {
+        const sid = loadChatSession(userId);
+        if (!sid) return;
+
+        (async () => {
+            setSessionId(sid);
+            try {
+                const res = await chatService.getSessionMessages(sid);
+                if (res.code === 200) {
+                    const history: ChatMessage[] = (res.data || []).map((m: ChatMessageEntity) => ({
+                        id: m.id,
+                        role: m.role,
+                        content: m.content,
+                        createdAt: m.createdAt,
+                        uiParts: parseUiSpec(m.uiSpec),
+                    }));
+                    setMessages(history);
+                } else {
+                    clearChatSession(userId);
+                }
+            } catch {
+                clearChatSession(userId);
+            }
+        })();
+    }, []);
 
     const send = async (text: string) => {
         if (!text.trim() || isLoading) return;
@@ -65,6 +104,7 @@ const ChatPage: React.FC = () => {
                 };
                 setMessages((prev) => [...prev, aiResponse]);
                 setSessionId(response.data.sessionId);
+                saveChatSession(userId, response.data.sessionId);
                 setSuggestHandover(response.data.suggestHandover || false);
 
                 // 存储知识命中信息
