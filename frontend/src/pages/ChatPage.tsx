@@ -63,7 +63,9 @@ const ChatPage: React.FC = () => {
                         createdAt: m.createdAt,
                         uiParts: parseUiSpec(m.uiSpec),
                     }));
-                    setMessages(history);
+                    // 仅当用户尚未开始对话(messages 仍为空)时才采纳历史快照，
+                    // 避免历史 GET 晚于用户已发的新消息返回、整体覆盖掉刚发的乐观消息(竞态)。
+                    setMessages((prev) => (prev.length === 0 ? history : prev));
                 } else {
                     clearChatSession(userId);
                 }
