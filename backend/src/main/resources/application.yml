@@ -140,6 +140,9 @@ qingyu:
       redis:
         # 是否启用 Redis pub/sub 跨实例桥接；false 时退化为单实例本地广播（省 Redis 往返）
         enabled: ${REALTIME_REDIS_ENABLED:true}
+      presence:
+        # 全局在线坐席花名册（Redis ZSET）心跳续期间隔（毫秒），须显著小于僵尸判定阈值 45000ms
+        heartbeat-ms: 15000
 
     # 会话配置
     session:
