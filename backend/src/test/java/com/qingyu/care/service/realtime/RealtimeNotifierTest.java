@@ -10,11 +10,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class RealtimeNotifierTest {
@@ -34,17 +32,25 @@ class RealtimeNotifierTest {
     }
 
     @Test
-    void 新待接广播给本租户每个在线坐席() {
-        when(hub.onlineKeys("agent:9:")).thenReturn(List.of("agent:9:1", "agent:9:2"));
+    void 新待接广播走租户广播键_不再枚举本地在线坐席() {
         ChatSession s = ChatSession.builder().sessionId("sess-2").build();
         s.setTenantId(9L);
 
         notifier.newWaitingToTenantAgents(9L, s);
 
-        verify(hub).publish(org.mockito.ArgumentMatchers.eq("agent:9:1"),
+        verify(hub).publish(org.mockito.ArgumentMatchers.eq("agent-bcast:9"),
                 org.mockito.ArgumentMatchers.eq("session"), org.mockito.ArgumentMatchers.contains("sess-2"));
-        verify(hub).publish(org.mockito.ArgumentMatchers.eq("agent:9:2"),
-                org.mockito.ArgumentMatchers.eq("session"), org.mockito.ArgumentMatchers.contains("sess-2"));
+        verify(hub, never()).onlineKeys(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void presence广播走租户广播键() {
+        notifier.presenceToTenantAgents(9L, 1L, true);
+
+        verify(hub).publish(org.mockito.ArgumentMatchers.eq("agent-bcast:9"),
+                org.mockito.ArgumentMatchers.eq("presence"),
+                org.mockito.ArgumentMatchers.contains("\"online\":true"));
+        verify(hub, never()).onlineKeys(org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test

@@ -135,6 +135,15 @@ qingyu:
       # 是否向系统 Prompt 注入卡片能力片段（仅非流式 chat() 生效，streamChat 恒不注入）
       enabled: ${CARDS_ENABLED:true}
 
+    # 真人坐席实时推送（RealtimeHub）跨实例配置
+    realtime:
+      redis:
+        # 是否启用 Redis pub/sub 跨实例桥接；false 时退化为单实例本地广播（省 Redis 往返）
+        enabled: ${REALTIME_REDIS_ENABLED:true}
+      presence:
+        # 全局在线坐席花名册（Redis ZSET）心跳续期间隔（毫秒），须显著小于僵尸判定阈值 45000ms
+        heartbeat-ms: 15000
+
     # 会话配置
     session:
       # 会话超时时间（分钟）
