@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
@@ -45,9 +46,7 @@ public class ModelRouterService {
     @PostConstruct
     @Transactional
     public void init() {
-        if (repository.count() == 0) {
-            log.info("Initializing default AI model config...");
-            
+        PlatformSeeder.seedIfEmpty(repository.count(), "AI 模型配置", () -> {
             // 创建默认模型配置（平台共享模型）
             repository.save(AiModelConfig.builder()
                     .name("默认模型")
@@ -61,9 +60,7 @@ public class ModelRouterService {
                     .scope(OwnerScope.PLATFORM)
                     .remark("从 application.yml 初始化的平台共享默认模型")
                     .build());
-            
-            log.info("Default AI model config created");
-        }
+        });
     }
 
     /**

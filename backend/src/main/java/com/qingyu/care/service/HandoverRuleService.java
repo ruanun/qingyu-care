@@ -3,6 +3,7 @@ package com.qingyu.care.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.HandoverRule;
@@ -33,9 +34,7 @@ public class HandoverRuleService {
     @PostConstruct
     @Transactional
     public void init() {
-        if (repository.count() == 0) {
-            log.info("Initializing default handover rules...");
-            
+        PlatformSeeder.seedIfEmpty(repository.count(), "转人工规则", () -> {
             // 关键词规则
             repository.save(HandoverRule.builder()
                     .ruleType(HandoverRuleType.KEYWORD)
@@ -45,7 +44,7 @@ public class HandoverRuleService {
                     .config("{\"keywords\": [\"转人工\", \"找客服\", \"人工服务\", \"人工客服\"]}")
                     .priority(1)
                     .build());
-            
+
             // 低置信度规则
             repository.save(HandoverRule.builder()
                     .ruleType(HandoverRuleType.LOW_CONFIDENCE)
@@ -55,7 +54,7 @@ public class HandoverRuleService {
                     .config("{\"threshold\": 0.3}")
                     .priority(2)
                     .build());
-            
+
             // 连续未命中规则
             repository.save(HandoverRule.builder()
                     .ruleType(HandoverRuleType.NO_HIT_STREAK)
@@ -65,9 +64,7 @@ public class HandoverRuleService {
                     .config("{\"count\": 3}")
                     .priority(3)
                     .build());
-            
-            log.info("Default handover rules created");
-        }
+        });
     }
 
     /**
