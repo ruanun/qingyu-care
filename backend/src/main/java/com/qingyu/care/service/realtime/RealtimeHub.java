@@ -1,8 +1,8 @@
 package com.qingyu.care.service.realtime;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -27,17 +27,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RealtimeHub {
 
     /**
-     * 跨实例 Redis 桥接（可为空）：setter + {@code @Lazy} 注入，避免与
-     * {@link RealtimeRedisBridge}（构造时依赖本类）形成循环依赖；
-     * {@code qingyu.care.realtime.redis.enabled=false} 时无桥接 bean，保持 null，
-     * {@link #publish} 退化为纯本地广播。
+     * 跨实例 Redis 桥接（可为空）：{@link ObjectProvider} 字段注入，避免与
+     * {@link RealtimeRedisBridge}（构造时依赖本类）形成循环依赖。
+     * 注意：不能用 {@code @Lazy} 代理替代——{@code @Lazy} 总会注入一个非 null 的懒代理，
+     * {@code qingyu.care.realtime.redis.enabled=false} 时目标 bean 缺失，首次调用代理方法才会抛
+     * {@code NoSuchBeanDefinitionException}（且抛在代理层，绕过 {@link RealtimeRedisBridge#publish}
+     * 自身的 try/catch），冒泡到本类 {@link #publish} 击穿 fail-open。{@link ObjectProvider}
+     * 是 Spring 为「目标 bean 可能不存在」场景设计的官方方案：{@link ObjectProvider#getIfAvailable()}
+     * 在 bean 缺失时安全返回 null、不经代理、不抛异常，且天然可打破构造期循环依赖。
+     * 直接 {@code new RealtimeHub()}（现有单测风格，绕过 Spring 容器）时该字段保持 null，
+     * {@link #publish} 显式判空兜底，同样安全退化为纯本地广播。
      */
-    private RealtimeRedisBridge bridge;
-
-    @Autowired(required = false)
-    public void setBridge(@Lazy RealtimeRedisBridge bridge) {
-        this.bridge = bridge;
-    }
+    @Autowired
+    private ObjectProvider<RealtimeRedisBridge> bridgeProvider;
 
     /** 每订阅键一个多播 Sink + 活跃订阅者计数（计数归零即摘除，兼作 presence）。 */
     private record Channel(Sinks.Many<ServerSentEvent<String>> sink, AtomicInteger subscribers) {}
@@ -79,9 +81,12 @@ public class RealtimeHub {
                 v.subscribers().decrementAndGet() <= 0 ? null : v);
     }
 
-    /** 发布：本地 Sinks 立即送达 + 镜像到 Redis 供其它实例（bridge 为空/Redis 故障时仅本地，单实例语义）。 */
+    /** 发布：本地 Sinks 立即送达 + 镜像到 Redis 供其它实例（bridge 缺失/Redis 故障时仅本地，单实例语义）。 */
     public void publish(String key, String event, String data) {
         emitLocal(key, event, data);
+        // bridgeProvider 为 null：绕过 Spring 容器直接 new 出来的场景（如既有单测）；
+        // getIfAvailable() 为 null：走 Spring 容器但 enabled=false 未装配 bridge bean。两者均安全退化为本地广播。
+        RealtimeRedisBridge bridge = (bridgeProvider != null) ? bridgeProvider.getIfAvailable() : null;
         if (bridge != null) {
             bridge.publish(key, event, data);
         }
