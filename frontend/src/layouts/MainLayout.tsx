@@ -150,7 +150,7 @@ const MainLayout: React.FC = () => {
             {/* Sidebar */}
             <aside className="w-64 border-r bg-muted/30 flex flex-col">
                 <div className="p-6 border-b">
-                    <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                    <h1 className="text-xl font-bold bg-linear-to-r from-primary to-primary/60 bg-clip-text text-transparent">
                         轻语 - QingYu
                     </h1>
                 </div>
@@ -259,7 +259,7 @@ const MainLayout: React.FC = () => {
 
             {/* Main Content */}
             <main className="flex-1 flex flex-col relative overflow-hidden bg-background">
-                <header className="h-16 border-b flex items-center justify-between px-6 bg-background/80 backdrop-blur-sm z-10 shrink-0">
+                <header className="h-16 border-b flex items-center justify-between px-6 bg-background/80 backdrop-blur-xs z-10 shrink-0">
                     <h2 className="text-lg font-semibold">{currentTitle}</h2>
                     <div className="flex items-center gap-4">
                         <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 font-medium">服务运行中</span>

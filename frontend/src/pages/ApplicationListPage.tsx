@@ -165,7 +165,7 @@ const ApplicationListPage: React.FC = () => {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredApps.map((app) => (
-                        <Card key={app.id} className="group hover:border-primary/20 transition-all shadow-sm overflow-hidden flex flex-col">
+                        <Card key={app.id} className="group hover:border-primary/20 transition-all shadow-xs overflow-hidden flex flex-col">
                             <CardHeader className="pb-4">
                                 <div className="flex justify-between items-start">
                                     <Avatar className="h-12 w-12 border cursor-pointer hover:scale-105 transition-transform">
@@ -204,7 +204,7 @@ const ApplicationListPage: React.FC = () => {
                                     </CardDescription>
                                 </div>
                             </CardHeader>
-                            <CardContent className="space-y-4 py-2 flex-grow">
+                            <CardContent className="space-y-4 py-2 grow">
                                 <div className="space-y-2.5">
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1.5">
@@ -289,7 +289,7 @@ const ApplicationListPage: React.FC = () => {
                         <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-primary" /> 欢迎语</label>
                             <textarea
-                                className="w-full flex min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="w-full flex min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={formData.welcomeMessage}
                                 onChange={(e) => setFormData({ ...formData, welcomeMessage: e.target.value })}
                                 placeholder="用户进入对话时首先看到的消息"

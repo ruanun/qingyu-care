@@ -145,7 +145,7 @@ const StrategyConfigPage: React.FC = () => {
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {strategies.map((strat) => (
-                            <Card key={strat.id} className={cn("relative overflow-hidden border-2 transition-all", strat.isDefault ? "border-primary/50 shadow-sm" : "border-slate-200")}>
+                            <Card key={strat.id} className={cn("relative overflow-hidden border-2 transition-all", strat.isDefault ? "border-primary/50 shadow-xs" : "border-slate-200")}>
                                 {strat.isDefault && (
                                     <div className="absolute top-0 right-0 p-1 px-3 bg-primary text-primary-foreground text-[10px] font-bold rounded-bl-lg flex items-center gap-1">
                                         <BadgeCheck className="w-3 h-3" />
