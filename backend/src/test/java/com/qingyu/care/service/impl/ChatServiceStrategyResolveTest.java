@@ -16,7 +16,7 @@ import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;

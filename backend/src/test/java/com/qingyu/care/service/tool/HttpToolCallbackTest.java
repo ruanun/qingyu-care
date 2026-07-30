@@ -1,6 +1,6 @@
 package com.qingyu.care.service.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.AiTool;
 import org.junit.jupiter.api.Test;
 

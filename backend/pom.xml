@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
+        <version>4.1.0</version>
         <relativePath/>
     </parent>
     
@@ -19,8 +19,8 @@
     
     <properties>
         <java.version>17</java.version>
-        <spring-ai.version>1.1.8</spring-ai.version>
-        <bucket4j.version>8.14.0</bucket4j.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <bucket4j.version>8.19.0</bucket4j.version>
     </properties>
     
     <dependencyManagement>
@@ -35,7 +35,7 @@
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
-                <version>1.21.3</version>
+                <version>2.0.5</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -79,10 +79,12 @@
             <artifactId>spring-ai-tika-document-reader</artifactId>
         </dependency>
         
-        <!-- Sa-Token 权限认证 -->
+        <!-- Sa-Token 权限认证。Boot 4 需用 spring-boot4 系列 starter：
+             与 boot3 版同为 1.45.0、jar 内只有占位类，差异纯在 POM
+             （依赖 sa-token-jackson3 而非 sa-token-jackson），业务 API 不变。 -->
         <dependency>
             <groupId>cn.dev33</groupId>
-            <artifactId>sa-token-spring-boot3-starter</artifactId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
             <version>1.45.0</version>
         </dependency>
         
@@ -126,11 +128,11 @@
             <optional>true</optional>
         </dependency>
         
-        <!-- API Documentation -->
+        <!-- API Documentation。springdoc 3.0.x 是适配 Spring Boot 4 的版本线（2.8.x 只支持 Boot 3） -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.8.6</version>
+            <version>3.0.3</version>
         </dependency>
         
         <!-- Development Tools -->
@@ -169,19 +171,28 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4 把测试切片按技术栈拆模块：MockMvc 支持（@AutoConfigureMockMvc）
+             已从 spring-boot-test-autoconfigure 移出到 spring-boot-webmvc-test，
+             starter-test 不再传递引入，需显式声明。版本由 Boot BOM 托管。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-testcontainers</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Testcontainers 2.0 起模块坐标统一加 testcontainers- 前缀 -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
+            <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

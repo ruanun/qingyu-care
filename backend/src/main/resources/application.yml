@@ -49,26 +49,29 @@ spring:
     openai:
       # 通义千问 DashScope OpenAI 兼容端点
       api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}
-      base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      # base-url 必须自带 /v1：Spring AI 2.0 起改用官方 openai-java SDK，只拼 chat/completions
+      # 与 embeddings，不再补 /v1（1.x 的 OpenAiApi 拼的是 /v1/xxx，故当年要求不带，契约已翻转）。
+      # 本项同时喂给自动装配的 ChatModel 与 EmbeddingModel，缺 /v1 会让对话/摄取/检索全线 404。
+      # 用 AI_BASE_URL 覆盖时同样必须带 /v1。
+      base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      # Spring AI 2.0 起配置属性去掉 .options 中缀（chat.options.model → chat.model）
       chat:
-        options:
-          model: ${AI_CHAT_MODEL:qwen3.7-flash-2026-07-15}  # 通义千问 flash（2026-07-15 快照）；可用环境变量 AI_CHAT_MODEL 覆盖
-          temperature: 0.7
+        model: ${AI_CHAT_MODEL:qwen3.7-flash-2026-07-15}  # 通义千问 flash（2026-07-15 快照）；可用环境变量 AI_CHAT_MODEL 覆盖
+        temperature: 0.7
       embedding:
-        options:
-          model: ${AI_EMBEDDING_MODEL:qwen3.7-text-embedding}
-          # 显式钉死输出维度，不再依赖模型默认值——必须与下方 pgvector.dimensions 完全一致。
-          # 两处共用 AI_EMBEDDING_DIMENSIONS，绑定同一变量以防各自漂移导致向量写入维度不匹配。
-          # 注意：dimensions 仅 text-embedding-3 及以后 / DashScope text-embedding-v3+ 支持；
-          # 若换用不支持该参数的模型，需先移除本项。
-          dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}
+        model: ${AI_EMBEDDING_MODEL:qwen3.7-text-embedding}
+        # 显式钉死输出维度，不再依赖模型默认值——必须与下方 pgvector.dimensions 完全一致。
+        # 两处共用 AI_EMBEDDING_DIMENSIONS，绑定同一变量以防各自漂移导致向量写入维度不匹配。
+        # 注意：dimensions 仅 text-embedding-3 及以后 / DashScope text-embedding-v3+ 支持；
+        # 若换用不支持该参数的模型，需先移除本项。
+        dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}
 
     # PgVector 向量存储配置
     vectorstore:
       pgvector:
         index-type: HNSW
         distance-type: COSINE_DISTANCE
-        # 必须与上方 embedding.options.dimensions 一致（共用 AI_EMBEDDING_DIMENSIONS）。
+        # 必须与上方 embedding.dimensions 一致（共用 AI_EMBEDDING_DIMENSIONS）。
         # 改动此值需重建向量表、历史向量作废——不可对已有库热切换。
         dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}  # 钉 1024；须与 embedding 模型实际输出维度一致（换模型后确认）
 

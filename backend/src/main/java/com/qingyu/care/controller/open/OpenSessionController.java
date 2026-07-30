@@ -6,7 +6,7 @@ import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;

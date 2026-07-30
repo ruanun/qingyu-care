@@ -1,6 +1,6 @@
 package com.qingyu.care.dto.open;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
@@ -13,11 +13,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenSessionResponseTest {
 
-    // UiPart 仅有 @AllArgsConstructor（无默认构造器），需 ParameterNamesModule 才能按参数名隐式创建；
-    // 生产环境注入的是 Spring Boot 自动配置的 ObjectMapper（JacksonAutoConfiguration 默认已注册该模块），
-    // 这里手动补注册以在纯 Mockito 单测中还原同等行为。
-    private final ObjectMapper om = new ObjectMapper()
-            .registerModule(new com.fasterxml.jackson.module.paramnames.ParameterNamesModule());
+    // UiPart 仅有 @AllArgsConstructor（无默认构造器），需按构造参数名隐式创建。
+    // Jackson 3 已把原 jackson-module-parameter-names 并入 databind 且默认启用，
+    // 故裸 new ObjectMapper() 即具备该能力，无需再手动 registerModule（Jackson 2 时代才需要）。
+    private final ObjectMapper om = new ObjectMapper();
 
     private ChatSession session() {
         ChatSession s = new ChatSession();

@@ -12,8 +12,8 @@ import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.SysApiUsageRepository;
 import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.support.AbstractPostgresIT;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -50,7 +50,7 @@ class AnalyticsUsageIT extends AbstractPostgresIT {
                         .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asText();
+        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asString();
     }
 
     private void seedUsage(Long tenant, Long app, long calls, long tokens) {

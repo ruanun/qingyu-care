@@ -208,12 +208,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         requireDocumentOwnership(doc, documentId);
         doc.setStatus(DocumentStatus.PENDING);
         documentRepository.save(doc);
-        processDocumentAsync(documentId);
+        // 必须走 self：同类直调不经代理，@Async 不生效（重处理会占住请求线程）
+        self.processDocumentAsync(documentId);
     }
-    
+
     @Async
     public void processDocumentAsync(Long documentId) {
-        processDocument(documentId);
+        // 必须走 self：同类直调不经代理，processDocument 的 @Transactional 会失效，
+        // 其首行 deleteByDocumentId 是 @Modifying 原生删除，无环绕事务直接抛
+        // TransactionRequiredException，整条摄取链路静默失败在 @Async 线程里。
+        self.processDocument(documentId);
     }
     
     @Override

@@ -1,6 +1,6 @@
 package com.qingyu.care.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.enums.HandoverRuleType;
 import com.qingyu.care.repository.HandoverRuleRepository;

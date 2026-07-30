@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,10 +33,12 @@ public class ModelRouterService {
     @Value("${spring.ai.openai.api-key:}")
     private String defaultApiKey;
     
-    @Value("${spring.ai.openai.base-url:https://api.openai.com}")
+    // 兜底值须自带 /v1：Spring AI 2.0 起 SDK 只补 chat/completions，不再补 /v1（详见 getDefaultEndpoint）。
+    // 该值会被 init() 播种为平台默认模型行的 endpoint，所有租户默认走它，缺 /v1 将导致全线 404。
+    @Value("${spring.ai.openai.base-url:https://api.openai.com/v1}")
     private String defaultBaseUrl;
     
-    @Value("${spring.ai.openai.chat.options.model:gpt-4o-mini}")
+    @Value("${spring.ai.openai.chat.model:gpt-4o-mini}")
     private String defaultModel;
 
     /**
@@ -184,44 +185,59 @@ public class ModelRouterService {
     }
 
     /**
-     * 创建 OpenAI 兼容的 ChatClient
+     * 创建 OpenAI 兼容的 ChatClient。
+     *
+     * <p>Spring AI 2.0 起 spring-ai-openai 改用官方 openai-java SDK，
+     * {@code OpenAiApi} 已移除。baseUrl / apiKey 下沉到 {@link OpenAiChatOptions}：
+     * {@code OpenAiChatModel.Builder#build()} 在未显式给 openAiClient 时，
+     * 会用 options 上的 baseUrl/apiKey 自行装配 SDK 客户端——正好承载我们
+     * 按租户动态换端点的路由需求。
+     *
+     * <p><b>⚠️ 不要在调用方传 per-request options</b>：Spring AI 2.0 起
+     * OpenAiChatModel#buildRequestPrompt() 对 prompt 携带的 options 是「替换」而非「合并」，
+     * 一旦调用方设了任何 options，这里的 model / baseUrl / apiKey / streamUsage(true) 会被整体丢弃
+     * —— streamUsage 丢失是静默的（token 计量记 0 不抛），直接打到计费面。
+     * 确需 per-request 覆盖时，必须从本方法的 options 复制一份再改。
      */
     private ChatClient createOpenAiCompatibleClient(AiModelConfig config) {
         String baseUrl = config.getEndpoint();
         if (baseUrl == null || baseUrl.isEmpty()) {
             baseUrl = getDefaultEndpoint(config.getProvider());
         }
-        
-        // Spring AI 1.x GA 起 OpenAiApi 改用 builder 构造
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(baseUrl)
-                .apiKey(config.getApiKey())
-                .build();
 
         // streamUsage(true)：让 OpenAI 兼容端点在流式末尾 chunk 携带 usage 信息，
         // 供 ChatServiceImpl.meterContentStream() 的 doOnNext 捕获 total_tokens。
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(config.getModelId())
+                .baseUrl(baseUrl)
+                .apiKey(config.getApiKey())
                 .streamUsage(true)
                 .build();
 
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
-                .openAiApi(openAiApi)
-                .defaultOptions(options)
+                .options(options)
                 .build();
 
         return ChatClient.builder(chatModel).build();
     }
 
     /**
-     * 获取提供商的默认端点
+     * 获取提供商的默认端点。
+     *
+     * <p><b>四个分支必须统一自带 {@code /v1}</b>：Spring AI 2.0 起改用官方 openai-java SDK，
+     * 它只往 baseUrl 后拼 {@code chat/completions} / {@code embeddings}，**不再补 {@code /v1}**
+     * （1.x 的 {@code OpenAiApi} 拼的是 {@code /v1/chat/completions}，故当年要求 baseUrl 不带 /v1，
+     * 契约在 2.0 正好翻转）。且 {@code OpenAiSetup.calculateBaseUrl()} 对 OPEN_AI provider 原样
+     * 返回、不做补全，端点缺 /v1 会直接 404。
+     *
+     * <p>刻意不做「缺 /v1 就自动补全」的归一化：404 是可见错误，自动补全只会掩盖配置错误。
      */
     private String getDefaultEndpoint(String provider) {
         return switch (provider.toLowerCase()) {
             case "dashscope" -> "https://dashscope.aliyuncs.com/compatible-mode/v1";
             case "moonshot" -> "https://api.moonshot.cn/v1";
             case "deepseek" -> "https://api.deepseek.com/v1";
-            default -> "https://api.openai.com";
+            default -> "https://api.openai.com/v1";
         };
     }
 

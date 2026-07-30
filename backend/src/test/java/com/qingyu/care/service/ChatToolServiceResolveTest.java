@@ -1,6 +1,6 @@
 package com.qingyu.care.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.repository.AiSkillRepository;

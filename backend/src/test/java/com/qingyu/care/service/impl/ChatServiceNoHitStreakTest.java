@@ -1,6 +1,6 @@
 package com.qingyu.care.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;

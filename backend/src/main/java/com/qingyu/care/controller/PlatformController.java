@@ -14,7 +14,10 @@ import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.health.HealthEndpoint;
+// Boot 4 把健康检查从 actuator 拆到独立的 spring-boot-health 模块，
+// 包名由 org.springframework.boot.actuate.health 迁到 org.springframework.boot.health.actuate.endpoint；
+// health() 返回类型虽由 HealthComponent 改为 HealthDescriptor，但 getStatus().getCode() 调用链不变。
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;

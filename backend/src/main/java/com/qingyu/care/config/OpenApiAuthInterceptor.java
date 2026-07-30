@@ -1,6 +1,6 @@
 package com.qingyu.care.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.dto.open.OpenErrorResponse;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.enums.DocumentVisibility;

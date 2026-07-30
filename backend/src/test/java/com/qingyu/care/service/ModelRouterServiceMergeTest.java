@@ -77,13 +77,14 @@ class ModelRouterServiceMergeTest {
 
     @Test
     void dedupsWhenTenantEndpointNull_matchesSharedDefaultEndpoint() {
-        // 租户模型 endpoint 为 null，运行时会走 openai 的默认端点 https://api.openai.com；
+        // 租户模型 endpoint 为 null，运行时会走 openai 的默认端点 https://api.openai.com/v1；
         // 共享模型显式配置为该默认端点。归一化后二者 key 相同，应只保留租户那条。
+        // 此处字面量须与 getDefaultEndpoint("openai") 逐字一致——Spring AI 2.0 起该端点带 /v1。
         when(repository.findByScenarioAndEnabledTrueOrderByPriorityAsc("default"))
                 .thenReturn(List.of(modelWithEndpoint("own", "openai", "gpt-a", null, OwnerScope.TENANT)));
         when(repository.findSharedModelsByScenario("default"))
                 .thenReturn(List.of(modelWithEndpoint("shared-dup", "openai", "gpt-a",
-                        "https://api.openai.com", OwnerScope.PLATFORM)));
+                        "https://api.openai.com/v1", OwnerScope.PLATFORM)));
 
         List<AiModelConfig> result = service.getModelsForScenario("default");
 

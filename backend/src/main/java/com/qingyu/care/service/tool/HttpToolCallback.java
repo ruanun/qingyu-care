@@ -1,6 +1,6 @@
 package com.qingyu.care.service.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.entity.AiTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -74,7 +74,7 @@ public class HttpToolCallback implements ToolCallback {
         if (toolInput == null || toolInput.isBlank()) {
             return Map.of();
         }
-        return mapper.readValue(toolInput, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        return mapper.readValue(toolInput, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
     }
 
     /** 把 {key} 占位符用 URL 编码后的参数值替换。 */

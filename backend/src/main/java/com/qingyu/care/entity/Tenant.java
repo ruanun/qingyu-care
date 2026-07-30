@@ -1,5 +1,6 @@
 package com.qingyu.care.entity;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
@@ -18,7 +19,9 @@ import java.time.LocalDateTime;
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 @Data
 @Builder
-@NoArgsConstructor
+// 无参构造显式标 @JsonCreator：Jackson 3 会把 @AllArgsConstructor 当隐式创建器，
+// 请求体缺省的属性会以 null 传入并覆盖 @Builder.Default 初值（详见 ChatRequest 注释）。
+@NoArgsConstructor(onConstructor_ = @JsonCreator)
 @AllArgsConstructor
 public class Tenant {
 

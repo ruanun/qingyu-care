@@ -1,6 +1,6 @@
 package com.qingyu.care.it;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimePresenceRegistry;
