@@ -33,7 +33,9 @@ public class ModelRouterService {
     @Value("${spring.ai.openai.api-key:}")
     private String defaultApiKey;
     
-    @Value("${spring.ai.openai.base-url:https://api.openai.com}")
+    // 兜底值须自带 /v1：Spring AI 2.0 起 SDK 只补 chat/completions，不再补 /v1（详见 getDefaultEndpoint）。
+    // 该值会被 init() 播种为平台默认模型行的 endpoint，所有租户默认走它，缺 /v1 将导致全线 404。
+    @Value("${spring.ai.openai.base-url:https://api.openai.com/v1}")
     private String defaultBaseUrl;
     
     @Value("${spring.ai.openai.chat.model:gpt-4o-mini}")
@@ -214,14 +216,22 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取提供商的默认端点
+     * 获取提供商的默认端点。
+     *
+     * <p><b>四个分支必须统一自带 {@code /v1}</b>：Spring AI 2.0 起改用官方 openai-java SDK，
+     * 它只往 baseUrl 后拼 {@code chat/completions} / {@code embeddings}，**不再补 {@code /v1}**
+     * （1.x 的 {@code OpenAiApi} 拼的是 {@code /v1/chat/completions}，故当年要求 baseUrl 不带 /v1，
+     * 契约在 2.0 正好翻转）。且 {@code OpenAiSetup.calculateBaseUrl()} 对 OPEN_AI provider 原样
+     * 返回、不做补全，端点缺 /v1 会直接 404。
+     *
+     * <p>刻意不做「缺 /v1 就自动补全」的归一化：404 是可见错误，自动补全只会掩盖配置错误。
      */
     private String getDefaultEndpoint(String provider) {
         return switch (provider.toLowerCase()) {
             case "dashscope" -> "https://dashscope.aliyuncs.com/compatible-mode/v1";
             case "moonshot" -> "https://api.moonshot.cn/v1";
             case "deepseek" -> "https://api.deepseek.com/v1";
-            default -> "https://api.openai.com";
+            default -> "https://api.openai.com/v1";
         };
     }
 
