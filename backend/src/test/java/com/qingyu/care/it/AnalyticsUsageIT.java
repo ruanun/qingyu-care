@@ -50,7 +50,7 @@ class AnalyticsUsageIT extends AbstractPostgresIT {
                         .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asText();
+        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asString();
     }
 
     private void seedUsage(Long tenant, Long app, long calls, long tokens) {

@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -184,30 +183,31 @@ public class ModelRouterService {
     }
 
     /**
-     * 创建 OpenAI 兼容的 ChatClient
+     * 创建 OpenAI 兼容的 ChatClient。
+     *
+     * <p>Spring AI 2.0 起 spring-ai-openai 改用官方 openai-java SDK，
+     * {@code OpenAiApi} 已移除。baseUrl / apiKey 下沉到 {@link OpenAiChatOptions}：
+     * {@code OpenAiChatModel.Builder#build()} 在未显式给 openAiClient 时，
+     * 会用 options 上的 baseUrl/apiKey 自行装配 SDK 客户端——正好承载我们
+     * 按租户动态换端点的路由需求。
      */
     private ChatClient createOpenAiCompatibleClient(AiModelConfig config) {
         String baseUrl = config.getEndpoint();
         if (baseUrl == null || baseUrl.isEmpty()) {
             baseUrl = getDefaultEndpoint(config.getProvider());
         }
-        
-        // Spring AI 1.x GA 起 OpenAiApi 改用 builder 构造
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(baseUrl)
-                .apiKey(config.getApiKey())
-                .build();
 
         // streamUsage(true)：让 OpenAI 兼容端点在流式末尾 chunk 携带 usage 信息，
         // 供 ChatServiceImpl.meterContentStream() 的 doOnNext 捕获 total_tokens。
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(config.getModelId())
+                .baseUrl(baseUrl)
+                .apiKey(config.getApiKey())
                 .streamUsage(true)
                 .build();
 
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
-                .openAiApi(openAiApi)
-                .defaultOptions(options)
+                .options(options)
                 .build();
 
         return ChatClient.builder(chatModel).build();

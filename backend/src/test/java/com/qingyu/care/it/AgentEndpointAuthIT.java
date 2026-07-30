@@ -56,7 +56,7 @@ class AgentEndpointAuthIT extends AbstractPostgresIT {
         MvcResult r = mockMvc.perform(post("/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk()).andReturn();
-        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asText();
+        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asString();
     }
 
     @Test

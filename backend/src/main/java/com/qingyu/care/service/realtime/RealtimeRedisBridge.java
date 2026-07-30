@@ -73,11 +73,11 @@ public class RealtimeRedisBridge {
         try {
             String key = channel.startsWith(CHANNEL_PREFIX) ? channel.substring(CHANNEL_PREFIX.length()) : channel;
             JsonNode node = objectMapper.readTree(payload);
-            String origin = node.path("origin").asText();
+            String origin = node.path("origin").asString();
             if (instanceId.equals(origin)) {
                 return;
             }
-            hub.emitLocal(key, node.path("event").asText(), node.path("data").asText());
+            hub.emitLocal(key, node.path("event").asString(), node.path("data").asString());
         } catch (Exception e) {
             log.debug("Redis 实时消息解析失败 channel={}: {}", channel, e.getMessage());
         }

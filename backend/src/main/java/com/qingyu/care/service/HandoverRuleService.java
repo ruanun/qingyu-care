@@ -154,8 +154,8 @@ public class HandoverRuleService {
                         JsonNode keywords = config.get("keywords");
                         if (keywords != null && keywords.isArray()) {
                             for (JsonNode keyword : keywords) {
-                                if (message.contains(keyword.asText())) {
-                                    log.info("Keyword trigger matched: {}", keyword.asText());
+                                if (message.contains(keyword.asString())) {
+                                    log.info("Keyword trigger matched: {}", keyword.asString());
                                     return true;
                                 }
                             }

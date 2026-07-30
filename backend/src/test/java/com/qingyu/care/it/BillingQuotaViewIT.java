@@ -43,7 +43,7 @@ class BillingQuotaViewIT extends AbstractPostgresIT {
         MvcResult r = mockMvc.perform(post("/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"" + u + "\",\"password\":\"" + p + "\"}"))
                 .andExpect(status().isOk()).andReturn();
-        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asText();
+        return om.readTree(r.getResponse().getContentAsString()).path("data").path("token").asString();
     }
 
     @Test

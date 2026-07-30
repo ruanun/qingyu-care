@@ -61,14 +61,16 @@ class DocMetadataBackfillIT extends AbstractPostgresIT {
     void appId空串chunk_按documentId反查document表回填() {
         // 先造 document 行（直接 SQL，绕过实体监听器，显式给 tenant/app）
         jdbcTemplate.update(
-                "INSERT INTO knowledge_base(name, enabled, tenant_id, app_id) VALUES ('回填库', true, ?, ?)",
+                "INSERT INTO knowledge_base(name, enabled, tenant_id, app_id, created_at, updated_at) "
+                        + "VALUES ('回填库', true, ?, ?, now(), now())",
                 Long.valueOf(TID), 62002L);
         Long kbId = jdbcTemplate.queryForObject(
                 "SELECT id FROM knowledge_base WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
                 Long.class, Long.valueOf(TID));
         jdbcTemplate.update(
-                "INSERT INTO document(name, document_type, status, chunk_count, knowledge_base_id, tenant_id, app_id) "
-                        + "VALUES ('回填文档', 'TEXT', 'COMPLETED', 1, ?, ?, ?)",
+                "INSERT INTO document(name, document_type, status, chunk_count, knowledge_base_id, tenant_id, app_id, "
+                        + "created_at, updated_at) "
+                        + "VALUES ('回填文档', 'TEXT', 'COMPLETED', 1, ?, ?, ?, now(), now())",
                 kbId, Long.valueOf(TID), 62002L);
         Long docId = jdbcTemplate.queryForObject(
                 "SELECT id FROM document WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
@@ -90,15 +92,17 @@ class DocMetadataBackfillIT extends AbstractPostgresIT {
         // 防回归：jsonb_set(..., to_jsonb(NULL::text)) 返回 NULL，若不防 tenant_id NULL
         // 会把整行 metadata 静默置空且不可自愈（documentId 键也没了）
         jdbcTemplate.update(
-                "INSERT INTO knowledge_base(name, enabled, tenant_id, app_id) VALUES ('回填库', true, ?, ?)",
+                "INSERT INTO knowledge_base(name, enabled, tenant_id, app_id, created_at, updated_at) "
+                        + "VALUES ('回填库', true, ?, ?, now(), now())",
                 Long.valueOf(TID), 62002L);
         Long kbId = jdbcTemplate.queryForObject(
                 "SELECT id FROM knowledge_base WHERE tenant_id = ? ORDER BY id DESC LIMIT 1",
                 Long.class, Long.valueOf(TID));
         // 造 tenant_id 为 NULL、app_id 有值的 document 行（历史脏数据形态）
         jdbcTemplate.update(
-                "INSERT INTO document(name, document_type, status, chunk_count, knowledge_base_id, tenant_id, app_id) "
-                        + "VALUES ('回填孤儿文档', 'TEXT', 'COMPLETED', 1, ?, NULL, ?)",
+                "INSERT INTO document(name, document_type, status, chunk_count, knowledge_base_id, tenant_id, app_id, "
+                        + "created_at, updated_at) "
+                        + "VALUES ('回填孤儿文档', 'TEXT', 'COMPLETED', 1, ?, NULL, ?, now(), now())",
                 kbId, 62002L);
         Long docId = jdbcTemplate.queryForObject(
                 "SELECT id FROM document WHERE name = '回填孤儿文档' ORDER BY id DESC LIMIT 1", Long.class);
