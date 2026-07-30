@@ -1,6 +1,7 @@
 package com.qingyu.care.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.dromara.x.file.storage.core.platform.AmazonS3V2FileStorageClientFactory.AmazonS3V2Client;
 import org.dromara.x.file.storage.core.platform.FileStorageClientFactory;
 import org.dromara.x.file.storage.spring.SpringFileStorageProperties;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,8 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
 import java.util.Collections;
@@ -53,13 +56,20 @@ public class FileStorageConfig {
     /**
      * 自定义 amazon-s3-v2 Client 工厂，启用 Path Style Access。
      * 注意：返回值必须是 List&lt;List&lt;FileStorageClientFactory&lt;?&gt;&gt;&gt; 类型。
+     *
+     * <p><b>泛型实参必须是 {@link AmazonS3V2Client} 而非裸 {@code S3Client}</b>：
+     * {@code AmazonS3V2FileStorage.getClient()} 对工厂产物做的是无条件 checkcast
+     * （字节码 {@code checkcast AmazonS3V2Client}），返回裸 {@code S3Client} 会让每次上传都抛
+     * {@code DefaultS3Client cannot be cast to AmazonS3V2Client}。该 wrapper 同时承载
+     * client 与 presigner，故两者都要预置为 path-style——wrapper 自身惰性构建时只设
+     * endpointOverride、不设 forcePathStyle，留空会退回 virtual-hosted-style 打不通 RustFS。
      */
     @Bean
     public List<List<FileStorageClientFactory<?>>> myAmazonS3V2FileStorageClientFactoryList(SpringFileStorageProperties properties) {
         List<FileStorageClientFactory<?>> factoryList = properties.getAmazonS3V2().stream()
                 .filter(config -> config.getEnableStorage() != null && config.getEnableStorage())
-                .map(config -> (FileStorageClientFactory<?>) new FileStorageClientFactory<S3Client>() {
-                    private volatile S3Client client;
+                .map(config -> (FileStorageClientFactory<?>) new FileStorageClientFactory<AmazonS3V2Client>() {
+                    private volatile AmazonS3V2Client client;
 
                     @Override
                     public String getPlatform() {
@@ -67,7 +77,7 @@ public class FileStorageConfig {
                     }
 
                     @Override
-                    public S3Client getClient() {
+                    public AmazonS3V2Client getClient() {
                         if (client == null) {
                             synchronized (this) {
                                 if (client == null) {
@@ -76,8 +86,14 @@ public class FileStorageConfig {
                                     log.info("  endpoint: {}", config.getEndPoint());
                                     log.info("  region: {}", config.getRegion());
                                     log.info("  bucket: {}", config.getBucketName());
-                                    client = buildPathStyleClient(config.getAccessKey(), config.getSecretKey(),
-                                            config.getRegion(), config.getEndPoint());
+                                    AmazonS3V2Client wrapper = new AmazonS3V2Client(config.getAccessKey(),
+                                            config.getSecretKey(), config.getRegion(), config.getEndPoint());
+                                    // 预置两者，杜绝 wrapper 走自身惰性构建（那条路径不带 forcePathStyle）
+                                    wrapper.setClient(buildPathStyleClient(config.getAccessKey(), config.getSecretKey(),
+                                            config.getRegion(), config.getEndPoint()));
+                                    wrapper.setPresigner(buildPathStylePresigner(config.getAccessKey(), config.getSecretKey(),
+                                            config.getRegion(), config.getEndPoint()));
+                                    client = wrapper;
                                     log.info("S3 客户端创建成功");
                                 }
                             }
@@ -110,6 +126,19 @@ public class FileStorageConfig {
                 .region(Region.of(region))
                 // 关键：启用 Path Style Access（RustFS/MinIO 必需）
                 .forcePathStyle(true);
+        if (endPoint != null && !endPoint.isBlank()) {
+            builder.endpointOverride(URI.create(endPoint));
+        }
+        return builder.build();
+    }
+
+    /** 构建启用 path-style 的预签名器（SDK v2）；x-file-storage 生成预签名 URL 时用它。 */
+    private static S3Presigner buildPathStylePresigner(String accessKey, String secretKey, String region, String endPoint) {
+        S3Presigner.Builder builder = S3Presigner.builder()
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(accessKey, secretKey)))
+                .region(Region.of(region))
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build());
         if (endPoint != null && !endPoint.isBlank()) {
             builder.endpointOverride(URI.create(endPoint));
         }
