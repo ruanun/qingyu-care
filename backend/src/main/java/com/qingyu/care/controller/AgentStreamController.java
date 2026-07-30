@@ -38,9 +38,13 @@ public class AgentStreamController {
         Long tenantId = TenantContext.getTenantId();
         Long agentUserId = StpUtil.getLoginIdAsLong();
         String key = RealtimeKeys.agent(tenantId, agentUserId);
+        String broadcastKey = RealtimeKeys.agentBroadcast(tenantId);
         // 订阅即上线、断连即下线：presence 广播给同租户其他坐席
         realtimeNotifier.presenceToTenantAgents(tenantId, agentUserId, true);
-        return realtimeHub.subscribe(key)
+        // 同时订阅自己的单播键 + 本租户广播键：新待接/presence 等扇出事件走广播键一次 publish
+        // 即可跨实例送达；doFinally 挂在 merge 后的流上——两条子流都结束（坐席断连）才触发一次
+        // presence offline，语义与合并前单流订阅等价。
+        return Flux.merge(realtimeHub.subscribe(key), realtimeHub.subscribe(broadcastKey))
                 .doFinally(sig -> realtimeNotifier.presenceToTenantAgents(tenantId, agentUserId, false));
     }
 

@@ -19,4 +19,12 @@ public final class RealtimeKeys {
     public static String agentPrefix(Long tenantId) {
         return "agent:" + tenantId + ":";
     }
+
+    /**
+     * 某租户的坐席广播键：所有坐席订阅流额外 merge 订阅此键，扇出事件（新待接/presence 等）
+     * 一次 publish 即可跨实例送达该租户全部在线坐席，无需枚举本地在线坐席逐个 publish。
+     */
+    public static String agentBroadcast(Long tenantId) {
+        return "agent-bcast:" + tenantId;
+    }
 }

@@ -46,11 +46,14 @@ public class RealtimeNotifier {
                 messageJson(msg.getSession() != null ? msg.getSession().getSessionId() : null, msg));
     }
 
-    /** 广播一条事件给本租户所有在线坐席。 */
+    /**
+     * 广播一条事件给本租户所有在线坐席。改走单个租户广播键（{@link RealtimeKeys#agentBroadcast}）
+     * 一次 publish，而非枚举本实例在线坐席逐个 publish——枚举只能看到本实例订阅者，多实例部署下
+     * 会漏发给连在其它实例的坐席。坐席端（{@code AgentStreamController}）同时订阅自己的单播键与
+     * 该广播键，靠 RealtimeHub 的 Redis 桥接把广播送达所有实例的本地订阅者。
+     */
     public void toTenantAgents(Long tenantId, String event, String data) {
-        for (String key : hub.onlineKeys(RealtimeKeys.agentPrefix(tenantId))) {
-            hub.publish(key, event, data);
-        }
+        hub.publish(RealtimeKeys.agentBroadcast(tenantId), event, data);
     }
 
     /** 便捷：广播「新待接会话」给本租户在线坐席。 */
