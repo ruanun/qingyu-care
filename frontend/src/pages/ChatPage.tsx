@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Bot, Loader2, Info, Database, UserPen, AlertCircle } from 'lucide-react';
+import { Send, Square, User, Bot, Loader2, Info, Database, UserPen, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -8,12 +8,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { chatService } from '@/api/chat';
-import type { ChatMessage, ChatMessageEntity, KnowledgeHit, UiPart } from '@/types';
+import type { ChatMessage, ChatMessageEntity, KnowledgeHit, UiNode, UiPart } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { JsonRender } from '@/components/chat/JsonRender';
 import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
 import { loadChatSession, saveChatSession, clearChatSession } from '@/lib/chatSession';
+import { streamChat } from '@/lib/chatStream';
 
 /** 解析历史消息的 uiSpec JSON 字符串为 UiPart[]；空/损坏时返回 undefined（fail-soft，退纯文本渲染）。 */
 function parseUiSpec(uiSpec?: string | null): UiPart[] | undefined {
@@ -75,58 +76,79 @@ const ChatPage: React.FC = () => {
         })();
     }, []);
 
+    const abortRef = useRef<AbortController | null>(null);
+
+    /** 往占位消息追加文本：末尾是 text 片段就接上去，否则新开一块（卡片之后的文本另起一块）。 */
+    const appendDelta = (msgId: number, text: string) => {
+        setMessages((prev) => prev.map((m) => {
+            if (m.id !== msgId) return m;
+            const parts = [...(m.uiParts ?? [])];
+            const last = parts[parts.length - 1];
+            if (last && last.kind === 'text') parts[parts.length - 1] = { ...last, text: (last.text ?? '') + text };
+            else parts.push({ kind: 'text', text });
+            return { ...m, content: m.content + text, uiParts: parts };
+        }));
+    };
+
+    const appendCard = (msgId: number, node: UiNode) => {
+        setMessages((prev) => prev.map((m) =>
+            m.id !== msgId ? m : { ...m, uiParts: [...(m.uiParts ?? []), { kind: 'ui', node }] }));
+    };
+
     const send = async (text: string) => {
         if (!text.trim() || isLoading) return;
 
+        const now = Date.now();
         const userMessage: ChatMessage = {
-            id: Date.now(),
-            role: 'USER',
-            content: text,
-            createdAt: new Date().toISOString(),
+            id: now, role: 'USER', content: text, createdAt: new Date().toISOString(),
+        };
+        const placeholderId = now + 1;
+        const placeholder: ChatMessage = {
+            id: placeholderId, role: 'ASSISTANT', content: '', createdAt: new Date().toISOString(), uiParts: [],
         };
 
-        setMessages((prev) => [...prev, userMessage]);
+        setMessages((prev) => [...prev, userMessage, placeholder]);
         setInput('');
         setIsLoading(true);
 
+        const controller = new AbortController();
+        abortRef.current = controller;
+
         try {
-            const response = await chatService.sendMessage({
-                userId,
-                sessionId,
-                message: text,
-            });
-
-            if (response.code === 200) {
-                const aiResponse: ChatMessage = {
-                    id: Date.now() + 1,
-                    role: 'ASSISTANT',
-                    content: response.data.content,
-                    createdAt: new Date().toISOString(),
-                    uiParts: response.data.uiParts,
-                };
-                setMessages((prev) => [...prev, aiResponse]);
-                setSessionId(response.data.sessionId);
-                saveChatSession(userId, response.data.sessionId);
-                setSuggestHandover(response.data.suggestHandover || false);
-
-                // 存储知识命中信息
-                if (response.data.knowledgeHits && response.data.knowledgeHits.length > 0) {
-                    setKnowledgeHitsMap(prev => ({
-                        ...prev,
-                        [aiResponse.id]: response.data.knowledgeHits
-                    }));
-                }
-            }
+            await streamChat({ userId, sessionId, message: text }, {
+                onStart: (d) => {
+                    setSessionId(d.sessionId);
+                    saveChatSession(userId, d.sessionId);
+                    setSuggestHandover(d.suggestHandover);
+                    if (d.knowledgeHits?.length) {
+                        setKnowledgeHitsMap((prev) => ({ ...prev, [placeholderId]: d.knowledgeHits }));
+                    }
+                },
+                onDelta: (t) => appendDelta(placeholderId, t),
+                onCard: (n) => appendCard(placeholderId, n),
+                onDone: (messageId) => {
+                    if (messageId == null) return;
+                    // 占位 id 换成真实 messageId；知识命中以消息 id 为 key，必须一并迁移
+                    setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, id: messageId } : m)));
+                    setKnowledgeHitsMap((prev) => {
+                        if (!prev[placeholderId]) return prev;
+                        const { [placeholderId]: hits, ...rest } = prev;
+                        return { ...rest, [messageId]: hits };
+                    });
+                },
+                onError: (msg) => appendDelta(placeholderId, `\n\n${msg}`),
+            }, controller.signal);
         } catch (error: any) {
-            toast({
-                variant: "destructive",
-                title: "发送失败",
-                description: error.message,
-            });
+            if (error?.name !== 'AbortError') {
+                toast({ variant: 'destructive', title: '发送失败', description: error?.message });
+            }
         } finally {
+            abortRef.current = null;
             setIsLoading(false);
         }
     };
+
+    const handleStop = () => abortRef.current?.abort();
 
     const handleSend = () => send(input);
 
@@ -285,11 +307,13 @@ const ChatPage: React.FC = () => {
                                     </div>
                                 </div>
                                 <Button
-                                    onClick={handleSend}
-                                    disabled={isLoading || !input.trim()}
+                                    onClick={isLoading ? handleStop : handleSend}
+                                    disabled={!isLoading && !input.trim()}
+                                    variant={isLoading ? 'destructive' : 'default'}
                                     className="h-12 w-12 rounded-xl shadow-lg transition-transform active:scale-95"
+                                    title={isLoading ? '停止生成' : '发送'}
                                 >
-                                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                                    {isLoading ? <Square className="w-4 h-4" /> : <Send className="w-5 h-5" />}
                                 </Button>
                                 {sessionId && (
                                     <Button
@@ -355,7 +379,7 @@ const ChatPage: React.FC = () => {
                         </li>
                         <li className="flex items-start gap-2">
                             <div className="w-1 h-1 rounded-full bg-primary mt-1.5 shrink-0" />
-                            流式响应 (即将推出)
+                            流式响应与生成式卡片
                         </li>
                         <li className="flex items-start gap-2">
                             <div className="w-1 h-1 rounded-full bg-primary mt-1.5 shrink-0" />
