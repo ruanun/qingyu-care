@@ -25,8 +25,9 @@ public class UiSpecService {
 
     private final ObjectMapper objectMapper;
 
-    /** 闭合的 ```spec ... ``` 围栏；DOTALL 让 . 匹配换行，非贪婪取最近的闭合。 */
-    private static final Pattern FENCE = Pattern.compile("```spec\\s*\\r?\\n(.*?)```", Pattern.DOTALL);
+    /** 闭合的 ```spec ... ``` 围栏；DOTALL 让 . 匹配换行，非贪婪取最近的闭合。
+     *  StreamingSpecSplitter 的增量识别规则与此严格同源。 */
+    static final Pattern FENCE = Pattern.compile("```spec\\s*\\r?\\n(.*?)```", Pattern.DOTALL);
 
     public record ParseResult(List<UiPart> uiParts, String plainText) {}
 
