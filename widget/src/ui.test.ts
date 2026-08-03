@@ -108,3 +108,48 @@ describe('markOpened 抑制首开欢迎语', () => {
     expect(shadowText()).not.toContain('你好，欢迎咨询');
   });
 });
+
+describe('beginBotMessage 流式渲染', () => {
+  it('流式消息按序渲染文本与卡片，卡片后另起文本块', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const bot = ui.beginBotMessage();
+
+    bot.appendText('查到订单：');
+    bot.appendCard({ type: 'text', props: { value: '订单号 A1' } });
+    bot.appendText('还需要什么？');
+    bot.finish();
+
+    const row = document.querySelector('div')!.shadowRoot!.querySelector('.qy-msg.bot .qy-text')!;
+    expect(row.children.length).toBe(3);          // 文本块 + 卡片 + 新文本块
+    expect(row.textContent).toContain('查到订单：');
+    expect(row.textContent).toContain('订单号 A1');
+    expect(row.textContent).toContain('还需要什么？');
+  });
+
+  it('流式文本全程 textContent，HTML 不被解析（XSS）', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const bot = ui.beginBotMessage();
+
+    bot.appendText('<img src=x onerror=alert(1)>');
+    bot.finish();
+
+    const root = document.querySelector('div')!.shadowRoot!;
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('.qy-msg.bot .qy-text')!.textContent)
+      .toContain('<img src=x onerror=alert(1)>');
+  });
+
+  it('多次 appendText 累加进同一个文本块', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const bot = ui.beginBotMessage();
+
+    bot.appendText('你');
+    bot.appendText('好');
+    bot.finish();
+
+    const container = document.querySelector('div')!.shadowRoot!
+      .querySelector('.qy-msg.bot .qy-text')!;
+    expect(container.children.length).toBe(1);
+    expect(container.textContent).toBe('你好');
+  });
+});

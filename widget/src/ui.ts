@@ -1,6 +1,6 @@
 import { buildStyles } from './styles';
 import { renderNode } from './render';
-import type { WidgetBrand, UiPart } from './api';
+import type { WidgetBrand, UiPart, UiNode } from './api';
 
 export interface UiHandlers {
   onSend: (message: string) => void;
@@ -15,6 +15,13 @@ export interface BotFeedback {
   onFeedback: (value: 1 | -1) => void;
 }
 
+/** 流式 AI 消息句柄：由 beginBotMessage 返回，供调用方逐步喂入文本增量/卡片，最后 finish 收尾。 */
+export interface StreamingBotMessage {
+  appendText: (text: string) => void;
+  appendCard: (node: UiNode) => void;
+  finish: (feedback?: BotFeedback) => void;
+}
+
 export interface WidgetUi {
   addUserMessage: (text: string) => void;
   addBotMessage: (text: string, feedback?: BotFeedback, uiParts?: UiPart[]) => void;
@@ -26,6 +33,8 @@ export interface WidgetUi {
   setInputEnabled: (on: boolean) => void;
   /** 标记「已开场」，抑制首次打开面板时的欢迎语插入（用于会话恢复出历史消息后，避免与历史重复问候）。 */
   markOpened: () => void;
+  /** 开始一条流式 AI 消息，返回增量渲染句柄（文本追加/插卡片/收尾）。 */
+  beginBotMessage: () => StreamingBotMessage;
 }
 
 /**
@@ -132,38 +141,81 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     return row;
   }
 
+  /** 给消息行挂上赞/踩按钮（addBotMessage 与流式 finish 共用）。 */
+  function attachFeedback(row: HTMLDivElement, feedback: BotFeedback) {
+    // 竖排：气泡在上、反馈按钮在下方左对齐；不影响无反馈消息的横排布局
+    row.classList.add('has-feedback');
+    const bar = document.createElement('div');
+    bar.className = 'qy-feedback';
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.textContent = '👍';
+    up.setAttribute('aria-label', '有帮助');
+    const down = document.createElement('button');
+    down.type = 'button';
+    down.textContent = '👎';
+    down.setAttribute('aria-label', '没帮助');
+    const pick = (value: 1 | -1, chosen: HTMLButtonElement) => {
+      feedback.onFeedback(value);
+      up.disabled = true;
+      down.disabled = true;
+      chosen.classList.add('active');
+    };
+    up.addEventListener('click', () => pick(1, up));
+    down.addEventListener('click', () => pick(-1, down));
+    bar.appendChild(up);
+    bar.appendChild(down);
+    row.appendChild(bar);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  /**
+   * 开始一条流式 AI 消息，返回增量渲染句柄。
+   * 文本全程 textContent（绝不 innerHTML）；卡片复用 renderNode（内含 safeUrl 白名单与结构守卫）。
+   */
+  function beginBotMessage(): StreamingBotMessage {
+    const row = document.createElement('div');
+    row.className = 'qy-msg bot';
+    const container = document.createElement('div');
+    container.className = 'qy-text';
+    row.appendChild(container);
+    msgs.appendChild(row);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    // 当前文本块；插入卡片后置空，使卡片之后的文本另起一块（与后端 uiParts 的分块语义一致）
+    let textEl: HTMLDivElement | null = null;
+    const onAction = handlers.onAction ?? handlers.onSend;
+
+    return {
+      appendText(text: string) {
+        if (!text) return;
+        if (!textEl) {
+          textEl = document.createElement('div');
+          textEl.className = 'qy-node-text';
+          container.appendChild(textEl);
+        }
+        textEl.textContent = (textEl.textContent ?? '') + text;
+        msgs.scrollTop = msgs.scrollHeight;
+      },
+      appendCard(node: UiNode) {
+        const el = renderNode(node, onAction);
+        if (el) container.appendChild(el);
+        textEl = null;
+        msgs.scrollTop = msgs.scrollHeight;
+      },
+      finish(feedback?: BotFeedback) {
+        if (feedback) attachFeedback(row, feedback);
+      },
+    };
+  }
+
   function addUserMessage(text: string) {
     appendMsg(text, 'user');
   }
   function addBotMessage(text: string, feedback?: BotFeedback, uiParts?: UiPart[]) {
     const hasUi = Array.isArray(uiParts) && uiParts.some((p) => p.kind === 'ui' && p.node);
     const row = hasUi ? appendUiMsg(uiParts!) : appendMsg(text, 'bot');
-    if (feedback) {
-      // 竖排：气泡在上、反馈按钮在下方左对齐；不影响无反馈消息的横排布局
-      row.classList.add('has-feedback');
-      const bar = document.createElement('div');
-      bar.className = 'qy-feedback';
-      const up = document.createElement('button');
-      up.type = 'button';
-      up.textContent = '👍';
-      up.setAttribute('aria-label', '有帮助');
-      const down = document.createElement('button');
-      down.type = 'button';
-      down.textContent = '👎';
-      down.setAttribute('aria-label', '没帮助');
-      const pick = (value: 1 | -1, chosen: HTMLButtonElement) => {
-        feedback.onFeedback(value);
-        up.disabled = true;
-        down.disabled = true;
-        chosen.classList.add('active');
-      };
-      up.addEventListener('click', () => pick(1, up));
-      down.addEventListener('click', () => pick(-1, down));
-      bar.appendChild(up);
-      bar.appendChild(down);
-      row.appendChild(bar);
-      msgs.scrollTop = msgs.scrollHeight;
-    }
+    if (feedback) attachFeedback(row, feedback);
   }
 
   function addAgentMessage(text: string) {
@@ -209,6 +261,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     setTyping,
     setInputEnabled,
     markOpened,
+    beginBotMessage,
   };
 }
 

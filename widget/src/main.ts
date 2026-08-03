@@ -2,8 +2,10 @@ import { resolveConfig } from './config';
 import { createApi, SessionExpiredError } from './api';
 import { loadSession, saveSession, clearSession } from './session';
 import { mountUi } from './ui';
+import type { StreamingBotMessage } from './ui';
 import { connectSse } from './sse';
 import { restoreHistory } from './history';
+import type { ChatStreamHandlers } from './chatStream';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
 function sessionStateText(kind: string): string {
@@ -102,42 +104,57 @@ async function init(): Promise<void> {
     ui.addUserMessage(message);
     ui.setInputEnabled(false);
     ui.setTyping(true);
+
+    let bot: StreamingBotMessage | null = null;
+    // 首个正文事件到达时才撤「输入中…」并建消息行，避免空气泡
+    const ensureBot = (): StreamingBotMessage => {
+      if (!bot) {
+        ui.setTyping(false);
+        bot = ui.beginBotMessage();
+      }
+      return bot;
+    };
+
     try {
-      const reply = await sendWithRetry(message);
-      ensureInbox(reply.sessionId);
-      ui.setTyping(false);
-      const mid = reply.messageId;
-      ui.addBotMessage(
-        reply.reply,
-        mid
-          ? { onFeedback: (v) => void api.feedback(reply.sessionId, mid, v) }
-          : undefined,
-        reply.uiParts,
-      );
+      await streamWithRetry(message, {
+        onStart: (d) => {
+          sessionId = d.sessionId;
+          saveSession(cfg!.appKey, d.sessionId);
+          ensureInbox(d.sessionId);   // 流首即建坐席通道，不必等整条回复结束
+        },
+        onDelta: (t) => ensureBot().appendText(t),
+        onCard: (n) => ensureBot().appendCard(n),
+        onDone: (messageId) => {
+          const sid = sessionId;
+          ensureBot().finish(
+            messageId != null && messageId > 0 && sid
+              ? { onFeedback: (v) => void api.feedback(sid, messageId, v) }
+              : undefined,
+          );
+        },
+        onError: (msg) => ensureBot().appendText(`\n${msg}`),
+      });
     } catch (e) {
-      ui.setTyping(false);
-      ui.addBotMessage('抱歉，服务暂时不可用，请稍后再试。');
+      if (bot) (bot as StreamingBotMessage).appendText('\n回复中断，请重试。');
+      else ui.addBotMessage('抱歉，服务暂时不可用，请稍后再试。');
       console.warn('[Qingyu Widget] 发送失败', e);
     } finally {
+      ui.setTyping(false);
       ui.setInputEnabled(true);
     }
   }
 
-  // 会话失效兜底：首次 404 → 清本地会话、以新会话重发一次；用户无感
-  async function sendWithRetry(message: string) {
+  // 会话失效兜底：首次 404 → 清本地会话、以新会话重发一次；用户无感。
+  // 404 发生在响应头阶段（尚未开始吐字），故重试不会造成半截内容重复。
+  async function streamWithRetry(message: string, handlers: ChatStreamHandlers): Promise<void> {
     try {
-      const reply = await api.send(message, sessionId);
-      sessionId = reply.sessionId;
-      saveSession(cfg!.appKey, sessionId);
-      return reply;
+      await api.stream(message, sessionId, handlers);
     } catch (e) {
       if (e instanceof SessionExpiredError) {
         clearSession(cfg!.appKey);
         sessionId = null;
-        const reply = await api.send(message, null);
-        sessionId = reply.sessionId;
-        saveSession(cfg!.appKey, sessionId);
-        return reply;
+        await api.stream(message, null, handlers);
+        return;
       }
       throw e;
     }
