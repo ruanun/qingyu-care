@@ -12,8 +12,8 @@ export interface SseConnection {
   close: () => void;
 }
 
-/** 从 localStorage 读鉴权头（与 api/client.ts 请求拦截器同源）。 */
-function authHeaders(): Record<string, string> {
+/** 从 localStorage 读鉴权头（与 api/client.ts 请求拦截器同源）。chatStream.ts 复用。 */
+export function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'text/event-stream' };
   try {
     const auth = localStorage.getItem('qingyu-auth');
