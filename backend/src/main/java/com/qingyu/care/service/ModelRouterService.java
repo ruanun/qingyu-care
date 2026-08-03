@@ -16,8 +16,13 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * 模型路由服务
@@ -291,5 +296,53 @@ public class ModelRouterService {
      */
     public ChatClient getDefaultChatClient() {
         return getChatClientForScenario("default");
+    }
+
+    /**
+     * 流式调用 + 模型故障回退：按场景取模型列表依次尝试，
+     * <b>只在首个 chunk 尚未发出时</b>才切换下一个模型（已经开吐的流无法重放）。
+     * 与非流式 {@link #callWithFallback} 对应，让流式路径不再是单模型裸奔。
+     */
+    public Flux<org.springframework.ai.chat.model.ChatResponse> streamWithFallback(
+            String scenario,
+            Function<ChatClient, Flux<org.springframework.ai.chat.model.ChatResponse>> streamRunner) {
+        List<AiModelConfig> models = getModelsForScenario(scenario);
+        if (models.isEmpty()) {
+            throw new RuntimeException("没有可用的 AI 模型配置");
+        }
+        // 模型列表与 ChatClient 的创建都在调用线程完成（依赖 TenantContext），
+        // 只把「发起请求」延后到订阅时——订阅发生在 Reactor 线程，那时上下文已可能被清理。
+        List<Supplier<Flux<org.springframework.ai.chat.model.ChatResponse>>> attempts = new ArrayList<>();
+        for (AiModelConfig model : models) {
+            ChatClient client = createChatClient(model);
+            attempts.add(() -> {
+                log.debug("Streaming with model: {} ({})", model.getName(), model.getModelId());
+                return streamRunner.apply(client);
+            });
+        }
+        return streamWithFallbackChain(attempts);
+    }
+
+    /**
+     * 纯方法：按顺序尝试各次流式调用，仅在「尚未发出任何元素」时才回退到下一个。
+     * static 免容器单测（同 ChatServiceImpl#meterContentStream 惯例）。
+     */
+    static Flux<org.springframework.ai.chat.model.ChatResponse> streamWithFallbackChain(
+            List<Supplier<Flux<org.springframework.ai.chat.model.ChatResponse>>> attempts) {
+        return attemptStream(attempts, 0);
+    }
+
+    private static Flux<org.springframework.ai.chat.model.ChatResponse> attemptStream(
+            List<Supplier<Flux<org.springframework.ai.chat.model.ChatResponse>>> attempts, int index) {
+        AtomicBoolean emitted = new AtomicBoolean(false);
+        return Flux.defer(attempts.get(index)::get)
+                .doOnNext(x -> emitted.set(true))
+                .onErrorResume(e -> {
+                    if (emitted.get() || index + 1 >= attempts.size()) {
+                        return Flux.error(e);
+                    }
+                    log.warn("流式模型调用失败，切换下一个模型: {}", e.getMessage());
+                    return attemptStream(attempts, index + 1);
+                });
     }
 }
