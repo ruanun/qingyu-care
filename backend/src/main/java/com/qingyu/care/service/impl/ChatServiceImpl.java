@@ -83,14 +83,15 @@ public class ChatServiceImpl implements ChatService {
     private final UiSpecService uiSpecService;
     private final ObjectMapper objectMapper;
 
-    // 结构化卡片：是否向系统 Prompt 注入卡片能力片段（仅非流式 chat() 生效，streamChat 恒不注入）
+    // 结构化卡片：是否向系统 Prompt 注入卡片能力片段（流式与非流式均注入；
+    // 流式由 StreamingSpecSplitter 在围栏闭合时增量下发 CARD 事件）
     @Value("${qingyu.care.cards.enabled:true}")
     private boolean cardsEnabled;
 
     /**
      * 结构化卡片能力 Prompt 片段：追加在系统提示末尾，告知模型可用 ```spec 围栏内联输出结构化 UI
      * 节点（与普通文字交错）。仅在 cardsEnabled 开启且 buildMessages(withCards=true) 时注入
-     * （即仅非流式 chat() 主路；streamChat 恒不注入，流式卡片留 SP3）。
+     * （chat() 与 streamChat() 均传 withCards=true）。
      */
     private static final String CARD_PROMPT = """
 
@@ -215,7 +216,7 @@ public class ChatServiceImpl implements ChatService {
 
         // 解析当前应用的 skill/工具（请求线程内，依赖 TenantContext）
         ChatToolService.ToolBundle toolBundle = chatToolService.resolve();
-        // withCards=true：仅非流式 chat() 注入卡片能力 Prompt 片段（streamChat 恒传 false，见下）
+        // withCards=true：注入卡片能力 Prompt 片段（chat() 与 streamChat() 均传 true）
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
                 toolBundle.skillMarkdowns(), true);
 
@@ -308,23 +309,62 @@ public class ChatServiceImpl implements ChatService {
             log.warn("检索独立事务开启/提交失败，降级为空知识: {}", e.getMessage());
             relevantDocs = List.of();
         }
-        String context = buildContext(relevantDocs);
-        // Task 5 会把 skillMarkdowns / withCards 换成与 chat() 一致的取值
-        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
-                java.util.List.of(), false);
-
         double maxScore = relevantDocs.isEmpty() ? 0.0 :
                 relevantDocs.stream().mapToDouble(ChatServiceImpl::resolveConfidenceScore).max().orElse(0.0);
+
+        // 连续未命中转人工：与 chat() 同步更新会话计数（命中归 0），显式落库。
+        // 存量行（加列前创建）读回 no_hit_streak 可能为 null，null 归 0 兜底防拆箱 NPE
+        boolean noHit = relevantDocs.isEmpty();
+        int currentStreak = session.getNoHitStreak() == null ? 0 : session.getNoHitStreak();
+        session.setNoHitStreak(noHit ? currentStreak + 1 : 0);
+        sessionRepository.save(session);
+        boolean noHitStreakHandover = noHit
+                && session.getNoHitStreak() >= handoverRuleService.getNoHitStreakThreshold();
+
+        // 未命中且不允许自由发挥：与 chat() 一致走兜底回复（兜底也落库：fallback 标记 + messageId 回传）
+        if (relevantDocs.isEmpty() && Boolean.FALSE.equals(strategy.getAllowNoKnowledge())) {
+            onTokensUsed.accept(0);
+            ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
+                    strategy.getFallbackMessage(), 0.0, null, null, true, null);
+            return Flux.just(
+                    ChatStreamEvent.start(session.getSessionId(), noHitStreakHandover, List.of()),
+                    ChatStreamEvent.delta(strategy.getFallbackMessage()),
+                    ChatStreamEvent.done(fallbackMsg.getId()));
+        }
+
+        String context = buildContext(relevantDocs);
+        // 解析当前应用的 skill/工具（请求线程内，依赖 TenantContext）——与 chat() 同源
+        ChatToolService.ToolBundle toolBundle = chatToolService.resolve();
+        // withCards=true：流式同样注入卡片能力 Prompt 片段，由 StreamingSpecSplitter 增量下发
+        List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
+                toolBundle.skillMarkdowns(), true);
+
         String hitDocumentIds = extractHitDocumentIds(relevantDocs);
         String userMessage = request.getMessage();
+        boolean suggestHandover =
+                handoverRuleService.checkLowConfidenceTrigger(maxScore) || noHitStreakHandover;
+        List<ChatResponse.KnowledgeHit> knowledgeHits = relevantDocs.stream()
+                .map(doc -> ChatResponse.KnowledgeHit.builder()
+                        .content(truncateContent(doc.getText(), 100))
+                        .score(resolveConfidenceScore(doc))
+                        .source((String) doc.getMetadata().getOrDefault("source", "unknown"))
+                        .build())
+                .collect(Collectors.toList());
 
-        // 场景解析读租户配置（依赖 TenantContext），须在请求线程完成，不能挪进响应式管道
+        final List<ToolCallback> tools = toolBundle.toolCallbacks();
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
-                modelRouterService.streamWithFallback(resolveModelScenario(),
-                        client -> client.prompt().messages(messages).stream().chatResponse());
+                modelRouterService.streamWithFallback(resolveModelScenario(), client -> {
+                    // 不要在这里 .options(...)，会整体替换掉模型默认 options（含 streamUsage(true)，
+                    // 丢失后 token 计量会静默记 0），见 ModelRouterService#createOpenAiCompatibleClient
+                    var spec = client.prompt().messages(messages);
+                    if (!tools.isEmpty()) {
+                        spec = spec.toolCallbacks(tools);   // 无工具时不挂载 → 与 chat() 同款处理
+                    }
+                    return spec.stream().chatResponse();
+                });
 
-        // Task 5 会把 suggestHandover / knowledgeHits 换成真实计算值
-        ChatStreamEvent startEvent = ChatStreamEvent.start(session.getSessionId(), false, List.of());
+        ChatStreamEvent startEvent =
+                ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits);
 
         return Flux.defer(() -> {
             // splitter 与累加器有状态，必须每次订阅各持一份，否则重复订阅会串状态
@@ -756,8 +796,8 @@ public class ChatServiceImpl implements ChatService {
         String systemTemplate = resolveSystemTemplate(strategy);
         String systemPrompt = systemTemplate.replace("{context}", context);
         systemPrompt = appendSkillMarkdowns(systemPrompt, skillMarkdowns);
-        // 结构化卡片能力 Prompt 片段：仅 withCards=true（非流式 chat() 传入）且 config 开关开启时注入；
-        // streamChat 恒传 withCards=false，绝不给流式回复引入卡片指令（流式卡片留 SP3）
+        // 结构化卡片能力 Prompt 片段：withCards=true 且 config 开关开启时注入；
+        // chat() 与 streamChat() 均传 withCards=true，流式与非流式同语义
         systemPrompt = appendCardPrompt(systemPrompt, withCards, cardsEnabled);
         messages.add(new SystemMessage(systemPrompt));
         

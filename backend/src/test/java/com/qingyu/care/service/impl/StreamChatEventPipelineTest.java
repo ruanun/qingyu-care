@@ -134,6 +134,9 @@ class StreamChatEventPipelineTest {
         when(retrievalScopeResolver.resolve()).thenReturn(RetrievalScope.empty(9L));
         when(promptTemplateService.getActiveTemplateContent()).thenReturn("系统提示：{context}");
         when(messageRepository.findTop20BySessionIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        // streamChat 现与 chat() 同源解析工具/Skill（Task 5），管道测试关注事件顺序/落库/降级，
+        // 不关心工具装配本身，桩个空 bundle 让 buildMessages/streamWithFallback 正常往下走
+        when(chatToolService.resolve()).thenReturn(ChatToolService.ToolBundle.empty());
         return session;
     }
 
