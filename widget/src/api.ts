@@ -1,4 +1,5 @@
 import type { WidgetConfig } from './config';
+import { postSse, type ChatStreamHandlers } from './chatStream';
 
 /** 服务端判定会话失效（404）时抛出，供上层清本地会话并自动重开。 */
 export class SessionExpiredError extends Error {
@@ -77,6 +78,22 @@ export function createApi(cfg: WidgetConfig) {
       if (r.status === 404) throw new SessionExpiredError();
       if (!r.ok) throw new Error(`对话请求失败: ${r.status}`);
       return (await r.json()) as ChatReply;
+    },
+
+    /** 流式对话；404 抛 SessionExpiredError（同 send，供上层清会话后重开）。 */
+    async stream(
+      message: string,
+      sessionId: string | null,
+      handlers: ChatStreamHandlers,
+      signal?: AbortSignal,
+    ): Promise<void> {
+      const body = sessionId ? { message, sessionId } : { message };
+      try {
+        await postSse(`${cfg.apiBase}/open/v1/chat/stream`, headers(), body, handlers, signal);
+      } catch (e) {
+        if (e instanceof Error && e.name === 'SessionExpiredError') throw new SessionExpiredError();
+        throw e;
+      }
     },
 
     async handover(sessionId: string): Promise<void> {
