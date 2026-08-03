@@ -5,6 +5,7 @@ import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.UiPart;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -584,7 +585,31 @@ public class ChatServiceImpl implements ChatService {
         return promptTemplateService.getActiveTemplateContent();
     }
 
+    /**
+     * 对话入口的租户上下文守卫：无租户上下文（平台管理员）一律拒绝发起/续接对话。
+     *
+     * <p>为什么必须拦：{@link com.qingyu.care.config.TenantEntityListener} 只从
+     * {@link TenantContext} 回填、不做 appId→租户反查，而平台管理员的 tenantId 恒为 null，
+     * 于是会话落库时 {@code tenant_id} 为 NULL、{@code app_id} 有值 —— 平台管理员自己的
+     * 会话列表按 {@link #getAllSessions} 的越权收口返空页看不到，被测租户的管理员也看不到
+     * （NULL ≠ 其 tenantId），**成为谁都读不到的孤儿数据**。与「列会话返空页」保持同一种
+     * 态度：宁可拒绝，也不静默写出不可达的行。
+     *
+     * <p>注意读写两侧此前是不一致的：{@link com.qingyu.care.service.ConfigScopeResolver}
+     * 会为平台管理员按 X-App-Id 反查租户（故检索能命中被测租户的知识库），而写路径不会。
+     * 本守卫按「禁止」方向对齐；若将来改为允许，正确做法是让写路径也做同样的反查，
+     * 并给这类调试会话打标记，避免污染该租户的用量与效果统计。
+     *
+     * <p>开放 API / Widget 不受影响：{@code OpenApiAuthInterceptor} 鉴权通过后已写入 tenantId。
+     */
+    private void requireTenantContext() {
+        if (TenantContext.getTenantId() == null) {
+            throw new BusinessException("平台管理员无租户上下文，无法发起对话；请使用租户账号登录后再试");
+        }
+    }
+
     private ChatSession getOrCreateSession(ChatRequest request) {
+        requireTenantContext();
         if (request.getSessionId() != null) {
             // findBySessionId 不受 @Filter 保护，加载后须显式校验归属；越权（如平台管理员选了应用 X
             // 却传入应用 Y 的 sessionId）视同「未找到」直接建新会话，热路径不抛异常，保正常续接 UX

@@ -78,6 +78,11 @@ class StreamChatHandoverTest {
     void wireSelf() {
         // chat()/streamChat() 经 self.searchKnowledge 路由；单测无 Spring，self 需手动指向本实例防 NPE
         chatService.setSelf(chatService);
+        // chat()/streamChat() 现要求非空租户上下文（见 ChatServiceImpl#requireTenantContext）。
+        // 必须与本类夹具会话的 setTenantId(9L) 一致：belongsToCurrentContext 仅在
+        // 「上下文与实体都非空且不等」时拒绝，取 9L 可保归属判定结果与加守卫前完全相同
+        // （若取别的值会被判为他租户会话 → 走新建分支，静默改变各用例的被测路径）。
+        TenantContext.setTenantId(9L);
     }
 
     @AfterEach
