@@ -2,6 +2,7 @@ package com.qingyu.care.service.impl;
 
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
+import com.qingyu.care.dto.ChatStreamEvent;
 import com.qingyu.care.dto.UiPart;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
@@ -25,6 +26,7 @@ import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
+import com.qingyu.care.service.StreamingSpecSplitter;
 import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.entity.ChatStrategy;
@@ -33,7 +35,6 @@ import com.qingyu.care.exception.ResourceNotFoundException;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -49,6 +50,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import com.qingyu.care.event.WebhookDomainEvent;
 
 import java.time.LocalDateTime;
@@ -273,35 +275,27 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public Flux<String> streamChat(ChatRequest request) {
+    public Flux<ChatStreamEvent> streamChat(ChatRequest request) {
         // 内部调用：不计量，回调为空操作
         return streamChat(request, t -> {});
     }
 
     @Override
-    public Flux<String> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed) {
-        return streamChat(request, onTokensUsed, id -> { });
-    }
-
-    @Override
-    public Flux<String> streamChat(ChatRequest request,
-                                   java.util.function.IntConsumer onTokensUsed,
-                                   java.util.function.LongConsumer onAiMessageSaved) {
-        // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索）；
-        // 完成回调运行在 Reactor 线程，只做无上下文依赖的落库
+    public Flux<ChatStreamEvent> streamChat(ChatRequest request,
+                                            java.util.function.IntConsumer onTokensUsed) {
+        // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索/模型解析）；
+        // 落库回调运行在 Reactor 线程，只做无上下文依赖的写入
         ChatSession session = getOrCreateSession(request);
 
         // 与 chat() 严格同序：先判人工接管态静默，再判关键词触发，避免已接管会话被关键词打回 WAITING_AGENT
         if (isAgentControlled(session)) {
             persistUserMessageDuringHandover(session, request.getMessage());
             onTokensUsed.accept(0);
-            onAiMessageSaved.accept(-1L);
-            return Flux.just("[会话已转接人工客服，请等待回复]");
+            return earlyReturn(session, "[会话已转接人工客服，请等待回复]");
         }
         if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
             onTokensUsed.accept(0);
-            onAiMessageSaved.accept(-1L);
-            return Flux.just("正在为您转接人工客服，请稍候...");
+            return earlyReturn(session, "正在为您转接人工客服，请稍候...");
         }
 
         ChatStrategy strategy = resolveStrategy(session);
@@ -315,7 +309,7 @@ public class ChatServiceImpl implements ChatService {
             relevantDocs = List.of();
         }
         String context = buildContext(relevantDocs);
-        // withCards=false：streamChat 恒不注入卡片能力 Prompt 片段（流式卡片留 SP3）
+        // Task 5 会把 skillMarkdowns / withCards 换成与 chat() 一致的取值
         List<Message> messages = buildMessages(session, request.getMessage(), context, strategy,
                 java.util.List.of(), false);
 
@@ -325,15 +319,43 @@ public class ChatServiceImpl implements ChatService {
         String userMessage = request.getMessage();
 
         // 场景解析读租户配置（依赖 TenantContext），须在请求线程完成，不能挪进响应式管道
-        ChatClient chatClient = modelRouterService.getChatClientForScenario(resolveModelScenario());
-        // stream().chatResponse() 返回 Flux<org.springframework.ai.chat.model.ChatResponse>
-        // 不要在这里 .options(...)，会整体替换掉模型默认 options（含 streamUsage(true)，
-        // 丢失后本方法的 token 计量会静默记 0），见 ModelRouterService#createOpenAiCompatibleClient
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
-                chatClient.prompt().messages(messages).stream().chatResponse();
-        return withStreamPersistence(meterContentStream(source, onTokensUsed),
-                full -> persistStreamedMessages(session, userMessage, full, maxScore,
-                        hitDocumentIds, onAiMessageSaved));
+                modelRouterService.streamWithFallback(resolveModelScenario(),
+                        client -> client.prompt().messages(messages).stream().chatResponse());
+
+        // Task 5 会把 suggestHandover / knowledgeHits 换成真实计算值
+        ChatStreamEvent startEvent = ChatStreamEvent.start(session.getSessionId(), false, List.of());
+
+        return Flux.defer(() -> {
+            // splitter 与累加器有状态，必须每次订阅各持一份，否则重复订阅会串状态
+            StreamingSpecSplitter splitter = new StreamingSpecSplitter(objectMapper);
+            StringBuilder acc = new StringBuilder();
+            Flux<ChatStreamEvent> body = meterContentStream(source, onTokensUsed)
+                    .doOnNext(acc::append)
+                    .concatMap(chunk -> Flux.fromIterable(splitter.accept(chunk)))
+                    .concatWith(Flux.defer(() -> Flux.fromIterable(splitter.flush())));
+            // 落库排在正文之后（DONE 的 messageId 必然有效）；客户端中断时该 Mono 根本不会被订阅，
+            // 半截回复自然不落库（与改造前 doOnComplete 语义一致）
+            Mono<ChatStreamEvent> done = Mono.fromCallable(() -> persistStreamedMessages(
+                    session, userMessage, acc.toString(), maxScore, hitDocumentIds));
+            return Flux.concat(Flux.just(startEvent), body, done);
+        }).onErrorResume(e -> {
+            // 固定文案，绝不回传原始异常（widget 运行在客户网页里）；详情只进日志
+            log.warn("流式对话失败 sessionId={}: {}", session.getSessionId(), e.getMessage(), e);
+            return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
+        });
+    }
+
+    /**
+     * 早退分支（人工接管静默 / 关键词转人工）：同样发完整 START + DELTA + DONE 序列，
+     * 否则客户端拿不到 sessionId。这两条路不落 AI 消息，故 DONE 的 messageId 为 null。
+     * suggestHandover 恒 false——会话已在人工流程中，再提示「建议转人工」是噪声。
+     */
+    private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text) {
+        return Flux.just(
+                ChatStreamEvent.start(session.getSessionId(), false, List.of()),
+                ChatStreamEvent.delta(text),
+                ChatStreamEvent.done(null));
     }
 
     /**
@@ -387,39 +409,31 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 纯方法：透传内容流并累积完整文本，仅 onComplete 时回调（error/cancel 不回调——
-     * 客户端中断的半截回复不落库）。static 免容器单测，同 meterContentStream 惯例。
-     */
-    static Flux<String> withStreamPersistence(Flux<String> content,
-                                              java.util.function.Consumer<String> onCompleteFull) {
-        StringBuilder acc = new StringBuilder();
-        return content
-                .doOnNext(acc::append)
-                .doOnComplete(() -> onCompleteFull.accept(acc.toString()));
-    }
-
-    /**
-     * 流式补落库（Reactor 线程执行：ChatMessage 不继承 BaseTenantEntity，persist 不依赖租户过滤器）。
-     * fail-soft：落库失败仅告警，不影响已送达的回复；回调必达（失败/空回复回 -1）。
-     * 已知取舍：流式 AI 消息不落 tokenUsage（消息级 token 仅非流式；用量计量仍走 onTokensUsed → SysApiUsage）。
-     * 事务原子性：与 chat() 对齐（同批用户消息+AI消息同提交/同回滚）——Reactor 线程无代理事务生效，
-     * 须显式用 TransactionTemplate 包裹 saveMessages；异常捕获仍留在事务外层，保证回调必达语义不变。
+     * 流式补落库（Reactor 线程执行：ChatMessage 不继承 BaseTenantEntity，persist 不依赖租户过滤器），
+     * 并产出流末尾的 DONE 事件。
+     * <p>落库走 {@link UiSpecService#parse}（与非流式 chat() 同一实现）：content 落剥围栏的纯文本、
+     * ui_spec 落卡片 JSON——渲染侧的 StreamingSpecSplitter 只管何时发事件，不承担落库正确性。
+     * <p>fail-soft：落库失败仅告警，返回 messageId 为 null 的 DONE，不影响已送达的回复。
+     * <p>已知取舍：流式 AI 消息不落 tokenUsage（消息级 token 仅非流式；用量计量仍走 onTokensUsed → SysApiUsage）。
+     * <p>事务原子性：Reactor 线程无代理事务生效，须显式用 TransactionTemplate 包裹 saveMessages。
      * package-private 便于同包单测（同 meterContentStream 惯例）。
      */
-    void persistStreamedMessages(ChatSession session, String userMessage, String aiResponse,
-                                 double confidence, String hitDocumentIds,
-                                 java.util.function.LongConsumer onAiMessageSaved) {
-        long savedId = -1L;
+    ChatStreamEvent persistStreamedMessages(ChatSession session, String userMessage, String rawResponse,
+                                            double confidence, String hitDocumentIds) {
+        Long savedId = null;
         try {
-            if (!aiResponse.isEmpty()) {
+            if (!rawResponse.isEmpty()) {
+                UiSpecService.ParseResult parsed = uiSpecService.parse(rawResponse);
+                String uiSpecJson = writeUiSpec(parsed.uiParts());
                 ChatMessage aiMsg = transactionTemplate.execute(status ->
-                        saveMessages(session, userMessage, aiResponse, confidence, hitDocumentIds, null, false, null));
+                        saveMessages(session, userMessage, parsed.plainText(), confidence,
+                                hitDocumentIds, null, false, uiSpecJson));
                 savedId = aiMsg.getId();
             }
         } catch (Exception e) {
             log.warn("流式消息落库失败 sessionId={}: {}", session.getSessionId(), e.getMessage());
         }
-        onAiMessageSaved.accept(savedId);
+        return ChatStreamEvent.done(savedId);
     }
 
     /**

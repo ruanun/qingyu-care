@@ -1,5 +1,6 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.dto.ChatStreamEvent;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -23,14 +24,10 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
-import reactor.core.publisher.Flux;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -39,8 +36,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 单元测试：withStreamPersistence 纯方法（内容透传 + 完整文本仅在正常完成时回调）
- * 以及 persistStreamedMessages 的落库+回调必达三分支（正常/空回复/异常）。
+ * 单元测试：persistStreamedMessages 的落库+DONE 事件三分支（正常/空回复/异常）。
  *
  * @author ruan
  */
@@ -64,31 +60,6 @@ class ChatStreamPersistenceTest {
     @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl service;
 
-    @Test
-    void 流正常完成_以完整聚合文本回调() {
-        AtomicReference<String> full = new AtomicReference<>();
-        List<String> out = ChatServiceImpl.withStreamPersistence(Flux.just("你", "好"), full::set)
-                .collectList().block();
-        assertThat(out).containsExactly("你", "好");
-        assertThat(full.get()).isEqualTo("你好");
-    }
-
-    @Test
-    void 流错误_不回调() {
-        AtomicReference<String> full = new AtomicReference<>();
-        Flux<String> f = ChatServiceImpl.withStreamPersistence(
-                Flux.concat(Flux.just("半"), Flux.error(new RuntimeException("模型中断"))), full::set);
-        assertThatThrownBy(f::blockLast).hasMessageContaining("模型中断");
-        assertThat(full.get()).isNull();
-    }
-
-    @Test
-    void 空流完成_以空串回调() {
-        AtomicReference<String> full = new AtomicReference<>();
-        ChatServiceImpl.withStreamPersistence(Flux.empty(), full::set).collectList().block();
-        assertThat(full.get()).isEmpty();
-    }
-
     /**
      * 事务模板直通：把 TransactionCallback 当作普通函数调用，模拟事务内即时提交，
      * 不引入真实事务/容器，保持纯 Mockito 单测特性。
@@ -99,8 +70,10 @@ class ChatStreamPersistenceTest {
     }
 
     @Test
-    void persistStreamedMessages_正常回复_事务内落库两条消息_回调收到AI消息真实id() {
+    void persistStreamedMessages_正常回复_事务内落库两条消息_DONE携带AI消息真实id() {
         stubTransactionTemplatePassThrough();
+        when(uiSpecService.parse(any())).thenAnswer(inv ->
+                new UiSpecService.ParseResult(java.util.List.of(), inv.getArgument(0)));
         AtomicLong idSeq = new AtomicLong(0);
         when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> {
             ChatMessage msg = inv.getArgument(0);
@@ -109,36 +82,37 @@ class ChatStreamPersistenceTest {
         });
 
         ChatSession session = ChatSession.builder().sessionId("session-1").build();
-        AtomicLong callbackId = new AtomicLong(Long.MIN_VALUE);
 
-        service.persistStreamedMessages(session, "你好", "你好呀，有什么可以帮您？",
-                0.8, "[1,2]", callbackId::set);
+        ChatStreamEvent done = service.persistStreamedMessages(session, "你好", "你好呀，有什么可以帮您？",
+                0.8, "[1,2]");
 
         verify(messageRepository, times(2)).save(any(ChatMessage.class));
-        // 第 2 次 save 对应 AI 消息，id=2；回调必须拿到真实落库 id 而非占位值
-        assertThat(callbackId.get()).isEqualTo(2L);
+        // 第 2 次 save 对应 AI 消息，id=2；DONE 必须带真实落库 id 而非占位值
+        assertThat(done.type()).isEqualTo(ChatStreamEvent.Type.DONE);
+        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isEqualTo(2L);
     }
 
     @Test
-    void persistStreamedMessages_空串回复_不落库_回调收到负一() {
+    void persistStreamedMessages_空串回复_不落库_DONE的消息id为null() {
         ChatSession session = ChatSession.builder().sessionId("session-2").build();
-        AtomicLong callbackId = new AtomicLong(Long.MIN_VALUE);
 
-        service.persistStreamedMessages(session, "你好", "", 0.0, null, callbackId::set);
+        ChatStreamEvent done = service.persistStreamedMessages(session, "你好", "", 0.0, null);
 
         verify(messageRepository, never()).save(any());
-        assertThat(callbackId.get()).isEqualTo(-1L);
+        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isNull();
     }
 
     @Test
-    void persistStreamedMessages_落库异常_回调收到负一_不外抛() {
+    void persistStreamedMessages_落库异常_仍返回DONE_消息id为null_不外抛() {
         when(transactionTemplate.execute(any())).thenThrow(new RuntimeException("数据库连接失败"));
+        when(uiSpecService.parse(any())).thenAnswer(inv ->
+                new UiSpecService.ParseResult(java.util.List.of(), inv.getArgument(0)));
 
         ChatSession session = ChatSession.builder().sessionId("session-3").build();
-        AtomicLong callbackId = new AtomicLong(Long.MIN_VALUE);
 
-        service.persistStreamedMessages(session, "你好", "你好呀", 0.8, null, callbackId::set);
+        ChatStreamEvent done = service.persistStreamedMessages(session, "你好", "你好呀", 0.8, null);
 
-        assertThat(callbackId.get()).isEqualTo(-1L);
+        assertThat(done.type()).isEqualTo(ChatStreamEvent.Type.DONE);
+        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isNull();
     }
 }

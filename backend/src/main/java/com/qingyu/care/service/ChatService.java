@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
+import com.qingyu.care.dto.ChatStreamEvent;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
@@ -24,23 +25,16 @@ public interface ChatService {
     ChatResponse chat(ChatRequest request);
     
     /**
-     * 流式聊天（内部调用，不计量）
+     * 流式聊天（内部调用，不计量）。返回结构化事件流，协议见
+     * docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3。
      */
-    Flux<String> streamChat(ChatRequest request);
+    Flux<ChatStreamEvent> streamChat(ChatRequest request);
 
     /**
-     * 流式聊天，流正常/异常结束时以本次 total_tokens 回调（供开放 API 计量；内部调用用无回调重载）。
+     * 流式聊天（开放 API：带 token 计量）。流正常/异常结束时以本次 total_tokens 回调。
+     * 事件序列：START → (DELTA|CARD)* → DONE；失败时以 ERROR 收尾。
      */
-    reactor.core.publisher.Flux<String> streamChat(com.qingyu.care.dto.ChatRequest request,
-                                                   java.util.function.IntConsumer onTokensUsed);
-
-    /**
-     * 流式聊天（计量 + 落库回调）。onAiMessageSaved 在流正常完成、消息落库后以 AI 消息 ID 回调；
-     * 落库失败或空回复以 -1 回调（回调必达，SSE meta 事件不悬挂）。error/cancel 不落库不回调。
-     */
-    reactor.core.publisher.Flux<String> streamChat(com.qingyu.care.dto.ChatRequest request,
-                                                   java.util.function.IntConsumer onTokensUsed,
-                                                   java.util.function.LongConsumer onAiMessageSaved);
+    Flux<ChatStreamEvent> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed);
 
     /**
      * 获取会话信息

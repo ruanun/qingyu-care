@@ -3,6 +3,7 @@ package com.qingyu.care.service.impl;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
+import com.qingyu.care.dto.ChatStreamEvent;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -100,11 +101,16 @@ class StreamChatHandoverTest {
         when(messageRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         // TenantContext 归属放行（无上下文即放行，见 belongsToCurrentContext）
 
-        List<String> out = chatService.streamChat(
+        List<ChatStreamEvent> events = chatService.streamChat(
                 ChatRequest.builder().sessionId("s1").message("你好").build()).collectList().block();
 
-        assertThat(String.join("", out)).contains("人工客服");
-        verify(modelRouterService, never()).getChatClientForScenario(any());
+        assertThat(events).hasSize(3);
+        assertThat(events.get(0).type()).isEqualTo(ChatStreamEvent.Type.START);
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).sessionId()).isEqualTo("s1");
+        assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
+                .isEqualTo("[会话已转接人工客服，请等待回复]");
+        assertThat(events.get(2).type()).isEqualTo(ChatStreamEvent.Type.DONE);
+        verify(modelRouterService, never()).streamWithFallback(any(), any());
         verify(realtimeNotifier).toAgentMessage(eq(9L), eq(3L), any());
     }
 
@@ -117,11 +123,13 @@ class StreamChatHandoverTest {
         when(sessionRepository.findBySessionId("s0")).thenReturn(Optional.of(session));
         when(messageRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        List<String> out = chatService.streamChat(
+        List<ChatStreamEvent> events = chatService.streamChat(
                 ChatRequest.builder().sessionId("s0").message("你好").build()).collectList().block();
 
-        assertThat(String.join("", out)).contains("人工客服");
-        verify(modelRouterService, never()).getChatClientForScenario(any());
+        assertThat(events).hasSize(3);
+        assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
+                .isEqualTo("[会话已转接人工客服，请等待回复]");
+        verify(modelRouterService, never()).streamWithFallback(any(), any());
         verify(realtimeNotifier, never()).toAgentMessage(any(), any(), any());
     }
 
@@ -135,12 +143,14 @@ class StreamChatHandoverTest {
         when(messageRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(handoverRuleService.checkKeywordTrigger("人工")).thenReturn(true);
 
-        List<String> out = chatService.streamChat(
+        List<ChatStreamEvent> events = chatService.streamChat(
                 ChatRequest.builder().sessionId("s2").message("人工").build()).collectList().block();
 
-        assertThat(String.join("", out)).contains("转接人工客服");
+        assertThat(events).hasSize(3);
+        assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
+                .isEqualTo("正在为您转接人工客服，请稍候...");
         assertThat(session.getStatus()).isEqualTo(SessionStatus.WAITING_AGENT);
-        verify(modelRouterService, never()).getChatClientForScenario(any());
+        verify(modelRouterService, never()).streamWithFallback(any(), any());
         verify(realtimeNotifier).newWaitingToTenantAgents(eq(9L), eq(session));
     }
 
@@ -157,10 +167,12 @@ class StreamChatHandoverTest {
         // 正确顺序下已接管态短路、不会再走到关键词判断，此桩仅用于证明"若顺序颠倒会误判"，标 lenient 防误报
         lenient().when(handoverRuleService.checkKeywordTrigger("我要转人工")).thenReturn(true);
 
-        List<String> out = chatService.streamChat(
+        List<ChatStreamEvent> events = chatService.streamChat(
                 ChatRequest.builder().sessionId("s2").message("我要转人工").build()).collectList().block();
 
-        assertThat(String.join("", out)).contains("人工客服");
+        assertThat(events).hasSize(3);
+        assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
+                .isEqualTo("[会话已转接人工客服，请等待回复]");
         assertThat(session.getStatus()).isEqualTo(SessionStatus.AGENT_PROCESSING);   // 未被打回 WAITING_AGENT
         verify(eventPublisher, never()).publishEvent(any());                          // 不重复发 handover 事件
         verify(realtimeNotifier, never()).newWaitingToTenantAgents(anyLong(), any()); // 不广播新待接
