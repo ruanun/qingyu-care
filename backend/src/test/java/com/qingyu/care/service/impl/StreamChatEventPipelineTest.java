@@ -1,9 +1,13 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatStreamEvent;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.enums.MessageRole;
+import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.AbTestService;
@@ -15,9 +19,13 @@ import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
+import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
+import com.qingyu.care.support.SpringAiResponses;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,8 +37,13 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
+import reactor.core.publisher.Flux;
+import reactor.test.StepVerifier;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,9 +54,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 单元测试：流式落库产出 DONE 事件的三分支（正常/空回复/异常），
- * 以及「围栏原文落库时经 UiSpecService 解析、content 落纯文本 + ui_spec 落卡片 JSON」。
- *
+ * 单元测试：
+ * <ul>
+ *   <li>persistStreamedMessages 的落库+DONE 事件三分支（正常/空回复/异常），以及围栏原文落库时
+ *       经 UiSpecService 解析、content 落纯文本 + ui_spec 落卡片 JSON；</li>
+ *   <li>streamChat 完整管道语义（设计稿 §6）：START→DELTA*→DONE 的事件顺序、客户端取消订阅时
+ *       落库 Mono 根本不被订阅、模型流失败时降级为固定文案 ERROR 且不落库。</li>
+ * </ul>
  * 说明：DONE 事件由 persistStreamedMessages 直接返回（不再走 Sinks 回调），故可脱离 Reactor 直接断言。
  * UiSpecService/ObjectMapper 用真实实例（@Spy 包真对象）——卡片解析正是本用例要验证的行为，
  * mock 会让断言失去意义（同 ChatCardWiringTest 惯例）。
@@ -73,6 +90,19 @@ class StreamChatEventPipelineTest {
     @Spy ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks ChatServiceImpl service;
 
+    @BeforeEach
+    void wireSelf() {
+        // streamChat 经 self.searchKnowledge 路由；单测无 Spring，self 需手动指向本实例防 NPE
+        service.setSelf(service);
+        // streamChat 现要求非空租户上下文（见 ChatServiceImpl#requireTenantContext）
+        TenantContext.setTenantId(9L);
+    }
+
+    @AfterEach
+    void clearContext() {
+        TenantContext.clear();
+    }
+
     /** 事务模板直通：把 TransactionCallback 当普通函数调用，保持纯 Mockito 单测特性。 */
     private void stubTransactionPassThrough() {
         when(transactionTemplate.execute(any())).thenAnswer(inv ->
@@ -87,6 +117,23 @@ class StreamChatEventPipelineTest {
             m.setId(seq.incrementAndGet());
             return m;
         });
+    }
+
+    /**
+     * streamChat 管道测试的公共桩：找到既有会话（AI_PROCESSING，跳过接管/关键词分支）、
+     * 空检索范围（跳过实际向量检索）、无 A/B 变体、空历史消息，让管道能一路走到模型调用。
+     */
+    private ChatSession stubPipelineSession(String sessionId) {
+        ChatSession session = ChatSession.builder().sessionId(sessionId)
+                .status(SessionStatus.AI_PROCESSING).build();
+        session.setTenantId(9L);
+        when(sessionRepository.findBySessionId(sessionId)).thenReturn(Optional.of(session));
+        when(abTestService.resolveVariantStrategy(any(), any())).thenReturn(Optional.empty());
+        when(chatStrategyService.getActiveStrategy("default")).thenReturn(ChatStrategy.builder().build());
+        when(retrievalScopeResolver.resolve()).thenReturn(RetrievalScope.empty(9L));
+        when(promptTemplateService.getActiveTemplateContent()).thenReturn("系统提示：{context}");
+        when(messageRepository.findTop20BySessionIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
+        return session;
     }
 
     @Test
@@ -137,5 +184,60 @@ class StreamChatEventPipelineTest {
                 .findFirst().orElseThrow();
         assertThat(aiMsg.getContent()).doesNotContain("```").contains("前言").contains("后记");
         assertThat(aiMsg.getUiSpec()).contains("\"kind\"").contains("ui");
+    }
+
+    @Test
+    void 完整一轮_事件顺序为START_DELTA可多个_DONE排在最后() {
+        stubPipelineSession("s5");
+        stubTransactionPassThrough();
+        stubSaveWithIdSequence();
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("你好", 5), SpringAiResponses.of("，请问有什么可以帮您", 12)));
+
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s5").message("在吗").build(), tokens -> { }))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DONE))
+                .verifyComplete();
+    }
+
+    @Test
+    void 客户端取消订阅_落库Mono不被订阅_不落库() {
+        stubPipelineSession("s6");
+        // 有意不桩 transactionTemplate/uiSpecService.parse 的落库路径——若落库 Mono 被误订阅，
+        // 本用例会因缺桩而以不同方式暴露问题；核心断言仍是 messageRepository 从未被调用
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("你好", 5)));
+
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s6").message("在吗").build(), tokens -> { }))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
+                .thenCancel()
+                .verify(Duration.ofSeconds(2));
+
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    void 模型流失败_降级为固定文案ERROR事件_不落库_不泄露原始异常() {
+        stubPipelineSession("s7");
+        when(modelRouterService.streamWithFallback(any(), any()))
+                .thenReturn(Flux.error(new RuntimeException("上游 502，内部主机 10.0.0.7 不可达")));
+
+        List<ChatStreamEvent> events = service.streamChat(
+                        ChatRequest.builder().sessionId("s7").message("在吗").build(), tokens -> { })
+                .collectList().block();
+
+        // START 在模型调用之前已同步构造好、与失败与否无关，故仍会先送达；
+        // 断言的重点是「失败后不再有 DELTA/CARD/DONE，only ERROR 收尾、文案固定、不落库」
+        assertThat(events).hasSize(2);
+        assertThat(events.get(0).type()).isEqualTo(ChatStreamEvent.Type.START);
+        assertThat(events.get(1).type()).isEqualTo(ChatStreamEvent.Type.ERROR);
+        String message = ((ChatStreamEvent.Error) events.get(1).payload()).message();
+        assertThat(message).isEqualTo("回复生成失败，请稍后重试");
+        assertThat(message).doesNotContain("502").doesNotContain("10.0.0.7");
+        verify(messageRepository, never()).save(any());
     }
 }

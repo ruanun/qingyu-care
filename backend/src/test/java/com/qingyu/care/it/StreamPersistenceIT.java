@@ -8,8 +8,6 @@ import com.qingyu.care.support.SpringAiResponses;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -28,8 +26,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 流式对话补落库 + SSE 末尾 meta 事件。ChatClient 用深桩 mock 流式链
- * （不 mock VectorStore——会破坏共享表，见多知识库检索 IT 的教训）。
+ * 流式对话补落库 + SSE 事件协议（start/delta/done）。ModelRouterService 整体 mock，
+ * 直接桩 streamWithFallback 的返回值（不再需要深桩 ChatClient——streamChat 已改走
+ * streamWithFallback，不再经 getChatClientForScenario）；不 mock VectorStore——
+ * 会破坏共享表，见多知识库检索 IT 的教训。
  *
  * @author ruan
  */
@@ -42,15 +42,15 @@ class StreamPersistenceIT extends AbstractPostgresIT {
     private ModelRouterService modelRouterService;
 
     @Test
-    void 流式对话_消息落库并追加meta事件() throws Exception {
+    void 流式对话_消息落库并携带DONE事件() throws Exception {
         Application app = seedApp("stream" + System.nanoTime(), "http://st.example.com");
-        ChatClient client = Mockito.mock(ChatClient.class, Mockito.RETURNS_DEEP_STUBS);
-        Mockito.when(client.prompt().messages(ArgumentMatchers.<Message>anyList())
-                        .stream().chatResponse())
+        // 流式路径按租户配置解析模型场景（tenant.default.model.scenario，缺省 default）；
+        // streamChat 内部把「发起请求」的 streamRunner 交给 streamWithFallback 执行，
+        // 直接桩它的返回值即可，无需再深桩 ChatClient
+        Mockito.when(modelRouterService.streamWithFallback(
+                        ArgumentMatchers.eq("default"), ArgumentMatchers.any()))
                 .thenReturn(Flux.just(SpringAiResponses.of("你好", 5),
                         SpringAiResponses.of("！", 7)));
-        // 流式路径按租户配置解析模型场景（tenant.default.model.scenario，缺省 default）
-        Mockito.when(modelRouterService.getChatClientForScenario("default")).thenReturn(client);
 
         MvcResult mvcResult = mockMvc.perform(post("/open/v1/chat/stream")
                         .header("X-App-Id", app.getAppKey())
@@ -63,8 +63,10 @@ class StreamPersistenceIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
 
-        assertThat(body).contains("data:你好");
-        assertThat(body).contains("event:meta");
+        assertThat(body).contains("event:start");
+        assertThat(body).contains("event:delta");
+        assertThat(body).contains("\"text\":\"你好\"");
+        assertThat(body).contains("event:done");
         assertThat(body).contains("messageId");
 
         // 落库：用户提问 + 聚合后的完整 AI 回复（"你好！"）
