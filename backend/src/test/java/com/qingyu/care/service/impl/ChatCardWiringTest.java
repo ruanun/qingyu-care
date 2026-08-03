@@ -151,7 +151,7 @@ class ChatCardWiringTest {
     }
 
     @Test
-    void appendCardPrompt_非withCards流式路_不追加() {
+    void appendCardPrompt_withCards关_不追加() {
         assertThat(ChatServiceImpl.appendCardPrompt("系统提示", false, true)).isEqualTo("系统提示");
     }
 }

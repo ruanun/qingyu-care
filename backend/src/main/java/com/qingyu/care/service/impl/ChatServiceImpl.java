@@ -821,7 +821,8 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 保存一轮问答（用户消息 + AI 回复），返回 AI 消息（供响应回传 messageId）。
      * fallback 只在兜底时置 TRUE（其余 null 避免 FALSE 噪声；rollup 按 = TRUE 统计）。
-     * uiSpec 为结构化卡片 uiParts 的 JSON（仅非流式 chat() 主路可能非空，兜底/流式恒传 null）。
+     * uiSpec 为结构化卡片 uiParts 的 JSON——chat() 主路与流式主路（经 persistStreamedMessages
+     * 回落此方法）均可能非空；两条未命中兜底路径（chat()/streamChat() 各自的 fallback 分支）恒传 null。
      */
     private ChatMessage saveMessages(ChatSession session, String userMessage, String aiResponse,
                                      double confidence, String hitDocumentIds,

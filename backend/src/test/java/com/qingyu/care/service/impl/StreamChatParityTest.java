@@ -26,6 +26,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -89,6 +90,9 @@ class StreamChatParityTest {
         // streamChat 要求非空租户上下文（见 requireTenantContext）；夹具会话不设 tenantId，
         // 实体侧为 null → 归属判定恒放行，取值任意不影响断言（同 ChatCardWiringTest）
         TenantContext.setTenantId(1L);
+        // @InjectMocks 不经容器，@Value("${qingyu.care.cards.enabled:true}") 不会被处理，
+        // 字段默认 false；显式设为与生产默认值一致的 true（同 SessionTimeoutSchedulerTest 惯例）
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "cardsEnabled", true);
     }
 
     @AfterEach
@@ -206,6 +210,27 @@ class StreamChatParityTest {
     }
 
     @Test
+    void START携带连续未命中达阈值触发的转人工建议() {
+        // 覆盖 suggestHandover 的另一半 OR 分支：低置信恒 false（未桩，默认值），
+        // 未命中但 allowNoKnowledge=true 走 LLM 主路（不进兜底分支），streak 达阈值仍应建议转人工
+        ChatSession session = ChatSession.builder().sessionId("s9")
+                .status(SessionStatus.AI_PROCESSING).noHitStreak(2).build();
+        when(sessionRepository.findBySessionId("s9")).thenReturn(Optional.of(session));
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubRetrieval(List.of());
+        stubStrategy(true);
+        stubLlmPath("暂无相关知识，但仍尝试回答", ChatToolService.ToolBundle.empty());
+        when(handoverRuleService.getNoHitStreakThreshold()).thenReturn(3);
+
+        List<ChatStreamEvent> events = service.streamChat(
+                ChatRequest.builder().sessionId("s9").message("你好").build()).collectList().block();
+
+        assertThat(session.getNoHitStreak()).isEqualTo(3);
+        assertThat(startOf(events).suggestHandover()).isTrue();
+    }
+
+    @Test
     void START携带知识命中列表() {
         when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
         when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -242,5 +267,22 @@ class StreamChatParityTest {
         org.springframework.ai.chat.client.ChatClient client =
                 mock(org.springframework.ai.chat.client.ChatClient.class, RETURNS_DEEP_STUBS);
         assertThat(runnerCaptor.getValue().apply(client)).isNotNull();
+
+        // 钉住 skill 与卡片：捕获传给 client.prompt().messages(...) 的完整消息列表，
+        // 首条系统消息须同时含 skill markdown（"退货政策"）与卡片能力 Prompt 片段（CARD_PROMPT 关键词）——
+        // 光验证 chatToolService.resolve() 被调用挡不住「解析了但没传进 buildMessages」这类回归
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<org.springframework.ai.chat.messages.Message>> msgCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(client.prompt()).messages(msgCaptor.capture());
+        String systemText = msgCaptor.getValue().get(0).getText();
+        assertThat(systemText).contains("退货政策").contains("结构化卡片能力");
+
+        // 钉住工具挂载：messages(...) 之后的链上必须真调用 toolCallbacks(tools)，
+        // 而不只是「构造了 tools 列表但没接到 ChatClient 调用链上」
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ToolCallback>> toolCaptor = ArgumentCaptor.forClass(List.class);
+        verify(client.prompt().messages(msgCaptor.getValue())).toolCallbacks(toolCaptor.capture());
+        assertThat(toolCaptor.getValue()).containsExactly(tool);
     }
 }
