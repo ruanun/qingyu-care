@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -206,8 +207,21 @@ class StreamChatEventPipelineTest {
     @Test
     void 客户端取消订阅_落库Mono不被订阅_不落库() {
         stubPipelineSession("s6");
-        // 有意不桩 transactionTemplate/uiSpecService.parse 的落库路径——若落库 Mono 被误订阅，
-        // 本用例会因缺桩而以不同方式暴露问题；核心断言仍是 messageRepository 从未被调用
+        // 必须打通落库路径的真实桩（同其余用例），否则 verify(never()).save() 是恒真断言：
+        // transactionTemplate 若不桩，Mockito 对未桩方法直接返回 null——persistStreamedMessages
+        // 即便真被误订阅执行，也会在 transactionTemplate.execute(...) 这一步就短路返回 null，
+        // 根本走不到 messageRepository.save，never() 测不出「误订阅」与「正确取消」的区别。
+        // 标 lenient：这正是本用例要证明的——cancel 后这两个桩预期从未被触发，Mockito 严格模式
+        // 默认会把「配置了却未被调用」的桩报成 UnnecessaryStubbingException；这个异常本身就是
+        // 「persistStreamedMessages 确实没执行」的独立佐证（保留 lenient 只是不让它使测试意外挂掉）。
+        AtomicLong idSeq = new AtomicLong();
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv ->
+                inv.getArgument(0, TransactionCallback.class).doInTransaction(null));
+        lenient().when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> {
+            ChatMessage m = inv.getArgument(0);
+            m.setId(idSeq.incrementAndGet());
+            return m;
+        });
         when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
                 Flux.just(SpringAiResponses.of("你好", 5)));
 
