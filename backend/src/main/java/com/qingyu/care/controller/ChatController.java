@@ -11,6 +11,7 @@ import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
+import com.qingyu.care.service.ChatStreamSseMapper;
 import com.qingyu.care.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +21,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
@@ -31,9 +33,10 @@ import reactor.core.publisher.Flux;
 @RequiredArgsConstructor
 @Tag(name = "Chat", description = "AI智能问答接口")
 public class ChatController {
-    
+
     private final ChatService chatService;
     private final ChatFeedbackService chatFeedbackService;
+    private final ChatStreamSseMapper sseMapper;
 
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
@@ -44,10 +47,11 @@ public class ChatController {
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "流式聊天", description = "发送消息并以流式方式获取AI回复")
-    public Flux<String> streamChat(@Valid @RequestBody ChatRequest request) {
+    @Operation(summary = "流式聊天", description = "SSE 事件流：start/delta/card/done/error")
+    public Flux<ServerSentEvent<String>> streamChat(@Valid @RequestBody ChatRequest request) {
         request.setOpenChannel(false);
-        return chatService.streamChat(request);
+        // 管理后台不计量（token 计量是开放 API 专属）
+        return chatService.streamChat(request).map(sseMapper::toSse);
     }
     
     @GetMapping("/session/{sessionId}")
