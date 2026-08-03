@@ -65,17 +65,17 @@ export async function postSse(
       buf = buf.slice(idx + 2);
       const { event, data } = parseSseChunk(chunk);
       if (data === null) continue;
-      let p: any;
+      let payload: unknown;
       try {
-        p = JSON.parse(data);
+        payload = JSON.parse(data);
       } catch {
         continue; // 非法负载忽略，不打断整条流
       }
-      if (event === 'start') handlers.onStart?.(p);
-      else if (event === 'delta') handlers.onDelta?.(p.text ?? '');
-      else if (event === 'card') { if (p.node) handlers.onCard?.(p.node); }
-      else if (event === 'done') { done = true; handlers.onDone?.(p.messageId ?? null); }
-      else if (event === 'error') { errored = true; handlers.onError?.(p.message || '回复生成失败。'); }
+      if (event === 'start') handlers.onStart?.(payload as ChatStreamStart);
+      else if (event === 'delta') handlers.onDelta?.((payload as { text?: string }).text ?? '');
+      else if (event === 'card') { const node = (payload as { node?: UiNode }).node; if (node) handlers.onCard?.(node); }
+      else if (event === 'done') { done = true; handlers.onDone?.((payload as { messageId?: number }).messageId ?? null); }
+      else if (event === 'error') { errored = true; handlers.onError?.((payload as { message?: string }).message || '回复生成失败。'); }
     }
   }
 

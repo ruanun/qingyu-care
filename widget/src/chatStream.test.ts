@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { postSse } from './chatStream';
+import { createApi, SessionExpiredError } from './api';
 
 /** 用可控的 ReadableStream 伪造一个 SSE 响应 */
 function mockSseResponse(chunks: string[], status = 200) {
@@ -84,5 +85,23 @@ describe('postSse', () => {
     await postSse('/x', {}, {}, { onDelta: (t) => texts.push(t) });
 
     expect(texts).toEqual(['正常']);
+  });
+
+  it('404 时经 api.stream() 抛出完整链路上的 SessionExpiredError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([], 404)));
+    const api = createApi({ appKey: 'app_123', apiBase: 'https://host/api' });
+
+    await expect(api.stream('hi', 's-1', {})).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+
+  it('非 404 的 HTTP 失败（如 500）走 onError 且文案不泄露状态码/响应体', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([], 500)));
+    const errors: string[] = [];
+
+    await postSse('/x', {}, {}, { onError: (m) => errors.push(m) });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).not.toMatch(/500/);
+    expect(errors[0]).toBe('抱歉，服务暂时不可用，请稍后再试。');
   });
 });
