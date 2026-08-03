@@ -24,6 +24,7 @@ import com.qingyu.care.service.UiSpecService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.support.SpringAiResponses;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -77,6 +78,13 @@ class ChatServiceNoHitStreakTest {
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;
+
+    @BeforeEach
+    void seedTenantContext() {
+        // chat()/streamChat() 现要求非空租户上下文（见 ChatServiceImpl#requireTenantContext）。
+        // 本类夹具的会话不设 tenantId，实体侧为 null → 归属判定恒放行，取值任意不影响断言。
+        TenantContext.setTenantId(1L);
+    }
 
     @AfterEach
     void clear() {
