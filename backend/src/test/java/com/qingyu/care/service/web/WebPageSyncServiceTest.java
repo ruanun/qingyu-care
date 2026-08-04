@@ -1,7 +1,6 @@
 package com.qingyu.care.service.web;
 
 import com.qingyu.care.entity.Document;
-import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.DocumentRepository;
@@ -12,7 +11,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -131,7 +129,9 @@ class WebPageSyncServiceTest {
 
         service.syncDocument(2L);
 
-        verify(webPageFetcher, never()).fetch(anyString());
+        // 注意：sourceUrl 是 null，anyString() 不匹配 null 调用，必须用 any()，
+        // 否则删掉守卫后 fetch(null) 照样能通过 never() 断言，测试形同虚设
+        verify(webPageFetcher, never()).fetch(any());
         verify(knowledgeService, never()).reprocessDocument(anyLong());
     }
 }

@@ -8,8 +8,9 @@ import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
 import com.qingyu.care.service.KnowledgeService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +27,6 @@ import java.time.LocalDateTime;
  * @author ruan
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WebPageSyncService {
 
@@ -37,6 +37,25 @@ public class WebPageSyncService {
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final KnowledgeService knowledgeService;
     private final WebPageFetcher webPageFetcher;
+
+    // 自注入解决 @Async 同类调用不生效问题（同 KnowledgeServiceImpl/ReembedService 范式）
+    private WebPageSyncService self;
+
+    public WebPageSyncService(DocumentRepository documentRepository,
+                               KnowledgeBaseRepository knowledgeBaseRepository,
+                               KnowledgeService knowledgeService,
+                               WebPageFetcher webPageFetcher) {
+        this.documentRepository = documentRepository;
+        this.knowledgeBaseRepository = knowledgeBaseRepository;
+        this.knowledgeService = knowledgeService;
+        this.webPageFetcher = webPageFetcher;
+    }
+
+    @Autowired
+    @Lazy
+    public void setSelf(WebPageSyncService self) {
+        this.self = self;
+    }
 
     /**
      * 建档 + 异步首次抓取。同步返回是为了让「添加」按钮立刻有反馈，
@@ -59,7 +78,8 @@ public class WebPageSyncService {
                 .build();
         doc = documentRepository.save(doc);
 
-        syncDocumentAsync(doc.getId());
+        // 必须经 self 调用才能命中 Spring 代理，@Async 才会真正生效（同类直调会被隐式 this. 绕过代理）
+        self.syncDocumentAsync(doc.getId());
         return doc;
     }
 
