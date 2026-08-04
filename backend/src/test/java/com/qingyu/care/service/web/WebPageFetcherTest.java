@@ -1,12 +1,15 @@
 package com.qingyu.care.service.web;
 
+import com.qingyu.care.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 单元测试：网页正文提取的噪声剔除、标题回退与内容哈希。
- * 这三个都是静态纯函数，不发网络请求，可直接调用（同 ChatServiceImpl#meterContentStream 惯例）。
+ * 单元测试：网页正文提取的噪声剔除、标题回退、内容哈希与 HTTP 状态码校验。
+ * 这些都是静态纯函数，不发网络请求，可直接调用（同 ChatServiceImpl#meterContentStream 惯例）。
  *
  * @author ruan
  */
@@ -74,5 +77,25 @@ class WebPageFetcherTest {
     @Test
     void 空body不抛异常返回空串() {
         assertThat(WebPageFetcher.extractFrom("<html></html>", "https://example.com")).isEmpty();
+    }
+
+    @Test
+    void 状态码为2xx放行() {
+        assertThatCode(() -> WebPageFetcher.requireSuccessStatus(200)).doesNotThrowAnyException();
+        assertThatCode(() -> WebPageFetcher.requireSuccessStatus(201)).doesNotThrowAnyException();
+        assertThatCode(() -> WebPageFetcher.requireSuccessStatus(204)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void 状态码非2xx抛异常且消息含状态码() {
+        assertThatThrownBy(() -> WebPageFetcher.requireSuccessStatus(404))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("404");
+        assertThatThrownBy(() -> WebPageFetcher.requireSuccessStatus(500))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("500");
+        assertThatThrownBy(() -> WebPageFetcher.requireSuccessStatus(301))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("301");
     }
 }

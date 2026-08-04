@@ -56,17 +56,20 @@ public class WebPageFetcher {
 
     public record FetchResult(String title, String content, String contentHash, int httpStatus) {}
 
+    /** 下载结果：正文原始 HTML + 真实 HTTP 状态码，避免把错误页伪装成 200。 */
+    private record Downloaded(String html, int status) {}
+
     public FetchResult fetch(String url) {
-        String html = download(url);
-        String content = extractFrom(html, url);
+        Downloaded downloaded = download(url);
+        String content = extractFrom(downloaded.html(), url);
         if (content.isBlank()) {
             throw new BusinessException("网页正文为空，可能是需要 JS 渲染的页面: " + url);
         }
-        return new FetchResult(extractTitle(html, url), content, sha256(content), 200);
+        return new FetchResult(extractTitle(downloaded.html(), url), content, sha256(content), downloaded.status());
     }
 
     /** 安全下载：SSRF 钉 IP + 禁重定向 + 超时 + 限量 + Content-Type 白名单。 */
-    private String download(String url) {
+    private Downloaded download(String url) {
         final String host = URI.create(url).getHost();
         if (host == null || host.isBlank()) {
             throw new BusinessException("URL 缺少主机名: " + url);
@@ -105,6 +108,8 @@ public class WebPageFetcher {
                     .build();
 
             return client.get().uri(url).exchange((request, response) -> {
+                int status = response.getStatusCode().value();
+                requireSuccessStatus(status);
                 MediaType contentType = response.getHeaders().getContentType();
                 if (contentType == null
                         || !ALLOWED_TYPES.contains(contentType.getType() + "/" + contentType.getSubtype())) {
@@ -112,10 +117,21 @@ public class WebPageFetcher {
                 }
                 Charset charset = contentType.getCharset() != null
                         ? contentType.getCharset() : StandardCharsets.UTF_8;
-                return new String(readLimited(response.getBody()), charset);
+                String html = new String(readLimited(response.getBody()), charset);
+                return new Downloaded(html, status);
             });
         } catch (IOException e) {
             throw new BusinessException("网页抓取失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 只放行 2xx；非成功状态码一律拒绝，不让错误页正文（"页面不存在""服务器错误"等）
+     * 混入知识库参与检索。static 免容器单测，是这条风险的唯一防线。
+     */
+    static void requireSuccessStatus(int status) {
+        if (status < 200 || status >= 300) {
+            throw new BusinessException("网页返回 HTTP " + status);
         }
     }
 
