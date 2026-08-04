@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentType;
 import com.qingyu.care.enums.DocumentVisibility;
+import com.qingyu.care.enums.SyncInterval;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -108,6 +109,32 @@ public class Document extends BaseTenantEntity {
      */
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
+
+    /** 网页文档的源地址（仅 documentType=URL 有值）；长度上限与前端 safeUrl 一致。 */
+    @Column(name = "source_url", length = 2048)
+    private String sourceUrl;
+
+    /** 正文的 SHA-256，用于同步时判断内容是否变化——没变就不重嵌，省 embedding 成本。 */
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
+    /** 自动同步周期；null 或 MANUAL 表示不参与定时调度。 */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sync_interval", length = 20)
+    private SyncInterval syncInterval;
+
+    /** 上次「成功」同步时间；抓取失败不更新，故它同时是「内容新鲜度」的下界。 */
+    @Column(name = "last_synced_at")
+    private LocalDateTime lastSyncedAt;
+
+    /**
+     * 连续同步失败次数，任何一次成功清零。
+     * 列可空：ddl-auto=update 对存量行加 NOT NULL 列会导致启动失败；读取时 null 归 0。
+     * @Builder.Default 不可省：Lombok @Builder 会忽略字段初值，漏了它 builder 建出来就是 null。
+     */
+    @Builder.Default
+    @Column(name = "sync_failure_count")
+    private Integer syncFailureCount = 0;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
