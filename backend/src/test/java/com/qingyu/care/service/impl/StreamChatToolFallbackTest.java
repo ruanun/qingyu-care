@@ -166,6 +166,30 @@ class StreamChatToolFallbackTest {
     }
 
     @Test
+    void 回退成功后补记真实token_不重复计一次调用() {
+        // 守护 I-1：meterContentStream 的 doFinally 先于回退发生，已经以 0 token 记过这一次调用
+        // （onTokensUsed 恰好回调一次，值为 0）；回退成功拿到真实 token 后，必须走 onFallbackTokensUsed
+        // 单独补记，而不是再调一次 onTokensUsed（否则 ApiUsageService.record 会把这一轮重复计成两次调用）
+        ToolCallback tool = mock(ToolCallback.class);
+        stubStreamFailure(new ChatToolService.ToolBundle(List.of(), List.of(tool)));
+        when(selfMock.chat(any())).thenReturn(
+                ChatResponse.builder().content("回退回答").messageId(99L).tokenUsage(37).build());
+
+        java.util.List<Integer> onTokensUsedCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.List<Integer> onFallbackTokensUsedCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<ChatStreamEvent> events = service.streamChat(
+                        ChatRequest.builder().message("下单").build(),
+                        onTokensUsedCalls::add, onFallbackTokensUsedCalls::add)
+                .collectList().block();
+
+        assertThat(events).extracting(ChatStreamEvent::type)
+                .containsExactly(ChatStreamEvent.Type.START, ChatStreamEvent.Type.DELTA,
+                        ChatStreamEvent.Type.DONE);
+        assertThat(onTokensUsedCalls).containsExactly(0);
+        assertThat(onFallbackTokensUsedCalls).containsExactly(37);
+    }
+
+    @Test
     void 已吐出正文后再失败不回退不重复正文() {
         // 守护 I-1：跑到一半才失败（本例模拟已经吐出一个真实 chunk 后才炸），此时客户端已经拿到半截正文，
         // 回退会把完整答案整段重发、与已发内容拼成「半截+完整」，只有一个字节都没吐出去时才能安全回退
@@ -213,7 +237,7 @@ class StreamChatToolFallbackTest {
         java.util.concurrent.atomic.AtomicReference<Long> tenantIdAfterFinally =
                 new java.util.concurrent.atomic.AtomicReference<>(-999L);
         List<ChatStreamEvent> events = service
-                .fallbackToNonStreaming(request, session, 1L, 2L, DocumentVisibility.INTERNAL)
+                .fallbackToNonStreaming(request, session, 1L, 2L, DocumentVisibility.INTERNAL, t -> { })
                 .doOnNext(evt -> tenantIdAfterFinally.set(TenantContext.getTenantId()))
                 .collectList().block();
 

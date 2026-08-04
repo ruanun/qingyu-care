@@ -279,13 +279,14 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public Flux<ChatStreamEvent> streamChat(ChatRequest request) {
-        // 内部调用：不计量，回调为空操作
-        return streamChat(request, t -> {});
+        // 内部调用：不计量，两个回调均为空操作
+        return streamChat(request, t -> {}, t -> {});
     }
 
     @Override
     public Flux<ChatStreamEvent> streamChat(ChatRequest request,
-                                            java.util.function.IntConsumer onTokensUsed) {
+                                            java.util.function.IntConsumer onTokensUsed,
+                                            java.util.function.IntConsumer onFallbackTokensUsed) {
         // 请求线程内完成所有依赖 TenantContext 的操作（会话创建/检索/模型解析）；
         // 落库回调运行在 Reactor 线程，只做无上下文依赖的写入
         ChatSession session = getOrCreateSession(request);
@@ -294,11 +295,13 @@ public class ChatServiceImpl implements ChatService {
         if (isAgentControlled(session)) {
             persistUserMessageDuringHandover(session, request.getMessage());
             onTokensUsed.accept(0);
-            return earlyReturn(session, "[会话已转接人工客服，请等待回复]");
+            // 会话已在人工流程中，再提示"建议转人工"是噪声
+            return earlyReturn(session, "[会话已转接人工客服，请等待回复]", false);
         }
         if (triggerKeywordHandoverIfHit(session, request.getMessage())) {
             onTokensUsed.accept(0);
-            return earlyReturn(session, "正在为您转接人工客服，请稍候...");
+            // 与 chat() 的关键词分支同语义：suggestHandover=true，否则管理端转人工提示条不出现
+            return earlyReturn(session, "正在为您转接人工客服，请稍候...", true);
         }
 
         ChatStrategy strategy = resolveStrategy(session);
@@ -404,7 +407,7 @@ public class ChatServiceImpl implements ChatService {
                         // 无工具、或已经吐过内容，均不走此路——前者免得把真实故障静默重跑掩盖掉，
                         // 后者是为了不把内容拼两遍。
                         return fallbackToNonStreaming(request, session, tenantIdForFallback,
-                                appIdForFallback, accessLevelForFallback);
+                                appIdForFallback, accessLevelForFallback, onFallbackTokensUsed);
                     });
         });
     }
@@ -416,9 +419,20 @@ public class ChatServiceImpl implements ChatService {
      * <p>{@code subscribeOn(boundedElastic())}：调用方（Spring AI 发流的线程，生产上可能是事件循环线程）
      * 不能被 {@code self.chat(...)} 这个阻塞的非流式 LLM 往返占用一整轮；隔离到独立线程还顺带避免了
      * ThreadLocal 的 set/clear 在同步订阅下误伤调用方自己线程上的上下文。
+     * <p><b>token 计量</b>：回退触发前 {@link #meterContentStream} 的 {@code doFinally} 已经以 0 token
+     * 为这一轮计过账（流式失败于 usage 到达之前）；本方法回退成功后通过 {@code onFallbackTokensUsed}
+     * 补记 {@code chat()} 返回的真实 token 用量——只补 token 差值，不重复计调用/消息次数（不能直接复用
+     * 主计量回调，{@code ApiUsageService.record} 的 SQL 无条件把 call_count + 1）。回退本身失败则不补记，
+     * 维持已记的 0。
+     * <p>已知取舍（token 计量的另一半）：客户端「停止生成」/异步超时（{@code doFinally(CANCEL)}）与本方法
+     * 无关，同样只记 0 token——彼时真实 token 已被上游模型消耗但无法追加计量，这是流式取消场景的固有代价。
+     * <p>已知取舍（no_hit_streak）：回退会重跑 {@code self.chat(request)}，其内部重新执行一次检索并
+     * 二次更新会话的 {@code no_hit_streak} 计数；未命中场景下该计数会因这次"重复的未命中"而虚高一次，
+     * 转人工阈值可能因此提前触发。
      */
     Flux<ChatStreamEvent> fallbackToNonStreaming(ChatRequest request, ChatSession session,
-                                                 Long tenantId, Long appId, DocumentVisibility accessLevel) {
+                                                 Long tenantId, Long appId, DocumentVisibility accessLevel,
+                                                 java.util.function.IntConsumer onFallbackTokensUsed) {
         return Mono.fromCallable(() -> {
             List<ChatStreamEvent> events = new ArrayList<>();
             try {
@@ -428,6 +442,9 @@ public class ChatServiceImpl implements ChatService {
                 // 钉住会话：START 已把该 sessionId 发给客户端，回退不能另起新会话
                 request.setSessionId(session.getSessionId());
                 ChatResponse resp = self.chat(request);          // 走代理，保事务
+                if (resp.getTokenUsage() != null && resp.getTokenUsage() > 0) {
+                    onFallbackTokensUsed.accept(resp.getTokenUsage());
+                }
                 List<UiPart> parts = resp.getUiParts();
                 if (parts != null && !parts.isEmpty()) {
                     for (UiPart p : parts) {
@@ -457,11 +474,13 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 早退分支（人工接管静默 / 关键词转人工）：同样发完整 START + DELTA + DONE 序列，
      * 否则客户端拿不到 sessionId。这两条路不落 AI 消息，故 DONE 的 messageId 为 null。
-     * suggestHandover 恒 false——会话已在人工流程中，再提示「建议转人工」是噪声。
+     * <p>suggestHandover 由调用方按分支语义传入，与 chat() 的对应分支保持同语义：人工接管态传 false
+     * （会话已在人工流程中，再提示「建议转人工」是噪声）；关键词命中传 true（首次触发，管理端需要
+     * 出现转人工提示条），否则相对非流式 chat() 会是行为回退。
      */
-    private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text) {
+    private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text, boolean suggestHandover) {
         return Flux.just(
-                ChatStreamEvent.start(session.getSessionId(), false, List.of()),
+                ChatStreamEvent.start(session.getSessionId(), suggestHandover, List.of()),
                 ChatStreamEvent.delta(text),
                 ChatStreamEvent.done(null));
     }

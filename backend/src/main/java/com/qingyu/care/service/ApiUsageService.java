@@ -64,4 +64,31 @@ public class ApiUsageService {
             log.warn("写开放 API 用量失败 appId={}: {}", appId, e.getMessage());
         }
     }
+
+    /**
+     * 仅补记 token 用量，不计入调用/消息次数。
+     * <p>用于流式对话降级轮：{@code streamChat} 首次 {@code doFinally} 已按「一次调用」记过账
+     * （此时 tokens 恒为 0，因为流式失败在 usage 到达之前）；随后非流式回退成功后拿到真实 token，
+     * 此处只补 token 差值——不能复用 {@link #record}，它的 SQL 无条件把 call_count + 1，会把这
+     * 一轮重复计成两次调用。
+     * <p>fail-soft：与 {@link #record} 同惯例，异常只记日志不外抛；当天用量行不存在（理论上不会
+     * 发生，正常情形下主计量路径必然已先插入过）时放弃补记，不插入一条 callCount=0 的畸形行。
+     *
+     * @param appId  应用 ID
+     * @param tokens 需要补记的 token 差值；非正数直接跳过
+     */
+    @Async
+    public void recordFallbackTokens(Long appId, long tokens) {
+        if (tokens <= 0) {
+            return;
+        }
+        try {
+            int updated = repository.incrementTokensOnly(appId, LocalDate.now(), tokens);
+            if (updated == 0) {
+                log.warn("补记降级轮 token 失败：当天用量行不存在 appId={}", appId);
+            }
+        } catch (Exception e) {
+            log.warn("补记降级轮 token 失败 appId={}: {}", appId, e.getMessage());
+        }
+    }
 }

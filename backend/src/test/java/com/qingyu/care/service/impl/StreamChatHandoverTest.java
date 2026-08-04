@@ -107,6 +107,8 @@ class StreamChatHandoverTest {
         assertThat(events).hasSize(3);
         assertThat(events.get(0).type()).isEqualTo(ChatStreamEvent.Type.START);
         assertThat(((ChatStreamEvent.Start) events.get(0).payload()).sessionId()).isEqualTo("s1");
+        // M-1：人工接管态 suggestHandover 恒 false——会话已在人工流程中，再提示是噪声
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).suggestHandover()).isFalse();
         assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
                 .isEqualTo("[会话已转接人工客服，请等待回复]");
         assertThat(events.get(2).type()).isEqualTo(ChatStreamEvent.Type.DONE);
@@ -127,6 +129,8 @@ class StreamChatHandoverTest {
                 ChatRequest.builder().sessionId("s0").message("你好").build()).collectList().block();
 
         assertThat(events).hasSize(3);
+        // M-1：等待接管态同样是人工流程，suggestHandover 恒 false
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).suggestHandover()).isFalse();
         assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
                 .isEqualTo("[会话已转接人工客服，请等待回复]");
         verify(modelRouterService, never()).streamWithFallback(any(), any());
@@ -147,6 +151,8 @@ class StreamChatHandoverTest {
                 ChatRequest.builder().sessionId("s2").message("人工").build()).collectList().block();
 
         assertThat(events).hasSize(3);
+        // M-1：关键词触发转人工与 chat() 同语义，suggestHandover 恒 true，否则管理端提示条不出现
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).suggestHandover()).isTrue();
         assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
                 .isEqualTo("正在为您转接人工客服，请稍候...");
         assertThat(session.getStatus()).isEqualTo(SessionStatus.WAITING_AGENT);
@@ -171,6 +177,8 @@ class StreamChatHandoverTest {
                 ChatRequest.builder().sessionId("s2").message("我要转人工").build()).collectList().block();
 
         assertThat(events).hasSize(3);
+        // M-1：已接管态短路优先，即便消息含关键词也不当作关键词触发，suggestHandover 仍为 false
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).suggestHandover()).isFalse();
         assertThat(((ChatStreamEvent.Delta) events.get(1).payload()).text())
                 .isEqualTo("[会话已转接人工客服，请等待回复]");
         assertThat(session.getStatus()).isEqualTo(SessionStatus.AGENT_PROCESSING);   // 未被打回 WAITING_AGENT

@@ -47,7 +47,7 @@ class ChatStreamEventIT extends AbstractPostgresIT {
     void 开放端流式返回start_delta_card_done四类事件_顺序正确且delta换行已转义() throws Exception {
         Application app = seedApp("streamevt" + System.nanoTime(), "http://streamevt.example.com");
 
-        Mockito.when(chatService.streamChat(ArgumentMatchers.any(), ArgumentMatchers.any()))
+        Mockito.when(chatService.streamChat(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
                 .thenReturn(Flux.just(
                         ChatStreamEvent.start("s_it", true, List.of()),
                         ChatStreamEvent.delta("你好\n世界"),

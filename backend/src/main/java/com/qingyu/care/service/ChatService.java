@@ -31,10 +31,16 @@ public interface ChatService {
     Flux<ChatStreamEvent> streamChat(ChatRequest request);
 
     /**
-     * 流式聊天（开放 API：带 token 计量）。流正常/异常结束时以本次 total_tokens 回调。
-     * 事件序列：START → (DELTA|CARD)* → DONE；失败时以 ERROR 收尾。
+     * 流式聊天（开放 API：带 token 计量）。事件序列：START → (DELTA|CARD)* → DONE；失败时以 ERROR 收尾。
+     *
+     * @param onTokensUsed         本轮"一次调用"的用量回调，流正常结束/取消/未回退的失败均恰好回调一次
+     *                             （含 messages/tokens，即 {@code ApiUsageService.record} 语义）。
+     * @param onFallbackTokensUsed 流式失败并成功回退非流式后触发：仅补记本轮真实 token 用量，不计入
+     *                             调用/消息次数（onTokensUsed 此前已以 0 token 记过这一次调用）。
+     *                             未触发回退、或回退本身也失败时不会被调用。
      */
-    Flux<ChatStreamEvent> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed);
+    Flux<ChatStreamEvent> streamChat(ChatRequest request, java.util.function.IntConsumer onTokensUsed,
+                                     java.util.function.IntConsumer onFallbackTokensUsed);
 
     /**
      * 获取会话信息

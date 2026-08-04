@@ -199,7 +199,7 @@ class StreamChatEventPipelineTest {
                 Flux.just(SpringAiResponses.of("你好", 5), SpringAiResponses.of("，请问有什么可以帮您", 12)));
 
         StepVerifier.create(service.streamChat(
-                        ChatRequest.builder().sessionId("s5").message("在吗").build(), tokens -> { }))
+                        ChatRequest.builder().sessionId("s5").message("在吗").build(), tokens -> { }, tokens -> { }))
                 .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
                 .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
                 .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
@@ -229,7 +229,7 @@ class StreamChatEventPipelineTest {
                 Flux.just(SpringAiResponses.of("你好", 5)));
 
         StepVerifier.create(service.streamChat(
-                        ChatRequest.builder().sessionId("s6").message("在吗").build(), tokens -> { }))
+                        ChatRequest.builder().sessionId("s6").message("在吗").build(), tokens -> { }, tokens -> { }))
                 .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
                 .thenCancel()
                 .verify(Duration.ofSeconds(2));
@@ -244,7 +244,7 @@ class StreamChatEventPipelineTest {
                 .thenReturn(Flux.error(new RuntimeException("上游 502，内部主机 10.0.0.7 不可达")));
 
         List<ChatStreamEvent> events = service.streamChat(
-                        ChatRequest.builder().sessionId("s7").message("在吗").build(), tokens -> { })
+                        ChatRequest.builder().sessionId("s7").message("在吗").build(), tokens -> { }, tokens -> { })
                 .collectList().block();
 
         // START 在模型调用之前已同步构造好、与失败与否无关，故仍会先送达；

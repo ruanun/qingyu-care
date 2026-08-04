@@ -43,7 +43,14 @@ spring:
     multipart:
       max-file-size: 100MB
       max-request-size: 200MB
-  
+
+  # 异步请求超时：Servlet 规范默认 30s，长回复的流式对话（/v1/chat/stream、/open/v1/chat/stream）
+  # 客户端刻意不重连（重连=重复发消息+重复计费），到点即被 cancel，用户看到半截回复且答案丢失。
+  # 设明确上限而非 -1，避免异常连接永久占用 servlet 容器线程/资源。
+  mvc:
+    async:
+      request-timeout: 180000
+
   # Spring AI 配置 (使用 OpenAI 兼容模式)
   ai:
     openai:

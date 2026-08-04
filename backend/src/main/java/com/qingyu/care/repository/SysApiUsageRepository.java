@@ -36,6 +36,20 @@ public interface SysApiUsageRepository extends JpaRepository<SysApiUsage, Long> 
     int incrementUsage(@Param("appId") Long appId, @Param("date") LocalDate date,
                        @Param("messages") long messages, @Param("tokens") long tokens);
 
+    /**
+     * 仅补记 token 用量，不触碰 call_count/message_count：用于流式对话降级轮成功后修正
+     * 已提前记过的 0 token（见 {@link com.qingyu.care.service.ApiUsageService#recordFallbackTokens}）。
+     * 不能复用 {@link #incrementUsage} ——它的 call_count 无条件 +1，与 messages 参数无关，
+     * 若拿它来做「只补 token」的修正会把这一轮重复计成两次调用。
+     * 返回受影响行数（0 表示当天用量行不存在，调用方据此放弃补记）。
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE sys_api_usage SET token_count = token_count + :tokens, " +
+            "updated_at = CURRENT_TIMESTAMP WHERE app_id = :appId AND usage_date = :date", nativeQuery = true)
+    int incrementTokensOnly(@Param("appId") Long appId, @Param("date") LocalDate date,
+                            @Param("tokens") long tokens);
+
     // ===== 用量看板聚合（该实体不继承 BaseTenantEntity，不受 Hibernate 租户过滤影响，where 手写）=====
 
     /**
