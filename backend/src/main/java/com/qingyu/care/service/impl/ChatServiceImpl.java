@@ -366,6 +366,10 @@ public class ChatServiceImpl implements ChatService {
         ChatStreamEvent startEvent =
                 ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits);
 
+        // 请求线程内捕获（Reactor 线程无 ThreadLocal 上下文，回退分支要手动搬运）
+        final Long tenantIdForFallback = TenantContext.getTenantId();
+        final Long appIdForFallback = TenantContext.getAppId();
+
         return Flux.defer(() -> {
             // splitter 与累加器有状态，必须每次订阅各持一份，否则重复订阅会串状态
             StreamingSpecSplitter splitter = new StreamingSpecSplitter(objectMapper);
@@ -382,8 +386,55 @@ public class ChatServiceImpl implements ChatService {
         }).onErrorResume(e -> {
             // 固定文案，绝不回传原始异常（widget 运行在客户网页里）；详情只进日志
             log.warn("流式对话失败 sessionId={}: {}", session.getSessionId(), e.getMessage(), e);
-            return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
+            if (tools.isEmpty()) {
+                return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
+            }
+            // 已知上游缺陷：Spring AI 2.0 合并含 tool_call 的流式 chunk 时抛 NoSuchElementException
+            // （spring-projects/spring-ai#4790，修复 PR #4794 未合并、2.0.0 已是最新稳定版）。
+            // 挂了工具的这一轮降级为非流式重跑，保住工具能力；无工具场景不走此路，
+            // 免得把真实故障静默重跑掩盖掉。上游修复后可整段删除。
+            return fallbackToNonStreaming(request, session, tenantIdForFallback, appIdForFallback);
         });
+    }
+
+    /**
+     * 流式失败后的非流式兜底：在 Reactor 线程临时恢复租户上下文，用非流式 chat() 重跑一轮，
+     * 把完整结果补发为 DELTA/CARD/DONE 事件（START 已在流首发出，此处不再补）。
+     * <p>ThreadLocal 必须 finally 清理：boundedElastic 线程复用，漏清会把租户上下文泄漏给后续请求。
+     */
+    Flux<ChatStreamEvent> fallbackToNonStreaming(ChatRequest request, ChatSession session,
+                                                 Long tenantId, Long appId) {
+        return Mono.fromCallable(() -> {
+            List<ChatStreamEvent> events = new ArrayList<>();
+            try {
+                TenantContext.setTenantId(tenantId);
+                TenantContext.setAppId(appId);
+                // 钉住会话：START 已把该 sessionId 发给客户端，回退不能另起新会话
+                request.setSessionId(session.getSessionId());
+                ChatResponse resp = self.chat(request);          // 走代理，保事务
+                List<UiPart> parts = resp.getUiParts();
+                if (parts != null && !parts.isEmpty()) {
+                    for (UiPart p : parts) {
+                        if ("ui".equals(p.getKind()) && p.getNode() != null) {
+                            events.add(ChatStreamEvent.card(p.getNode()));
+                        } else if (p.getText() != null && !p.getText().isEmpty()) {
+                            events.add(ChatStreamEvent.delta(p.getText()));
+                        }
+                    }
+                } else if (resp.getContent() != null && !resp.getContent().isEmpty()) {
+                    events.add(ChatStreamEvent.delta(resp.getContent()));
+                }
+                events.add(ChatStreamEvent.done(resp.getMessageId()));
+            } finally {
+                TenantContext.clear();   // 必须无条件清理
+            }
+            return events;
+        }).flatMapMany(Flux::fromIterable)
+          .onErrorResume(e2 -> {
+              // 兜底的兜底：回退本身再失败就老实报错，不再递归
+              log.warn("非流式回退同样失败 sessionId={}: {}", session.getSessionId(), e2.getMessage(), e2);
+              return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
+          });
     }
 
     /**
