@@ -56,4 +56,12 @@ export const knowledgeService = {
     // 设置文档启用状态
     setDocumentEnabled: (docId: number, enabled: boolean): Promise<ApiResponse<Document>> =>
         api.put(`/knowledge/documents/${docId}/enabled?enabled=${enabled}`),
+
+    // 添加网页文档（抓取 URL 正文入库）
+    addWebPage: (knowledgeBaseId: number, url: string, syncInterval: string): Promise<ApiResponse<Document>> =>
+        api.post(`/knowledge/${knowledgeBaseId}/web-pages`, { url, syncInterval }),
+
+    // 手动触发网页重新抓取
+    syncWebPage: (documentId: number): Promise<ApiResponse<void>> =>
+        api.post(`/knowledge/documents/${documentId}/sync`),
 };

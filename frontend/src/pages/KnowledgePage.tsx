@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2 } from 'lucide-react';
+import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -152,6 +152,39 @@ const KnowledgePage: React.FC = () => {
         }
     };
 
+    const [webPageOpen, setWebPageOpen] = useState(false);
+    const [webPageUrl, setWebPageUrl] = useState('');
+    const [webPageInterval, setWebPageInterval] = useState('DAILY');
+    const [syncingDocId, setSyncingDocId] = useState<number | null>(null);
+
+    const handleAddWebPage = async () => {
+        if (!webPageUrl.trim() || !selectedKb) return;
+        try {
+            await knowledgeService.addWebPage(selectedKb.id, webPageUrl.trim(), webPageInterval);
+            setWebPageOpen(false);
+            setWebPageUrl('');
+            toast({ title: '网页已添加', description: '正在后台抓取，稍后刷新查看结果' });
+            fetchDocuments(selectedKb.id);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: 'destructive', title: '添加失败', description: message });
+        }
+    };
+
+    const handleSyncWebPage = async (docId: number) => {
+        setSyncingDocId(docId);
+        try {
+            await knowledgeService.syncWebPage(docId);
+            toast({ title: '已触发同步', description: '正在后台重新抓取' });
+            setTimeout(() => selectedKb && fetchDocuments(selectedKb.id), 2000);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: 'destructive', title: '同步失败', description: message });
+        } finally {
+            setSyncingDocId(null);
+        }
+    };
+
     const getStatusIcon = (status: string) => {
         switch (status) {
             case 'COMPLETED': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
@@ -262,6 +295,44 @@ const KnowledgePage: React.FC = () => {
                                             accept=".pdf,.txt,.doc,.docx"
                                         />
                                     </Button>
+                                    <Dialog open={webPageOpen} onOpenChange={setWebPageOpen}>
+                                        <DialogTrigger asChild>
+                                            <Button variant="outline" size="sm" className="gap-2">
+                                                <Globe className="w-4 h-4" /> 添加网页
+                                            </Button>
+                                        </DialogTrigger>
+                                        <DialogContent>
+                                            <DialogHeader>
+                                                <DialogTitle>添加网页到知识库</DialogTitle>
+                                                <DialogDescription>
+                                                    抓取网页正文入库（自动剔除导航、页脚等噪声）。只支持 http/https，且不能是内网地址。
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <div className="space-y-4">
+                                                <Input
+                                                    placeholder="https://example.com/faq"
+                                                    value={webPageUrl}
+                                                    onChange={(e) => setWebPageUrl(e.target.value)}
+                                                />
+                                                <div className="space-y-1">
+                                                    <label className="text-xs text-muted-foreground">自动同步周期</label>
+                                                    <select
+                                                        className="w-full h-9 px-3 rounded-md border bg-background text-sm"
+                                                        value={webPageInterval}
+                                                        onChange={(e) => setWebPageInterval(e.target.value)}
+                                                    >
+                                                        <option value="MANUAL">不自动同步</option>
+                                                        <option value="HOURLY">每小时</option>
+                                                        <option value="DAILY">每天</option>
+                                                        <option value="WEEKLY">每周</option>
+                                                    </select>
+                                                </div>
+                                                <Button className="w-full" onClick={handleAddWebPage} disabled={!webPageUrl.trim()}>
+                                                    添加
+                                                </Button>
+                                            </div>
+                                        </DialogContent>
+                                    </Dialog>
                                 </div>
                             </CardHeader>
                             <CardContent>
@@ -305,6 +376,28 @@ const KnowledgePage: React.FC = () => {
                                                         <span>切片: {doc.chunkCount || 0}</span>
                                                         <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
                                                     </div>
+                                                    {doc.sourceUrl && (
+                                                        <div className="flex items-center gap-3 mt-1 text-[10px]">
+                                                            <a
+                                                                href={doc.sourceUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-primary hover:underline truncate max-w-[240px]"
+                                                            >
+                                                                {doc.sourceUrl}
+                                                            </a>
+                                                            <span className="text-muted-foreground">
+                                                                上次同步: {doc.lastSyncedAt
+                                                                    ? new Date(doc.lastSyncedAt).toLocaleString()
+                                                                    : '从未'}
+                                                            </span>
+                                                            {(doc.syncFailureCount ?? 0) > 0 && (
+                                                                <span className="text-amber-600">
+                                                                    连续失败 {doc.syncFailureCount} 次
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {doc.status === 'PROCESSING' && (
                                                         <Progress value={getStatusProgress(doc.status)} className="h-1 mt-2 w-32" />
                                                     )}
@@ -335,6 +428,18 @@ const KnowledgePage: React.FC = () => {
                                                     >
                                                         {(doc.enabled ?? true) ? '检索中' : '已停用'}
                                                     </button>
+                                                    {doc.sourceUrl && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8"
+                                                            title="立即重新抓取"
+                                                            disabled={syncingDocId === doc.id}
+                                                            onClick={() => handleSyncWebPage(doc.id)}
+                                                        >
+                                                            <RefreshCw className={`w-4 h-4 ${syncingDocId === doc.id ? 'animate-spin' : ''}`} />
+                                                        </Button>
+                                                    )}
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"

@@ -80,6 +80,10 @@ export interface Document {
     createdAt: string;
     visibility?: 'PUBLIC' | 'INTERNAL';   // 缺省视为 PUBLIC
     enabled?: boolean;                     // 缺省视为启用
+    sourceUrl?: string | null;
+    syncInterval?: 'MANUAL' | 'HOURLY' | 'DAILY' | 'WEEKLY' | null;
+    lastSyncedAt?: string | null;
+    syncFailureCount?: number | null;
 }
 
 export interface DocumentStatusDTO {

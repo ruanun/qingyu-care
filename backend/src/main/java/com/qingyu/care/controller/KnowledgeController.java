@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AddWebPageRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
@@ -9,6 +10,7 @@ import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.KnowledgeService;
 import com.qingyu.care.service.ReembedService;
+import com.qingyu.care.service.web.WebPageSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -30,6 +32,7 @@ public class KnowledgeController {
 
     private final KnowledgeService knowledgeService;
     private final ReembedService reembedService;
+    private final WebPageSyncService webPageSyncService;
 
     @PostMapping
     @Operation(summary = "创建知识库", description = "创建新的知识库")
@@ -100,6 +103,15 @@ public class KnowledgeController {
         List<Document> docs = knowledgeService.getDocuments(id);
         return ApiResponse.success(docs);
     }
+
+    @PostMapping("/{knowledgeBaseId}/web-pages")
+    @Operation(summary = "添加网页文档", description = "抓取指定 URL 的正文入知识库，可配置自动同步周期")
+    @AuditLog(action = "ADD_WEB_PAGE", targetType = "DOCUMENT")
+    public ApiResponse<Document> addWebPage(@PathVariable Long knowledgeBaseId,
+                                            @Valid @RequestBody AddWebPageRequest request) {
+        return ApiResponse.success("网页已添加，正在抓取",
+                webPageSyncService.addWebPage(knowledgeBaseId, request.getUrl(), request.getSyncInterval()));
+    }
     
     @GetMapping("/documents/{documentId}")
     @Operation(summary = "获取文档详情", description = "获取单个文档的详细信息和处理状态")
@@ -126,6 +138,15 @@ public class KnowledgeController {
             @RequestParam boolean enabled) {
         Document doc = knowledgeService.setDocumentEnabled(documentId, enabled);
         return ApiResponse.success(enabled ? "文档已启用" : "文档已禁用", doc);
+    }
+
+    @PostMapping("/documents/{documentId}/sync")
+    @Operation(summary = "立即同步网页", description = "手动触发一次重新抓取（异步执行）")
+    @AuditLog(action = "SYNC_WEB_PAGE", targetType = "DOCUMENT")
+    public ApiResponse<Void> syncWebPage(@PathVariable Long documentId) {
+        knowledgeService.getDocument(documentId);   // 归属校验：越权直接抛，避免跨租户触发同步
+        webPageSyncService.syncDocumentAsync(documentId);
+        return ApiResponse.success("已触发同步", null);
     }
 
     @GetMapping("/documents/{documentId}/status")
