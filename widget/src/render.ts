@@ -1,15 +1,8 @@
 import type { UiNode } from './api';
+import { safeUrl } from './safeUrl';
 
-/** 仅允 http/https 且长度受限，其余返回空串（防 javascript:/data: 注入）。 */
-export function safeUrl(u: unknown): string {
-  if (typeof u !== 'string' || u.length > 2048) return '';
-  try {
-    const p = new URL(u);
-    return p.protocol === 'http:' || p.protocol === 'https:' ? u : '';
-  } catch {
-    return '';
-  }
-}
+// 保持既有导出路径不变（render.test.ts 从 './render' 导入 safeUrl）
+export { safeUrl };
 
 function str(v: unknown): string {
   return v == null ? '' : String(v);
