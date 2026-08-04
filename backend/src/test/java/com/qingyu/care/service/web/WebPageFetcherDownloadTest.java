@@ -69,8 +69,11 @@ class WebPageFetcherDownloadTest {
                         + "<body><p>自购买之日起七天内可无理由退货。</p></body></html>")
                         .getBytes(Charset.forName("GBK"))));
 
+        // body 刻意超过 5MB 上限：这样「先判状态码、再读 body」的顺序才有区分力——顺序若被
+        // 改成先读后判，抛出的会是「超过 5MB 上限」而不是「HTTP 404」，用例立刻转红。
+        // 用小 body 时两种顺序都抛「HTTP 404」，测试对顺序毫无察觉
         server.createContext("/notfound", ex -> respond(ex, 404, "text/html",
-                "<html><body><h1>404 页面不存在</h1></body></html>".getBytes(StandardCharsets.UTF_8)));
+                new byte[5 * 1024 * 1024 + 4096]));
 
         server.start();
         port = server.getAddress().getPort();
@@ -136,8 +139,10 @@ class WebPageFetcherDownloadTest {
         assertThatThrownBy(() -> download("/notfound"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("404")
-                // 断言拒绝理由是状态码而非"内容为空"，钉住"先判状态码再读 body"这个顺序
-                .hasMessageNotContainingAny("正文为空", "不支持的内容类型");
+                // 拒绝理由必须是状态码。/notfound 的 body 超过 5MB（见 startServer），
+                // 所以"先读 body 再判状态码"会抛「超过 5MB 上限」——这两条断言合起来
+                // 才真的钉住顺序，而不只是钉住"404 会被拒"
+                .hasMessageNotContainingAny("5MB", "正文为空", "不支持的内容类型");
     }
 
     @Test
