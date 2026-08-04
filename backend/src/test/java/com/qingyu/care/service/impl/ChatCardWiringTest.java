@@ -165,7 +165,7 @@ class ChatCardWiringTest {
         String prompt = ChatServiceImpl.appendCardPrompt("系统提示", true, true);
 
         assertThat(prompt).contains("url://").contains("msg://").contains("copy://");
-        assertThat(prompt).contains("action");
+        assertThat(prompt).contains("props.action");
         assertThat(prompt).contains("style");
     }
 }

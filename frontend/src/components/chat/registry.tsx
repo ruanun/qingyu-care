@@ -8,9 +8,6 @@ import { safeUrl } from '@/lib/safeUrl';
 import { executeActionUri } from '@/lib/actionUri';
 import { useToast } from '@/hooks/use-toast';
 
-// 保持既有导出路径不变
-export { safeUrl };
-
 function str(v: unknown): string {
   return v == null ? '' : String(v);
 }

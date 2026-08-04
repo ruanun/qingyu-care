@@ -4,6 +4,8 @@ import type { UiNode } from './api';
 
 afterEach(() => {
   document.body.innerHTML = '';
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('safeUrl', () => {
@@ -265,9 +267,6 @@ describe('button 的 Action URI', () => {
 
     vi.advanceTimersByTime(2000);
     expect(el.textContent).toBe('复制单号');
-
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
   });
 
   it('style 映射到 class，非法值落 default', () => {

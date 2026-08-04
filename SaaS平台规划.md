@@ -186,7 +186,7 @@
 
 ### 5.1 近期（按性价比排序）
 
-- [ ] **卡片 Action URI 协议**
+- [x] **卡片 Action URI 协议**
   现状：卡片 `button` 只有一种动作——`onAction(value)` 发合成消息（`frontend/src/components/chat/registry.tsx` 的 `case 'button'`，widget `render.ts` 同）。
   目标：对齐 tgo 的标准化 Action URI，支持「链接跳转 / 发送消息 / 复制内容」三类动作。
   判断：刚完成的卡片能力的自然延伸，改动集中在两端 registry/render + UiSpec 协议扩展，**无新架构决策，投入产出比最高**。注意 widget 侧的 XSS 三防（跳转 URL 必须走 `safeUrl` 白名单，与 image 同款 fail-closed）。
