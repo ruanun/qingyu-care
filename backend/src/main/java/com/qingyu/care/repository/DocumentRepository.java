@@ -45,11 +45,17 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     List<DocIdNameRow> findNamesByIds(@Param("ids") List<Long> ids);
 
     /**
-     * 查到期需要自动同步的网页文档 id。
+     * 查到期需要自动同步的网页文档 id（最多 50 条，逻辑同 {@link #findZeroHitDocs}）。
      *
-     * <p><b>必须用原生 SQL</b>：调度器线程无 TenantContext，普通 JPA 查询会被
-     * Hibernate @Filter 用 tenant_id = -1 拒绝一切、静默返回空集（任务照常跑却什么都不同步）。
-     * 这与多级配置回退取平台默认行是同一个坑，做法一致。
+     * <p>用原生 SQL 绕过 Hibernate 租户过滤器，与本文件 {@link #findZeroHitDocs}/
+     * {@link #findNamesByIds} 手法一致——但对调度器线程而言这是<b>纵深防御</b>而非唯一活路：
+     * 调度器线程没有 Sa-Token 会话，{@code TenantDataAspect} 在「未登录」分支直接 return、
+     * 根本不会启用任何过滤器（见该类第 49 行 {@code !isLoggedIn()} 分支），所以就算写成
+     * 普通 JPQL，当前实现下也一样能查到全部租户的到期文档；{@code tenant_id = -1}
+     * 那一支只在「已登录的非管理员却缺租户上下文」时才会触发，不是调度器线程会走到的路径。
+     * 选 native 是为了不依赖「调度器线程永远没有 Sa-Token 会话」这个前提本身——万一将来
+     * 这段逻辑被复用到某个带会话的上下文里，也不会静默退化成被过滤，而不至于重蹈本方法本身
+     * 曾经历过的教训（见下方 IT 里记录的变异自证过程）。
      *
      * <p>到期条件：类型为 URL、周期非 MANUAL、且（从未同步过 或 距上次成功同步已超过周期）。
      *
@@ -58,19 +64,14 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      * 而非 timestamp，导致 {@code timestamp <= interval} 报「operator does not exist」；
      * 显式转型消除歧义。
      *
-     * <p>⚠️ {@code SELECT d.id} <b>必须写成 {@code SELECT d.id AS id}</b>：Hibernate ORM 7.4.1
-     * （Boot 4.1 迁移引入）对 native 查询里裸露、且列名与某实体 {@code @Id} 字段同名的单列
-     * SELECT，会启发式判定为「实体标识符查询」并把该实体当前启用的 Hibernate @Filter 注入到
-     * 生成 SQL 里（实测会拼出 {@code WHERE ... AND tenant_id = ? AND app_id = ?}），
-     * 使 native 绕过过滤器彻底失效、静默变回被过滤——比本方法原本要防的坑更隐蔽，因为连
-     * {@code nativeQuery = true} 都保留着，肉眼看代码完全看不出问题。加显式列别名后
-     * Hibernate 不再触发该启发式判定，与本文件 {@link #findZeroHitDocs} / {@link #findNamesByIds}
-     * 一直沿用的「native 查询列必须显式 AS 别名」写法一致。
+     * <p>{@code LIMIT 50}：单线程调度池（Spring Boot 默认 {@code spring.task.scheduling.pool.size=1}）
+     * 上同时挂着 webhook 队列轮询、在线坐席心跳等其它定时任务，若到期文档过多、逐篇
+     * {@link com.qingyu.care.service.web.WebPageSyncService#syncDocument} 又是同步 HTTP 抓取，
+     * 无上界会长时间占住这唯一线程；每小时一轮，超出上限的留到下一轮，不丢数据。
      */
     @Query(value = """
             SELECT d.id AS id FROM document d
             WHERE d.document_type = 'URL'
-              AND d.sync_interval IS NOT NULL
               AND d.sync_interval <> 'MANUAL'
               AND (
                     d.last_synced_at IS NULL
@@ -79,6 +80,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
                  OR (d.sync_interval = 'WEEKLY' AND d.last_synced_at <= CAST(:now AS timestamp) - INTERVAL '7 days')
               )
             ORDER BY d.last_synced_at NULLS FIRST, d.id
+            LIMIT 50
             """, nativeQuery = true)
     List<Long> findDueWebPageIds(@Param("now") LocalDateTime now);
 }

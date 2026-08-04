@@ -22,22 +22,26 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 集成测试：调度器的到期查询在<b>无 TenantContext</b> 时必须真能查到文档。
+ * 集成测试：调度器的到期查询在 Hibernate 租户过滤器被<b>强制拒绝一切</b>（tenantFilter
+ * 设为 -1L）时仍必须真能查到文档，验证原生 SQL 绕过过滤器这条纵深防御真的有效。
  *
- * <p>这是本特性最隐蔽的失败模式——普通 JPA 查询会被 Hibernate @Filter 用 tenant_id = -1
- * 静默拒绝，任务照常跑、日志照常打，就是什么都不同步。单测 mock 掉 repository 永远抓不到，
+ * <p>⚠️ 更正：这条 -1L「拒绝一切」并<b>不是</b>调度器线程在生产环境的真实状态——调度器
+ * 线程没有 Sa-Token 会话，{@code TenantDataAspect} 在「未登录」分支直接 return、根本不会
+ * 启用任何过滤器（-1L 那一支只在「已登录的非管理员却缺租户上下文」时才会触发，见该类
+ * {@code enableFilters()} 方法）。选 native 是纵深防御，不依赖「调度器线程永远没有会话」
+ * 这个前提本身——本 IT 就是构造这个前提不成立时的最坏情形（过滤器被强制拒绝一切），
+ * 验证 native 依然不受影响。单测 mock 掉 repository 测不到这层 Hibernate/Session 交互，
  * 只有真实 Spring 上下文 + 真实数据库能验证。
  *
- * <p>⚠️ 本 IT 曾踩过一个自我欺骗的坑（变异自证 Step 7 抓到）：{@code TenantContext.clear()}
- * 只清 ThreadLocal，并不会主动禁用 Session 上已启用的 Hibernate Filter——
- * {@code TenantDataAspect} 在「无上下文」分支里，只要 {@code isLoggedIn()} 为 false
- * 就直接 return，从不动过滤器。同一 {@code @Transactional} 事务内，播种阶段
- * （有租户上下文）已把 tenantFilter 设成了 tenantId=1，clear 之后这个过滤器原样留在
- * Session 上——而种子文档恰好也是 tenant_id=1，于是普通 JPQL 会"蒙对"，把变异测试
- * 骗过去。真正对应生产的风险分支是 {@code TenantDataAspect} 第 3 支：「已登录非管理员
- * 却无租户上下文」时会把 tenantFilter 强制设为 -1L（拒绝一切）。所以这里手动把
- * Session 上的过滤器显式设成 -1L，复现该分支的真实效果，让原生查询"绕过拒一切的过滤器"
- * 这件事真正被断言到、也真正能被变异测试捕捉到。
+ * <p>⚠️ 本 IT 曾踩过一个自我欺骗的坑（变异自证 Step 7 抓到）：最初只写了
+ * {@code TenantContext.clear()}，以为这样就"模拟了无上下文"，但它只清 ThreadLocal，
+ * 并不会主动禁用 Session 上已启用的 Hibernate Filter。同一 {@code @Transactional}
+ * 事务内，播种阶段（有租户上下文）已把 tenantFilter 设成了 tenantId=1，clear 之后这个
+ * 过滤器原样留在 Session 上——而种子文档恰好也是 tenant_id=1，于是把 native 改成
+ * 普通 JPQL 做变异测试时也会"蒙对"、测试仍然通过，把变异自证骗过去了。修法是像现在
+ * 这样，用 {@link #simulateNoContextRejectAllFilter()} 手动把过滤器显式设成 -1L，
+ * 构造一个确定性的、不依赖 Session 残留状态的「拒绝一切」场景，这样原生查询"绕过被拒的
+ * 过滤器"这件事才真正被断言到、也真正能被变异测试捕捉到（详见 task-4-report.md）。
  *
  * @author ruan
  */
