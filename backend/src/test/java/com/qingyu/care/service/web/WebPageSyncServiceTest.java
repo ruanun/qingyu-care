@@ -94,9 +94,11 @@ class WebPageSyncServiceTest {
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
         when(webPageFetcher.fetch(anyString()))
                 .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
-        // 模拟 processDocument 内部吞异常后落 FAILED（真实实现从不重抛，只能靠状态判断成败）
+        // 模拟 processDocument 内部吞异常后落 FAILED + 写入真实原因（真实实现从不重抛，
+        // 只能靠状态判断成败；errorMessage 是它在同一持久化上下文里留下的诊断信息）
         doAnswer(inv -> {
             doc.setStatus(DocumentStatus.FAILED);
+            doc.setErrorMessage("Tika 解析失败：不支持的文档结构");
             return null;
         }).when(knowledgeService).processDocument(1L);
 
@@ -110,6 +112,25 @@ class WebPageSyncServiceTest {
         // 重嵌失败也要计入失败计数、接入 MAX_FAILURES 熔断——否则永远嵌不进去的网页
         // 会被每小时重试到天荒地老，永远碰不到自动转手动
         assertThat(doc.getSyncFailureCount()).isEqualTo(4);   // 3 → 4
+        // 必须保留 processDocument 写的真实原因，而不是被通用文案"重新嵌入失败"冲掉——
+        // 冲掉了运营排障就只能去翻服务器日志（评审 round 2 收尾发现的退化）
+        assertThat(doc.getErrorMessage()).contains("Tika 解析失败：不支持的文档结构");
+    }
+
+    @Test
+    void 重嵌失败但processDocument未写errorMessage时回退通用文案() {
+        Document doc = urlDoc("HASH_A");
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        // 边界情况：processDocument 落 FAILED 但没写 errorMessage（如 e.getMessage() 本身为 null）
+        doAnswer(inv -> {
+            doc.setStatus(DocumentStatus.FAILED);
+            return null;
+        }).when(knowledgeService).processDocument(1L);
+
+        service.syncDocument(1L);
+
         assertThat(doc.getErrorMessage()).contains("重新嵌入失败");
     }
 

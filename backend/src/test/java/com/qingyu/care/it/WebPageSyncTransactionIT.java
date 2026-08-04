@@ -45,6 +45,15 @@ import static org.mockito.Mockito.when;
  * 后续的轮询读取不能被同一个长事务的 Hibernate 一级缓存挡住返回陈旧数据（同
  * {@link TokenMeteringIT} 的选择）。
  *
+ * <p>⚠️ 本 IT 的全部区分度都押在 {@code status}/{@code chunkCount} 两条断言上——
+ * {@code contentHash}/{@code syncFailureCount} 是 {@code syncDocument} 自己直接在
+ * {@code doc} 上设置的字段，即便 Critical-1（自调用绕代理）复发，这两个字段依然会被正确
+ * 写入（那正是它们抓不住这个回归的原因）。只有 {@code status}/{@code chunkCount} 这类
+ * "由 {@code processDocument} 在别处提交"的字段，才会在 detached-merge 场景下被静默覆盖。
+ * 后人如果为了"精简"删掉这两条断言，本 IT 会无声退化成假阳性——已用变异测试验证过
+ * （临时把 {@code syncDocumentAsync} 里的 {@code self.syncDocument} 还原成裸调用，两个
+ * 用例都会失败在这两条断言上），改动这两条前务必重新做一遍同样的验证。
+ *
  * @author ruan
  */
 class WebPageSyncTransactionIT extends AbstractPostgresIT {

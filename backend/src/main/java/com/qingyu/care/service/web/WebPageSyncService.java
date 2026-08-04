@@ -145,11 +145,14 @@ public class WebPageSyncService {
             documentRepository.save(doc);
 
             // 同步调用：self.syncDocument 经代理让本方法的 @Transactional 真正生效，
-            // knowledgeService.processDocument 因此与本方法共享同一持久化上下文。
-            // 即便如此，判定成败仍显式回读 DB 而不是直接读 doc.getStatus()——不依赖
-            // "调用后是同一托管实例"这个隐式前提，与 ReembedService.runReembed 里
-            // "processDocument 内部吞异常置 FAILED 不重抛，故回读状态判定成败" 的既有
-            // 做法完全一致（这个隐式前提曾经被 syncDocumentAsync 的自调用漏洞打破过一次）
+            // knowledgeService.processDocument 因此与本方法共享同一持久化上下文——Hibernate
+            // 一级缓存/identity map 下，下面这次显式回读实际拿到的还是同一个 doc 托管实例，
+            // 与直接读 doc.getStatus() 等价，并不能真正独立于"同一托管实例"这个前提。
+            // ⚠️ 訂正：若未来给 processDocument 加 REQUIRES_NEW，identity map 会挡在前面
+            // 不查库，这次显式回读同样看不见内层提交的状态——到时候判据要换别的机制，不是
+            // 靠这次显式查询就自动兜底。写成显式回读单纯是为了与 ReembedService.runReembed
+            // 的既有写法（它本身没有环绕事务，回读是真的查库）保持同一种表达方式，便于统一
+            // 理解，不是这里真的多一层保护
             knowledgeService.processDocument(documentId);
             DocumentStatus after = documentRepository.findById(documentId)
                     .map(Document::getStatus)
@@ -164,8 +167,12 @@ public class WebPageSyncService {
                 log.info("网页内容已更新并重新嵌入 id={} url={}", documentId, doc.getSourceUrl());
             } else {
                 // 重嵌失败也要计入失败计数、接入熔断阈值——否则一篇永远嵌不进去的网页
-                // 会被每小时重试到天荒地老，永远碰不到 MAX_FAILURES 自动转手动
-                recordSyncFailure(doc, "重新嵌入失败");
+                // 会被每小时重试到天荒地老，永远碰不到 MAX_FAILURES 自动转手动。
+                // reason 取 doc.getErrorMessage()（processDocument 刚在同一持久化上下文里
+                // 写的真实原因，如 Tika 解析异常/embedding 调用失败的具体 message）而不是
+                // 写死通用文案——直接覆盖会把根因冲掉，运营排障只能去翻服务器日志
+                String reason = doc.getErrorMessage() != null ? doc.getErrorMessage() : "重新嵌入失败";
+                recordSyncFailure(doc, reason);
                 log.warn("网页内容已抓取但重新嵌入失败，contentHash 暂不落库以便下一轮同步重试 id={} url={}",
                         documentId, doc.getSourceUrl());
             }
