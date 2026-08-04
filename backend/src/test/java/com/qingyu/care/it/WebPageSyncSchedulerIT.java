@@ -94,6 +94,54 @@ class WebPageSyncSchedulerIT extends AbstractPostgresIT {
         assertThat(dueIds).contains(doc.getId());
     }
 
+    /** 播种一篇网页文档；调用前需已设好 TenantContext。 */
+    private Document seedWebDoc(KnowledgeBase kb, String path, SyncInterval interval, LocalDateTime lastSyncedAt) {
+        return documentRepository.save(Document.builder()
+                .knowledgeBase(kb)
+                .name("https://example.com" + path)
+                .documentType(DocumentType.URL)
+                .status(DocumentStatus.COMPLETED)
+                .sourceUrl("https://example.com" + path)
+                .syncInterval(interval)
+                .lastSyncedAt(lastSyncedAt)
+                .build());
+    }
+
+    /**
+     * 各周期的到期边界。此前<b>没有任何一条断言「未到期的文档不被查出」</b>，于是下列变异
+     * 全都能瞒过测试：把 {@code INTERVAL '1 day'} 改成 {@code '1 second'}（用户设的"每天"
+     * 实际变成每小时抓，白烧带宽与目标站配额）、三行周期判断整体换成 {@code TRUE}、
+     * 删掉 HOURLY 或 WEEKLY 任一行（该周期的文档永远不同步，且任务照跑、日志照打，纯静默）。
+     * 设计文档 §8 对调度器写的就是「到期筛选（<b>各周期边界</b>）」。
+     */
+    @Test
+    void 各周期只在超过自身间隔后才到期() {
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(1L);
+        KnowledgeBase kb = knowledgeBaseRepository.save(
+                KnowledgeBase.builder().name("网页同步 IT 知识库3").enabled(true).build());
+        LocalDateTime now = LocalDateTime.now();
+
+        Document hourlyDue = seedWebDoc(kb, "/h-due", SyncInterval.HOURLY, now.minusHours(2));
+        Document hourlyFresh = seedWebDoc(kb, "/h-fresh", SyncInterval.HOURLY, now.minusMinutes(30));
+        Document dailyDue = seedWebDoc(kb, "/d-due", SyncInterval.DAILY, now.minusDays(2));
+        Document dailyFresh = seedWebDoc(kb, "/d-fresh", SyncInterval.DAILY, now.minusHours(1));
+        Document weeklyDue = seedWebDoc(kb, "/w-due", SyncInterval.WEEKLY, now.minusDays(8));
+        Document weeklyFresh = seedWebDoc(kb, "/w-fresh", SyncInterval.WEEKLY, now.minusDays(2));
+        Document neverSynced = seedWebDoc(kb, "/never", SyncInterval.WEEKLY, null);
+
+        TenantContext.clear();
+        simulateNoContextRejectAllFilter();
+
+        List<Long> dueIds = documentRepository.findDueWebPageIds(now);
+
+        assertThat(dueIds).contains(
+                hourlyDue.getId(), dailyDue.getId(), weeklyDue.getId(),
+                neverSynced.getId());          // 从未同步过的一律到期
+        assertThat(dueIds).doesNotContain(
+                hourlyFresh.getId(), dailyFresh.getId(), weeklyFresh.getId());
+    }
+
     @Test
     void MANUAL_周期的文档不会被查出() {
         TenantContext.setTenantId(1L);
