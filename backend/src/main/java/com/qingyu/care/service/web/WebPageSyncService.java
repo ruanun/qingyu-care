@@ -114,6 +114,14 @@ public class WebPageSyncService {
      */
     @Transactional
     public void syncDocument(Long documentId) {
+        // 互斥：同一文档并发同步会产出重复向量（详见 tryLockWebPageSync 的注释）。
+        // 抢不到说明另一个事务正在同步这一篇，直接返回——它做的事和本轮完全一样，
+        // 重复做既无必要又有害。锁随本方法的事务结束自动释放。
+        if (!documentRepository.tryLockWebPageSync(documentId)) {
+            log.info("网页同步跳过：同一文档已有同步在进行 id={}", documentId);
+            return;
+        }
+
         Document doc = documentRepository.findById(documentId).orElse(null);
         if (doc == null) {
             log.warn("网页同步跳过：文档不存在 id={}", documentId);

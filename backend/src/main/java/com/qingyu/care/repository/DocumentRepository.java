@@ -45,6 +45,40 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     List<DocIdNameRow> findNamesByIds(@Param("ids") List<Long> ids);
 
     /**
+     * 抢占一篇网页文档的「同步互斥锁」：抢到返回 true，已被<b>另一个事务</b>持有则立即
+     * 返回 false（不阻塞）。锁随当前事务结束自动释放。
+     *
+     * <p>解决的问题：同一文档并发同步会产出重复向量。两个线程各自事务，A 先
+     * {@code deleteByDocumentId} 删向量（未提交），B 的 DELETE 撞行锁等待；A 插入新 chunk
+     * 并提交后 B 继续，但 B 的 DELETE 在自己的语句快照下看不到 A 刚插入的行，删 0 行、
+     * 再插一份——{@code vector_store} 出现 2N 行而 {@code chunk_count} 只记 N，检索时同一
+     * 段落重复占用 topK。触发条件很日常：连点两次「立即重新抓取」，或调度器刚开跑时用户手点。
+     *
+     * <p>为什么用 PostgreSQL 事务级咨询锁而不是另外两种写法：
+     * <ul>
+     *   <li><b>不是 document 行锁</b>（{@code SELECT ... FOR UPDATE}）：会引入 ABBA 死锁——
+     *       本方法之后调用的 {@code processDocument} 是「先删 vector_store、再更新 document」，
+     *       而独立触发的重新处理（{@code reprocessDocument}/重嵌批任务）走的正是这个顺序；
+     *       若同步这边改成「先锁 document、再删 vector_store」，两个方向恰好相反。
+     *       咨询锁不在行锁的锁图里，与它们零交集。</li>
+     *   <li><b>不是 {@code UPDATE ... SET status='PROCESSING'} 抢占</b>：会与
+     *       {@code processDocument} 自己维护的 status 状态机打架，且进程崩在中途时文档会
+     *       永久卡在 PROCESSING、此后再也同步不了——凭空多出一条静默失败路径。咨询锁由
+     *       数据库在事务结束（含连接断开）时无条件释放，不留残留状态。</li>
+     * </ul>
+     *
+     * <p>⚠️ 必须在有活动事务时调用（{@code xact} 即事务级）：无事务时它会在自动提交的
+     * 迷你事务里拿了就放，互斥静默失效。调用方
+     * {@link com.qingyu.care.service.web.WebPageSyncService#syncDocument} 的
+     * {@code @Transactional} 是这条前提，动它的代理链路时务必一并复核。
+     *
+     * <p>⚠️ 咨询锁的键空间是整库共享的。当前全库只有这一处用（可 grep {@code advisory} 复核），
+     * 故直接用 document id 作键；将来若出现第二个使用者，两边必须显式划分键空间。
+     */
+    @Query(value = "SELECT pg_try_advisory_xact_lock(:documentId)", nativeQuery = true)
+    boolean tryLockWebPageSync(@Param("documentId") Long documentId);
+
+    /**
      * 查到期需要自动同步的网页文档 id（最多 50 条，逻辑同 {@link #findZeroHitDocs}）。
      *
      * <p>用原生 SQL 绕过 Hibernate 租户过滤器，与本文件 {@link #findZeroHitDocs}/

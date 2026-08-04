@@ -6,6 +6,7 @@ import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.service.KnowledgeService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -20,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,6 +39,15 @@ class WebPageSyncServiceTest {
     @Mock KnowledgeService knowledgeService;
     @Mock WebPageFetcher webPageFetcher;
     @InjectMocks WebPageSyncService service;
+
+    /**
+     * 默认「抢到同步互斥锁」。lenient 是因为 addWebPage 那条用例走不到 syncDocument，
+     * 严格模式会因未消费的打桩报 UnnecessaryStubbingException。
+     */
+    @BeforeEach
+    void 默认抢到同步锁() {
+        lenient().when(documentRepository.tryLockWebPageSync(anyLong())).thenReturn(true);
+    }
 
     private Document urlDoc(String hash) {
         Document doc = Document.builder()
@@ -232,5 +243,20 @@ class WebPageSyncServiceTest {
         // 否则删掉守卫后 fetch(null) 照样能通过 never() 断言，测试形同虚设
         verify(webPageFetcher, never()).fetch(any());
         verify(knowledgeService, never()).processDocument(anyLong());
+    }
+
+    @Test
+    void 抢不到同步锁时直接返回_不重复抓取也不重复嵌入() {
+        // 同一文档并发同步会产出重复向量：A 删向量（未提交）→ B 的 DELETE 在自己的语句
+        // 快照下看不到 A 刚插入的行、删 0 行 → 各插一份，vector_store 出现 2N 行而
+        // chunk_count 只记 N。连点两次「立即重新抓取」就能触发
+        when(documentRepository.tryLockWebPageSync(1L)).thenReturn(false);
+
+        service.syncDocument(1L);
+
+        verify(documentRepository, never()).findById(anyLong());
+        verify(webPageFetcher, never()).fetch(any());
+        verify(knowledgeService, never()).processDocument(anyLong());
+        verify(documentRepository, never()).save(any());
     }
 }
