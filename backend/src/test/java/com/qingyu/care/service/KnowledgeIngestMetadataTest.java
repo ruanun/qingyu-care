@@ -61,6 +61,8 @@ class KnowledgeIngestMetadataTest {
         doc.setTenantId(1L);
         doc.setAppId(2L);
 
+        // 处理互斥锁：真实数据库里同一事务必然抢得到（见 KnowledgeProcessDocumentLockTest）
+        when(documentRepository.tryLockDocumentProcessing(5L)).thenReturn(true);
         when(documentRepository.findById(5L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
         when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");

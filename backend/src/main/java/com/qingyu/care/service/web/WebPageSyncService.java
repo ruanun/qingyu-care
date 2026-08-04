@@ -121,10 +121,13 @@ public class WebPageSyncService {
      */
     @Transactional
     public void syncDocument(Long documentId) {
-        // 互斥：同一文档并发同步会产出重复向量（详见 tryLockWebPageSync 的注释）。
-        // 抢不到说明另一个事务正在同步这一篇，直接返回——它做的事和本轮完全一样，
+        // 互斥：同一文档并发重嵌会产出重复向量（详见 tryLockDocumentProcessing 的注释）。
+        // 抢不到说明另一个事务正在处理这一篇，直接返回——它做的事和本轮完全一样，
         // 重复做既无必要又有害。锁随本方法的事务结束自动释放。
-        if (!documentRepository.tryLockWebPageSync(documentId)) {
+        // 这一次是"外层"互斥，把抓取+比对 hash+重嵌+落 contentHash 整段圈进临界区；
+        // processDocument 内部还会再抢一次同一把锁（咨询锁同事务可重入，不会自锁），
+        // 那一次才覆盖得住重嵌批任务/手动重新处理这两条不经本方法的入口。
+        if (!documentRepository.tryLockDocumentProcessing(documentId)) {
             log.info("网页同步跳过：同一文档已有同步在进行 id={}", documentId);
             return;
         }

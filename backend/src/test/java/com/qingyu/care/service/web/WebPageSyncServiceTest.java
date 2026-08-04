@@ -44,12 +44,12 @@ class WebPageSyncServiceTest {
     @InjectMocks WebPageSyncService service;
 
     /**
-     * 默认「抢到同步互斥锁」。lenient 是因为 addWebPage 那条用例走不到 syncDocument，
+     * 默认「抢到处理互斥锁」。lenient 是因为 addWebPage 那条用例走不到 syncDocument，
      * 严格模式会因未消费的打桩报 UnnecessaryStubbingException。
      */
     @BeforeEach
-    void 默认抢到同步锁() {
-        lenient().when(documentRepository.tryLockWebPageSync(anyLong())).thenReturn(true);
+    void 默认抢到处理锁() {
+        lenient().when(documentRepository.tryLockDocumentProcessing(anyLong())).thenReturn(true);
     }
 
     /** 一篇已成功嵌入过的网页文档：有哈希、状态 COMPLETED、历史累计 3 次失败。 */
@@ -253,11 +253,13 @@ class WebPageSyncServiceTest {
     // ===== 并发互斥（I-3）=====
 
     @Test
-    void 抢不到同步锁时直接返回_不重复抓取也不重复嵌入() {
+    void 抢不到处理锁时直接返回_不重复抓取也不重复嵌入() {
         // 同一文档并发同步会产出重复向量：A 删向量（未提交）→ B 的 DELETE 在自己的语句
         // 快照下看不到 A 刚插入的行、删 0 行 → 各插一份，vector_store 出现 2N 行而
-        // chunk_count 只记 N。连点两次「立即重新抓取」就能触发
-        when(documentRepository.tryLockWebPageSync(1L)).thenReturn(false);
+        // chunk_count 只记 N。连点两次「立即重新抓取」就能触发。
+        // 这里守的是外层互斥（省掉重复抓取）；临界区本身的互斥由
+        // KnowledgeProcessDocumentLockTest 守
+        when(documentRepository.tryLockDocumentProcessing(1L)).thenReturn(false);
 
         service.syncDocument(1L);
 

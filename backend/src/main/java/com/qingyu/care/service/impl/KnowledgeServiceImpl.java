@@ -223,6 +223,24 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public void processDocument(Long documentId) {
+        // 互斥：下面的「先删旧向量、再插新向量」是本项目唯一会产出重复向量的临界区，而本方法
+        // 有三个入口——网页同步、重嵌批任务(ReembedService)、手动重新处理(reprocessDocument)。
+        // 锁必须抢在这里而不是某个调用方：只锁住一条时，另外两条照样能并发进入。典型事故是
+        // 换 embedding 模型后跑全量重嵌，批任务正处理某篇网页，调度器同一分钟命中同一篇且
+        // 正文已变——两个事务各删各插，vector_store 落 2N 行而 chunk_count 记 N，检索时同一
+        // 段落重复占 topK，全程无异常无日志（详见 tryLockDocumentProcessing 的注释）。
+        //
+        // 抢不到就跳过本轮：持锁方做的是同一件事（同一篇文档、同一个 embedding 模型），
+        // 让它做完即可，重复做只会再删再插一遍。跳过对三个入口都安全——
+        //   · 网页同步：外层 syncDocument 已持同一把锁，同事务可重入，永远抢得到；
+        //   · 文件上传后的首次处理：文档 id 刚生成，不可能有别的事务持有它的锁；
+        //   · 重嵌批任务：会把这篇按"已完成"计数（它回读 status 判成败，跳过时状态不变），
+        //     但持锁方那一轮同样用当前 embedding 模型重嵌，结果与本轮等价，不会留下漏打标的向量。
+        if (!documentRepository.tryLockDocumentProcessing(documentId)) {
+            log.info("文档处理跳过：同一文档已有处理在进行 id={}", documentId);
+            return;
+        }
+
         Document doc = documentRepository.findById(documentId).orElse(null);
         if (doc == null) return;
 

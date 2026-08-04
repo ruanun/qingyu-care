@@ -70,6 +70,7 @@ class KnowledgeServiceUrlDocumentTest {
                 .content(pageContent)
                 .build();
 
+        when(documentRepository.tryLockDocumentProcessing(6L)).thenReturn(true);
         when(documentRepository.findById(6L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
         when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
@@ -111,6 +112,7 @@ class KnowledgeServiceUrlDocumentTest {
                 .filePath("kb/说明书.txt")
                 .build();
 
+        when(documentRepository.tryLockDocumentProcessing(7L)).thenReturn(true);
         when(documentRepository.findById(7L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
         when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");

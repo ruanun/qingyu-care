@@ -45,22 +45,33 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     List<DocIdNameRow> findNamesByIds(@Param("ids") List<Long> ids);
 
     /**
-     * 抢占一篇网页文档的「同步互斥锁」：抢到返回 true，已被<b>另一个事务</b>持有则立即
+     * 抢占一篇文档的「处理互斥锁」：抢到返回 true，已被<b>另一个事务</b>持有则立即
      * 返回 false（不阻塞）。锁随当前事务结束自动释放。
      *
-     * <p>解决的问题：同一文档并发同步会产出重复向量。两个线程各自事务，A 先
+     * <p>解决的问题：同一文档被并发重嵌会产出重复向量。两个线程各自事务，A 先
      * {@code deleteByDocumentId} 删向量（未提交），B 的 DELETE 撞行锁等待；A 插入新 chunk
      * 并提交后 B 继续，但 B 的 DELETE 在自己的语句快照下看不到 A 刚插入的行，删 0 行、
      * 再插一份——{@code vector_store} 出现 2N 行而 {@code chunk_count} 只记 N，检索时同一
-     * 段落重复占用 topK。触发条件很日常：连点两次「立即重新抓取」，或调度器刚开跑时用户手点。
+     * 段落重复占用 topK。触发条件很日常：连点两次「立即重新抓取」，或换 embedding 模型后
+     * 跑全量重嵌批任务时调度器恰好也在同步同一篇。
+     *
+     * <p>⚠️ 真正的临界区是 {@link com.qingyu.care.service.KnowledgeService#processDocument}
+     * （先删旧向量、再插新向量），它有<b>三个</b>入口：网页同步、重嵌批任务
+     * （{@code ReembedService}）、手动重新处理（{@code reprocessDocument}）。所以锁抢在
+     * 它自己的首行，而不是只在某一个调用方那里——只锁住其中一条，另外两条照样能并发进入。
+     * {@code WebPageSyncService.syncDocument} 在外层另抢一次，把「抓取 + 比对 hash + 重嵌 +
+     * 落 contentHash」整段一起互斥；咨询锁对同一事务可重入，内外两次不会自锁。
      *
      * <p>为什么用 PostgreSQL 事务级咨询锁而不是另外两种写法：
      * <ul>
      *   <li><b>不是 document 行锁</b>（{@code SELECT ... FOR UPDATE}）：会引入 ABBA 死锁——
-     *       本方法之后调用的 {@code processDocument} 是「先删 vector_store、再更新 document」，
-     *       而独立触发的重新处理（{@code reprocessDocument}/重嵌批任务）走的正是这个顺序；
-     *       若同步这边改成「先锁 document、再删 vector_store」，两个方向恰好相反。
-     *       咨询锁不在行锁的锁图里，与它们零交集。</li>
+     *       {@code processDocument} 的顺序是「先删 vector_store、再更新 document」，若调用方
+     *       改成「先锁 document、再删 vector_store」，两个方向恰好相反。
+     *       ⚠️ 这里免于死锁的理由<b>不是</b>"咨询锁不在行锁的锁图里"：咨询锁是真正的重量级锁，
+     *       同样参与 PostgreSQL 的死锁检测。真正的理由是本方法用的是<b>非阻塞</b>的
+     *       {@code pg_try_} 版本——抢不到立刻返回 false，永不进入等待图，故不可能成为死锁环的
+     *       一环。将来若有人换成阻塞版 {@code pg_advisory_xact_lock}，「T1 持咨询锁等行锁 /
+     *       T2 持行锁等咨询锁」立刻可以成环，本结论随即失效。</li>
      *   <li><b>不是 {@code UPDATE ... SET status='PROCESSING'} 抢占</b>：会与
      *       {@code processDocument} 自己维护的 status 状态机打架，且进程崩在中途时文档会
      *       永久卡在 PROCESSING、此后再也同步不了——凭空多出一条静默失败路径。咨询锁由
@@ -68,15 +79,17 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      * </ul>
      *
      * <p>⚠️ 必须在有活动事务时调用（{@code xact} 即事务级）：无事务时它会在自动提交的
-     * 迷你事务里拿了就放，互斥静默失效。调用方
-     * {@link com.qingyu.care.service.web.WebPageSyncService#syncDocument} 的
-     * {@code @Transactional} 是这条前提，动它的代理链路时务必一并复核。
+     * 迷你事务里拿了就放，互斥静默失效。两个调用方
+     * （{@link com.qingyu.care.service.KnowledgeService#processDocument} 与
+     * {@link com.qingyu.care.service.web.WebPageSyncService#syncDocument}）各自的
+     * {@code @Transactional} 是这条前提，动它们的代理链路时务必一并复核。
      *
-     * <p>⚠️ 咨询锁的键空间是整库共享的。当前全库只有这一处用（可 grep {@code advisory} 复核），
-     * 故直接用 document id 作键；将来若出现第二个使用者，两边必须显式划分键空间。
+     * <p>⚠️ 咨询锁的键空间是整库共享的。当前全库只有这一个用途（文档处理互斥，可 grep
+     * {@code advisory} 复核），故直接用 document id 作键；将来若出现第二种用途，两边必须
+     * 显式划分键空间。
      */
     @Query(value = "SELECT pg_try_advisory_xact_lock(:documentId)", nativeQuery = true)
-    boolean tryLockWebPageSync(@Param("documentId") Long documentId);
+    boolean tryLockDocumentProcessing(@Param("documentId") Long documentId);
 
     /**
      * 查到期需要自动同步的网页文档 id（最多 50 条，逻辑同 {@link #findZeroHitDocs}）。
