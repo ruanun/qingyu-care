@@ -32,6 +32,14 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 2. **token 计量非零**：打一次流式对话 → 查 `sys_api_usage.token_count` 非零（`streamUsage` 一旦失效是静默的，记 0 不抛）。
 3. **出站 URL 形态**：把 `AI_BASE_URL` 临时指向本地 HTTP 监听器抓包，确认实际请求路径是 `/v1/chat/completions` 与 `/v1/embeddings`。
 
+### 改动流式对话链路后必须手工验证
+同样是自动化测试永远覆盖不到的（IT 里 `ChatClient` 全被 mock，工具调用与真实 SSE 时序都看不见）：
+1. **逐字增量**：回复真的逐字出现而非一次性刷出（用 `MutationObserver` 采样最直接，肉眼容易被短回复骗过）。
+2. **流式 token 计量**：走 widget 发一条 → `sys_api_usage.token_count` 非零（管理端不计量，只有开放 API 计量）。
+3. **流式工具调用** ⚠️ **本项目最大的一处上游坑**：挂一个 HTTP 工具并提问**触发它**。Spring AI 2.0 + Qwen 组合下，LLM 实际调用工具时 `OpenAiChatModel$ChunkMerger.chunkToChatCompletion` 会抛 `NoSuchElementException`（Qwen 分帧发 tool_call：首帧带 `function.name`、后续帧只有 `arguments`，Spring AI 未按 index 聚合；上游 [issue #4790](https://github.com/spring-projects/spring-ai/issues/4790) 仍 open、修复 PR #4794 未合并、2.0.0 已是最新稳定版**无版本可升**）。故 `ChatServiceImpl.streamChat` 内置降级：**本轮挂了工具且尚未吐出任何正文时**，失败则用非流式 `chat()` 重跑一次并把结果补发为 delta/card/done。验证点：客户端收到 delta/card + done 而非 error；DB 只落一条 AI 消息；`sessionId` 与 START 事件一致。**上游修复后可整段删除该降级**（`fallbackToNonStreaming`）。
+4. **卡片增量渲染 + 历史一致**：卡片在围栏闭合瞬间整张出现；刷新后历史顺序与流式时一致（验证落库 `ui_spec` 正确）。
+5. **停止生成不落库**：管理端点「停止」后半截回复留在屏上，刷新即消失（`Flux.concat` 的落库 Mono 在 cancel 时不被订阅）。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
