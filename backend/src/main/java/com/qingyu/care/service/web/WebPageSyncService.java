@@ -21,8 +21,13 @@ import java.time.LocalDateTime;
  * 网页文档的建档与同步编排。抓取本身在 {@link WebPageFetcher}，本类只管「结果怎么落到知识库」。
  *
  * <p>三条分支（见设计文档 §4.2）：内容未变只更新时间戳（不重嵌，省 embedding 成本）；
- * 内容变了才走既有 {@code reprocessDocument} 重切重嵌；抓取失败保留旧内容与旧向量，
+ * 内容变了才走 {@code processDocument} 重切重嵌；抓取失败保留旧内容与旧向量，
  * 只记错误与失败计数——官网临时 502 不该让知识库瞬间失去这篇内容。
+ *
+ * <p>重嵌调用同步的 {@code processDocument} 而非异步的 {@code reprocessDocument}：一是避免
+ * {@code @Async} 线程在本方法所在事务提交前就读到旧行的竞态；二是让本方法能感知重嵌结果，
+ * 据此决定 {@code contentHash} 是否落库——写早了会把「重嵌失败」永久误判成「已处理，跳过」，
+ * 下一轮同步再也不会重试（这是本类曾经的一个 Critical 缺陷）。
  *
  * @author ruan
  */
@@ -120,10 +125,22 @@ public class WebPageSyncService {
 
             doc.setName(result.title());
             doc.setContent(result.content());
-            doc.setContentHash(result.contentHash());
             documentRepository.save(doc);
-            knowledgeService.reprocessDocument(documentId);
-            log.info("网页内容已更新并重新嵌入 id={} url={}", documentId, doc.getSourceUrl());
+
+            // 同步调用：knowledgeService.processDocument 与本方法共享同一事务/持久化上下文，
+            // 其内部 findById 拿到的就是同一个 doc 托管实例，调用返回后直接读 doc.getStatus()
+            // 即可知道重嵌是否成功，无需额外查询（processDocument 内部吞异常、只落状态不重抛）
+            knowledgeService.processDocument(documentId);
+
+            if (doc.getStatus() == DocumentStatus.COMPLETED) {
+                // 重嵌成功才落 contentHash：写早了会让下一轮同步误判"内容未变"而永久跳过重试
+                doc.setContentHash(result.contentHash());
+                documentRepository.save(doc);
+                log.info("网页内容已更新并重新嵌入 id={} url={}", documentId, doc.getSourceUrl());
+            } else {
+                log.warn("网页内容已抓取但重新嵌入失败，contentHash 暂不落库以便下一轮同步重试 id={} url={}",
+                        documentId, doc.getSourceUrl());
+            }
 
         } catch (Exception e) {
             // 保留旧内容与旧向量：官网临时故障不该让这篇知识消失

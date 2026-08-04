@@ -232,12 +232,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         try {
             doc.setStatus(DocumentStatus.PROCESSING);
             documentRepository.save(doc);
-            
-            // 从 S3 下载文件并使用 Tika 解析
-            byte[] fileBytes = fileService.downloadFile(doc.getFilePath());
-            TikaDocumentReader reader = new TikaDocumentReader(new ByteArrayResource(fileBytes));
-            List<org.springframework.ai.document.Document> documents = reader.get();
-            
+
+            List<org.springframework.ai.document.Document> documents;
+            if (doc.getDocumentType() == DocumentType.URL) {
+                // 网页文档没有 S3 文件（filePath 恒为 null），正文已由 WebPageSyncService 抓取
+                // 存入 doc.content；跳过下载与 Tika 解析，直接把已有正文包一份 Document 送入切分
+                documents = List.of(org.springframework.ai.document.Document.builder()
+                        .text(doc.getContent() != null ? doc.getContent() : "")
+                        .build());
+            } else {
+                // 从 S3 下载文件并使用 Tika 解析
+                byte[] fileBytes = fileService.downloadFile(doc.getFilePath());
+                TikaDocumentReader reader = new TikaDocumentReader(new ByteArrayResource(fileBytes));
+                documents = reader.get();
+            }
+
             // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
             TokenTextSplitter splitter = TokenTextSplitter.builder()
                     .withChunkSize(chunkSize)
@@ -274,9 +283,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             // 更新文档状态
             doc.setStatus(DocumentStatus.COMPLETED);
             doc.setChunkCount(chunks.size());
-            doc.setContent(documents.stream()
-                    .map(org.springframework.ai.document.Document::getText)
-                    .reduce("", (a, b) -> a + "\n" + b));
+            if (doc.getDocumentType() != DocumentType.URL) {
+                // 网页文档的正文本就是 documents 唯一元素的原样内容，重建只会白加一个前导换行，
+                // 不覆盖，保持 doc.content 与抓取到的正文逐字一致
+                doc.setContent(documents.stream()
+                        .map(org.springframework.ai.document.Document::getText)
+                        .reduce("", (a, b) -> a + "\n" + b));
+            }
             documentRepository.save(doc);
             
             log.info("Document {} processed successfully, {} chunks created", documentId, chunks.size());
