@@ -334,15 +334,19 @@ public class ModelRouterService {
 
     private static Flux<org.springframework.ai.chat.model.ChatResponse> attemptStream(
             List<Supplier<Flux<org.springframework.ai.chat.model.ChatResponse>>> attempts, int index) {
-        AtomicBoolean emitted = new AtomicBoolean(false);
-        return Flux.defer(attempts.get(index)::get)
-                .doOnNext(x -> emitted.set(true))
-                .onErrorResume(e -> {
-                    if (emitted.get() || index + 1 >= attempts.size()) {
-                        return Flux.error(e);
-                    }
-                    log.warn("流式模型调用失败，切换下一个模型: {}", e.getMessage());
-                    return attemptStream(attempts, index + 1);
-                });
+        // emitted 建在 Flux.defer 内部，每次订阅各持一份，避免重复订阅（如未来加 retry()）串状态；
+        // 同 ChatServiceImpl#streamChat 里 splitter/acc/emitted 挪进 Flux.defer 的惯例
+        return Flux.defer(() -> {
+            AtomicBoolean emitted = new AtomicBoolean(false);
+            return attempts.get(index).get()
+                    .doOnNext(x -> emitted.set(true))
+                    .onErrorResume(e -> {
+                        if (emitted.get() || index + 1 >= attempts.size()) {
+                            return Flux.error(e);
+                        }
+                        log.warn("流式模型调用失败，切换下一个模型: {}", e.getMessage());
+                        return attemptStream(attempts, index + 1);
+                    });
+        });
     }
 }

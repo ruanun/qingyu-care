@@ -1,11 +1,7 @@
 import api from './client';
-import type { ChatRequest, ChatResponse, ChatSession, ChatMessageEntity, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
+import type { ChatSession, ChatMessageEntity, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
 
 export const chatService = {
-    // 发送消息
-    sendMessage: (data: ChatRequest): Promise<ApiResponse<ChatResponse>> =>
-        api.post('/chat', data),
-
     // 获取会话详情
     getSession: (sessionId: string): Promise<ApiResponse<ChatSession>> =>
         api.get(`/chat/session/${sessionId}`),

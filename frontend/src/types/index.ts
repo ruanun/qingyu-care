@@ -91,26 +91,10 @@ export interface DocumentStatusDTO {
     progress: number;
 }
 
-export interface ChatRequest {
-    userId: string;
-    sessionId?: string;
-    message: string;
-}
-
 export interface KnowledgeHit {
     content: string;
     score: number;
     source: string;
-}
-
-export interface ChatResponse {
-    sessionId: string;
-    content: string;
-    confidenceScore: number;
-    knowledgeHits: KnowledgeHit[];
-    suggestHandover: boolean;
-    tokenUsage?: number;
-    uiParts?: UiPart[];
 }
 
 // 多租户管理相关类型

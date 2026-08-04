@@ -30,16 +30,6 @@ export interface UiPart {
   node?: UiNode | null;
 }
 
-export interface ChatReply {
-  sessionId: string;
-  reply: string;
-  handoverSuggested: boolean;
-  /** AI 消息 ID（提交赞/踩时使用；后端旧版本可能缺省） */
-  messageId?: number;
-  /** 结构化卡片片段（后端旧版本可能缺省）；有 ui 片段时按序渲染，否则回退 reply 纯文本 */
-  uiParts?: UiPart[];
-}
-
 /** 断线补拉会话响应：会话状态 + 消息历史（对应后端 OpenSessionResponse） */
 export interface OpenSessionResponse {
   sessionId: string;
@@ -68,19 +58,7 @@ export function createApi(cfg: WidgetConfig) {
       return (await r.json()) as WidgetBrand;
     },
 
-    async send(message: string, sessionId: string | null): Promise<ChatReply> {
-      const body = sessionId ? { message, sessionId } : { message };
-      const r = await fetch(`${cfg.apiBase}/open/v1/chat/completions`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify(body),
-      });
-      if (r.status === 404) throw new SessionExpiredError();
-      if (!r.ok) throw new Error(`对话请求失败: ${r.status}`);
-      return (await r.json()) as ChatReply;
-    },
-
-    /** 流式对话；404 抛 SessionExpiredError（同 send，供上层清会话后重开）。 */
+    /** 流式对话；404 抛 SessionExpiredError（供上层清会话后重开）。 */
     async stream(
       message: string,
       sessionId: string | null,
