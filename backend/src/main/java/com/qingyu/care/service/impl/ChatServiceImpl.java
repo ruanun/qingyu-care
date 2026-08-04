@@ -103,13 +103,19 @@ public class ChatServiceImpl implements ChatService {
             除了普通文字，你还可以在回复中内联输出结构化卡片：用 ```spec 围栏包裹一段完整的 JSON UI 树，可与文字交错出现（围栏外的文字仍按普通文本展示）。
             节点格式：{"type":"组件名","props":{...},"children":[子节点...]}
             可用组件：card（卡片容器，props.title）、text（文本，props.value，可选 props.emphasis 高亮）、kv（标签:值，props.label/props.value）、
-            badge（徽标，props.text）、divider（分割线）、image（图片，props.src）、button（按钮，props.label/props.value，点击会把 value 作为用户消息发出）、
+            badge（徽标，props.text）、divider（分割线）、image（图片，props.src）、button（按钮，props.label 必填；点击行为二选一——props.action 用 Action URI 执行动作：url://链接（新标签打开）、
+            msg://文本（作为用户消息发出）、copy://文本（复制到剪贴板）；或 props.value 纯文本（点击后作为用户消息发出，等价于 msg://）。
+            可选 props.style：primary（主要）/danger（危险），缺省为普通样式）、
             actions（按钮组容器）、list（列表）、row（横排容器）、column（竖排容器）。
             示例：
             ```spec
             {"type":"card","props":{"title":"订单 #10086"},"children":[
               {"type":"kv","props":{"label":"金额","value":"¥199"}},
-              {"type":"actions","children":[{"type":"button","props":{"label":"查看物流","value":"查询订单10086物流"}}]}
+              {"type":"actions","children":[
+                {"type":"button","props":{"label":"查看物流","value":"查询订单10086物流"}},
+                {"type":"button","props":{"label":"订单详情","action":"url://https://shop.example.com/orders/10086"}},
+                {"type":"button","props":{"label":"复制单号","action":"copy://SF13142026","style":"primary"}}
+              ]}
             ]}
             ```
             表单类（收集用户输入）：form（表单容器）、input（文本框，props.name/props.label/props.placeholder，可选 props.required=true 标记必填，用户未填/未勾则无法提交）、

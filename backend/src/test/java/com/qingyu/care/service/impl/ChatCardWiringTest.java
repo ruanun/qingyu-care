@@ -154,4 +154,18 @@ class ChatCardWiringTest {
     void appendCardPrompt_withCards关_不追加() {
         assertThat(ChatServiceImpl.appendCardPrompt("系统提示", false, true)).isEqualTo("系统提示");
     }
+
+    /**
+     * CARD_PROMPT 必须教会 LLM 三种 Action URI 协议——否则模型不会产出 action 字段，
+     * 两端刚接的按钮动作就成了摆设。协议白名单同时存在于
+     * frontend/src/lib/actionUri.ts 与 widget/src/actionUri.ts（跨语言，无法自动比对）。
+     */
+    @Test
+    void CARD_PROMPT_含三种ActionURI协议说明() {
+        String prompt = ChatServiceImpl.appendCardPrompt("系统提示", true, true);
+
+        assertThat(prompt).contains("url://").contains("msg://").contains("copy://");
+        assertThat(prompt).contains("action");
+        assertThat(prompt).contains("style");
+    }
 }
