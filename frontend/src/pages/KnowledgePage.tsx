@@ -401,7 +401,11 @@ const KnowledgePage: React.FC = () => {
                                                     {doc.status === 'PROCESSING' && (
                                                         <Progress value={getStatusProgress(doc.status)} className="h-1 mt-2 w-32" />
                                                     )}
-                                                    {doc.status === 'FAILED' && doc.errorMessage && (
+                                                    {/* 网页同步失败时状态未必是 FAILED：从未成功过的停在 FAILED，
+                                                        而已成功过的会保留 COMPLETED（旧内容与旧向量仍在服务，
+                                                        标成 FAILED 是撒谎）。只认 FAILED 会让这两类失败在界面上
+                                                        彻底不显示——而运营只看界面 */}
+                                                    {doc.errorMessage && (doc.status === 'FAILED' || (doc.syncFailureCount ?? 0) > 0) && (
                                                         <p className="text-[10px] text-red-500 mt-1">{doc.errorMessage}</p>
                                                     )}
                                                 </div>

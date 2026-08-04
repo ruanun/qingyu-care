@@ -47,6 +47,9 @@ public class WebPageSyncService {
     /** 连续失败到此次数后自动转手动，避免死链每小时重试一年。 */
     private static final int MAX_FAILURES = 10;
 
+    /** {@code document.name} / {@code original_filename} 都是 varchar(255)。 */
+    private static final int NAME_MAX_LENGTH = 255;
+
     private final DocumentRepository documentRepository;
     private final KnowledgeService knowledgeService;
     private final WebPageFetcher webPageFetcher;
@@ -84,8 +87,12 @@ public class WebPageSyncService {
 
         Document doc = Document.builder()
                 .knowledgeBase(kb)
-                .name(url)                       // 首次抓取成功后会被网页标题覆盖
-                .originalFilename(url)
+                // 截断：name/original_filename 是 varchar(255)，而 URL 无长度约束（source_url
+                // 列本身是 2048）。带 UTM 参数与锚点的长网址很日常，不截断时这里的 save 会
+                // 立即 INSERT（IDENTITY 主键强制 flush）并抛 value too long，用户拿到一个
+                // 不可读的 500
+                .name(truncate(url, NAME_MAX_LENGTH))    // 首次抓取成功后会被网页标题覆盖
+                .originalFilename(truncate(url, NAME_MAX_LENGTH))
                 .documentType(DocumentType.URL)
                 .status(DocumentStatus.PENDING)
                 .sourceUrl(url)
@@ -139,7 +146,13 @@ public class WebPageSyncService {
             // MAX_FAILURES 熔断（见下方 recordSyncFailure 的调用点与类注释）
             doc.setLastSyncedAt(LocalDateTime.now());
 
-            if (result.contentHash().equals(doc.getContentHash())) {
+            // 跳过重嵌的条件是「内容没变」<b>且</b>「上一轮确实嵌成功了」，两个都要。
+            // 只看 hash 会漏掉这种局面：运营跑了一次重嵌批任务或点了「重新处理」，
+            // processDocument 先删光旧向量、随后 embedding 调用失败落 FAILED，而
+            // contentHash 是在别处写的、不会被它清掉——此后每一轮同步都判「内容未变」
+            // 直接返回，这篇网页 0 向量、永远检索不到、且不再有任何自动重试，全程无异常无日志
+            if (result.contentHash().equals(doc.getContentHash())
+                    && doc.getStatus() == DocumentStatus.COMPLETED) {
                 // 内容未变：不重嵌，本轮视为成功
                 doc.setSyncFailureCount(0);
                 doc.setErrorMessage(null);
@@ -148,7 +161,13 @@ public class WebPageSyncService {
                 return;
             }
 
-            doc.setName(result.title());
+            // 截断同理（见 addWebPage）：网页标题同样没有长度约束。这条比长 URL 更隐蔽——
+            // setName 之后的 save 此刻还没发 SQL，直到 processDocument 首行的原生删除
+            // 强制 flush 整个 session 才报长度超限；而那一行在 processDocument 自己的 try
+            // 之外，异常直穿到下面的 catch，recordSyncFailure 的 save 对托管实体是 no-op
+            // 不报错、方法正常返回，最后事务提交时整体回滚——失败计数与 errorMessage 一次
+            // 都没落库，这篇网页每小时重试、永远碰不到熔断，界面上还什么都看不到
+            doc.setName(truncate(result.title(), NAME_MAX_LENGTH));
             doc.setContent(result.content());
             documentRepository.save(doc);
 
@@ -195,6 +214,17 @@ public class WebPageSyncService {
     /**
      * 累加连续失败次数并落库；达到 {@link #MAX_FAILURES} 自动转手动同步，避免死链每小时
      * 重试一年。抓取失败、重嵌失败共用此逻辑——对本轮同步而言两者都是"没有成功"。
+     *
+     * <p>状态只在「从未成功过」时才置 FAILED：
+     * <ul>
+     *   <li>{@code contentHash == null} 说明这篇网页一次都没嵌进去过（哈希只与嵌入成功
+     *       同时写），文档此刻停在 PENDING。不置 FAILED 的话，界面显示的是「等待处理」的
+     *       时钟图标，而列表里的 errorMessage 只在 FAILED 时才渲染——加一个 404 的网址，
+     *       运营看到的是一篇永远"处理中"、没有任何错误提示的文档。</li>
+     *   <li>已成功过的<b>不动 status</b>：旧内容与旧向量还在正常服务，把它标成 FAILED 是
+     *       撒谎（官网临时 502 不该让这篇知识在界面上"消失"）。这条路径靠 errorMessage +
+     *       syncFailureCount 在界面上提示，前端展示条件已相应放宽。</li>
+     * </ul>
      */
     private void recordSyncFailure(Document doc, String reason) {
         int failures = (doc.getSyncFailureCount() == null ? 0 : doc.getSyncFailureCount()) + 1;
@@ -205,6 +235,27 @@ public class WebPageSyncService {
             message += "；已停止自动同步，请检查 URL 是否有效";
         }
         doc.setErrorMessage(message);
+        if (doc.getContentHash() == null) {
+            doc.setStatus(DocumentStatus.FAILED);
+        }
         documentRepository.save(doc);
+    }
+
+    /**
+     * 按 UTF-16 码元截断到 {@code max}，供 varchar(255) 列使用。
+     *
+     * <p>PostgreSQL 的 varchar(n) 按<b>字符</b>计数而 Java 的 {@code length()} 按码元，
+     * 故按码元截断是偏保守的一侧，绝不会超出列宽。末位若是高代理项则一并丢弃——切断代理对
+     * 会留下一个孤立代理，落库时 PostgreSQL 直接报「invalid byte sequence for encoding UTF8」。
+     */
+    static String truncate(String value, int max) {
+        if (value == null || value.length() <= max) {
+            return value;
+        }
+        int end = max;
+        if (Character.isHighSurrogate(value.charAt(end - 1))) {
+            end--;
+        }
+        return value.substring(0, end);
     }
 }

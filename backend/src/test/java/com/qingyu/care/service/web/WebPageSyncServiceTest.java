@@ -4,11 +4,13 @@ import com.qingyu.care.entity.Document;
 import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.exception.BusinessException;
+import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.service.KnowledgeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -22,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -49,11 +52,13 @@ class WebPageSyncServiceTest {
         lenient().when(documentRepository.tryLockWebPageSync(anyLong())).thenReturn(true);
     }
 
+    /** 一篇已成功嵌入过的网页文档：有哈希、状态 COMPLETED、历史累计 3 次失败。 */
     private Document urlDoc(String hash) {
         Document doc = Document.builder()
                 .sourceUrl("https://example.com/faq")
                 .contentHash(hash)
                 .content("旧正文")
+                .status(DocumentStatus.COMPLETED)
                 .syncInterval(SyncInterval.DAILY)
                 .syncFailureCount(3)
                 .build();
@@ -245,6 +250,8 @@ class WebPageSyncServiceTest {
         verify(knowledgeService, never()).processDocument(anyLong());
     }
 
+    // ===== 并发互斥（I-3）=====
+
     @Test
     void 抢不到同步锁时直接返回_不重复抓取也不重复嵌入() {
         // 同一文档并发同步会产出重复向量：A 删向量（未提交）→ B 的 DELETE 在自己的语句
@@ -258,5 +265,126 @@ class WebPageSyncServiceTest {
         verify(webPageFetcher, never()).fetch(any());
         verify(knowledgeService, never()).processDocument(anyLong());
         verify(documentRepository, never()).save(any());
+    }
+
+    // ===== 跳过重嵌的条件（I-2）=====
+
+    @Test
+    void 内容未变但上一轮嵌入失败时仍然重嵌() {
+        // 场景：运营跑了一次重嵌批任务或点了「重新处理」，processDocument 先删光旧向量、
+        // 随后 embedding 失败落 FAILED，而 contentHash 在别处、不会被它清掉。若跳过条件
+        // 只看 hash，这篇网页从此 0 向量、永远检索不到、且不再有任何自动重试，全程无异常无日志
+        Document doc = urlDoc("HASH_A");
+        doc.setStatus(DocumentStatus.FAILED);
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString()))
+                .thenReturn(new WebPageFetcher.FetchResult("标题", "正文", "HASH_A", 200));
+        doAnswer(inv -> {
+            doc.setStatus(DocumentStatus.COMPLETED);
+            return null;
+        }).when(knowledgeService).processDocument(1L);
+
+        service.syncDocument(1L);
+
+        verify(knowledgeService).processDocument(1L);
+        assertThat(doc.getContentHash()).isEqualTo("HASH_A");   // 重嵌成功后照常落库
+        assertThat(doc.getSyncFailureCount()).isZero();
+    }
+
+    // ===== 抓取失败时的状态语义（I-4）=====
+
+    @Test
+    void 从未成功过的网页抓取失败时置为FAILED() {
+        // contentHash 为 null 说明一次都没嵌进去过，文档此刻停在 PENDING。不置 FAILED 的话，
+        // 加一个 404 网址后界面显示的是「等待处理」的时钟图标，errorMessage 被展示条件挡住
+        // 完全不显示——运营看到一篇永远"处理中"、没有任何错误提示的文档
+        Document doc = urlDoc(null);
+        doc.setStatus(DocumentStatus.PENDING);
+        doc.setContent(null);
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("网页返回 HTTP 404"));
+
+        service.syncDocument(1L);
+
+        assertThat(doc.getStatus()).isEqualTo(DocumentStatus.FAILED);
+        assertThat(doc.getErrorMessage()).contains("404");
+    }
+
+    @Test
+    void 已成功过的网页抓取失败时保留原状态不撒谎() {
+        // 旧内容与旧向量还在正常服务，标成 FAILED 是撒谎（官网临时 502 不该让这篇知识
+        // 在界面上"消失"）。这条路径靠 errorMessage + syncFailureCount 在界面上提示
+        Document doc = urlDoc("HASH_A");
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("网页抓取失败: 502"));
+
+        service.syncDocument(1L);
+
+        assertThat(doc.getStatus()).isEqualTo(DocumentStatus.COMPLETED);
+        assertThat(doc.getContent()).isEqualTo("旧正文");
+        assertThat(doc.getErrorMessage()).contains("502");
+        assertThat(doc.getSyncFailureCount()).isEqualTo(4);
+    }
+
+    // ===== name/original_filename 是 varchar(255)（I-1）=====
+
+    @Test
+    void 超长URL建档时名称截断到255() {
+        // source_url 列是 2048，name/original_filename 却只有 255。带 UTM 参数与锚点的
+        // 长网址很日常，不截断时 save 会立即 INSERT（IDENTITY 主键强制 flush）并抛
+        // value too long，用户拿到一个不可读的 500
+        String longUrl = "https://example.com/faq?utm_source=" + "a".repeat(300);
+        service.setSelf(mock(WebPageSyncService.class));
+        when(knowledgeService.getKnowledgeBase(1L)).thenReturn(new KnowledgeBase());
+        when(documentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.addWebPage(1L, longUrl, SyncInterval.DAILY);
+
+        ArgumentCaptor<Document> saved = ArgumentCaptor.forClass(Document.class);
+        verify(documentRepository).save(saved.capture());
+        assertThat(saved.getValue().getName()).hasSize(255);
+        assertThat(saved.getValue().getOriginalFilename()).hasSize(255);
+        assertThat(saved.getValue().getSourceUrl()).isEqualTo(longUrl);   // 原始 URL 不截断
+    }
+
+    @Test
+    void 超长网页标题落库前截断到255() {
+        // 比长 URL 更隐蔽：setName 之后的 save 此刻还没发 SQL，直到 processDocument 首行的
+        // 原生删除强制 flush 才报长度超限，而那一行在它自己的 try 之外，异常直穿到 catch，
+        // recordSyncFailure 的 save 对托管实体是 no-op 不报错、方法正常返回，最后事务提交时
+        // 整体回滚——失败计数与 errorMessage 一次都没落库，这篇网页每小时重试、永远碰不到熔断
+        Document doc = urlDoc("HASH_A");
+        String longTitle = "退货政策".repeat(100);   // 400 字
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString()))
+                .thenReturn(new WebPageFetcher.FetchResult(longTitle, "改版后的正文", "HASH_B", 200));
+        doAnswer(inv -> {
+            doc.setStatus(DocumentStatus.COMPLETED);
+            return null;
+        }).when(knowledgeService).processDocument(1L);
+
+        service.syncDocument(1L);
+
+        assertThat(doc.getName()).hasSize(255);
+        assertThat(longTitle).startsWith(doc.getName());
+    }
+
+    @Test
+    void 截断不会切断代理对() {
+        // 切断代理对会留下一个孤立代理，落库时 PostgreSQL 直接报
+        // invalid byte sequence for encoding UTF8
+        String emoji = "😀";                       // 一个字符、两个 UTF-16 码元
+        String text = "a".repeat(254) + emoji;     // 第 255、256 码元是这对代理
+
+        String truncated = WebPageSyncService.truncate(text, 255);
+
+        assertThat(truncated).hasSize(254).isEqualTo("a".repeat(254));
+        assertThat(truncated.chars().anyMatch(c -> Character.isSurrogate((char) c))).isFalse();
+    }
+
+    @Test
+    void 未超长时原样返回() {
+        assertThat(WebPageSyncService.truncate("短标题", 255)).isEqualTo("短标题");
+        assertThat(WebPageSyncService.truncate(null, 255)).isNull();
     }
 }
