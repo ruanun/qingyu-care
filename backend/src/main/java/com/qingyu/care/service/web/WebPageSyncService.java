@@ -6,7 +6,6 @@ import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentType;
 import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.repository.DocumentRepository;
-import com.qingyu.care.repository.KnowledgeBaseRepository;
 import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +48,6 @@ public class WebPageSyncService {
     private static final int MAX_FAILURES = 10;
 
     private final DocumentRepository documentRepository;
-    private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final KnowledgeService knowledgeService;
     private final WebPageFetcher webPageFetcher;
 
@@ -57,11 +55,9 @@ public class WebPageSyncService {
     private WebPageSyncService self;
 
     public WebPageSyncService(DocumentRepository documentRepository,
-                               KnowledgeBaseRepository knowledgeBaseRepository,
                                KnowledgeService knowledgeService,
                                WebPageFetcher webPageFetcher) {
         this.documentRepository = documentRepository;
-        this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.knowledgeService = knowledgeService;
         this.webPageFetcher = webPageFetcher;
     }
@@ -75,12 +71,16 @@ public class WebPageSyncService {
     /**
      * 建档 + 异步首次抓取。同步返回是为了让「添加」按钮立刻有反馈，
      * 沿用 uploadDocument 的范式（同步建档 PENDING，抓取与摄取走异步）。
+     *
+     * <p>⚠️ 知识库必须经 {@code knowledgeService.getKnowledgeBase(...)} 取得——它内部做了
+     * {@code TenantOwnershipGuard.belongsToCurrentContext} 显式归属校验；直接用
+     * {@code knowledgeBaseRepository.findById(...)} 不受 Hibernate {@code @Filter} 保护，
+     * 会让任意租户遍历 {@code knowledgeBaseId} 把网页文档插进别人的知识库（曾经的 Critical 越权，
+     * 同 {@code KnowledgeServiceImpl.uploadDocument} 的既有范式）。
      */
     @Transactional
     public Document addWebPage(Long knowledgeBaseId, String url, SyncInterval interval) {
-        KnowledgeBase kb = knowledgeBaseRepository.findById(knowledgeBaseId)
-                .orElseThrow(() -> new com.qingyu.care.exception.ResourceNotFoundException(
-                        "知识库", String.valueOf(knowledgeBaseId)));
+        KnowledgeBase kb = knowledgeService.getKnowledgeBase(knowledgeBaseId);
 
         Document doc = Document.builder()
                 .knowledgeBase(kb)

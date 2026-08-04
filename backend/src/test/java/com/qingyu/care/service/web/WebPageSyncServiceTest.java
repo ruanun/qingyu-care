@@ -15,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -47,6 +48,21 @@ class WebPageSyncServiceTest {
                 .build();
         doc.setId(1L);
         return doc;
+    }
+
+    @Test
+    void addWebPage时知识库不属于当前租户则拒绝且不建档() {
+        // 归属校验必须经 knowledgeService.getKnowledgeBase(...) 完成——它内部做
+        // TenantOwnershipGuard 校验；越权 id 时真实实现会抛异常，这里用同语义的
+        // RuntimeException 模拟。回归防线：曾经直接用 knowledgeBaseRepository.findById
+        // 绕过了这层校验，导致任意租户能把网页文档插进别人的知识库（Critical 越权）
+        when(knowledgeService.getKnowledgeBase(99L))
+                .thenThrow(new RuntimeException("Knowledge base not found: 99"));
+
+        assertThrows(RuntimeException.class,
+                () -> service.addWebPage(99L, "https://example.com/faq", SyncInterval.DAILY));
+
+        verify(documentRepository, never()).save(any());
     }
 
     @Test
