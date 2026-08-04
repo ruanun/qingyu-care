@@ -51,6 +51,14 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 
 ⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
 
+### 改动网站知识库同步链路后必须手工验证
+自动化测试覆盖不到的三条（单测里 `WebPageFetcher` 与 `VectorStore` 全被 mock，调度线程的过滤器状态更是单测造不出来）：
+1. **二次同步不重嵌**：同一网页连点两次「立即重新抓取」，确认 `chunk_count` 与 `vector_store` 行数**都没变**。退化成每次重嵌不会报错、只会悄悄烧 embedding 的钱。
+2. **调度器真能查到文档**：把某文档 `last_synced_at` 改到很久以前，等 `@Scheduled` 触发（临时用 `-Dqingyu.care.web-sync.interval-ms=30000` 缩短间隔），确认日志打出「网页定时同步：N 篇到期」。原生 SQL 一旦被改回 JPQL，这里会**静默地一篇都查不到**。
+3. **人工读一遍入库正文**：`SELECT content FROM document WHERE id=?`，看有没有混进导航栏/Cookie 提示/页脚版权。这是启发式剔噪声唯一的验收方式。
+
+排查网页文档问题时，**先跟文件文档做同身份对照**再归因新代码——真机冒烟中「网页文档 `tenant_id` 落成 NULL」曾被误判为本特性缺陷，实为平台管理员建档的既有行为（文件上传路径一模一样）。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -113,6 +121,16 @@ pnpm test    # vitest
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
 - 控制器在 `controller/open/`，DTO 在 `dto/open/`（如 `OpenChatController` 的 `/chat/completions` 与 SSE `/chat/stream`）。
+
+### 网站知识库（`service/web/` + `scheduler/WebPageSyncScheduler`）
+把网页正文抓进知识库并定期同步。`Document` 复用现有实体，URL 类文档多用 5 个字段（`sourceUrl`/`contentHash`/`syncInterval`/`lastSyncedAt`/`syncFailureCount`），文件类文档这 5 列为 null。
+- `WebPageFetcher` 不碰数据库、纯可测：SSRF 硬门槛（钉 IP 防 rebinding + `disableRedirectHandling` + 10s 超时 + 5MB 边读边计数 + Content-Type 白名单）→ **先按状态码拒绝非 2xx，再读 body**（否则 404/500 错误页文案会被当正文摄入）→ Jsoup 剔噪声 → SHA-256。
+- `WebPageSyncService.syncDocument` 三条分支是核心：**hash 未变→只更新 `lastSyncedAt`、不重嵌**（省 embedding 成本；这条一旦退化成"每次都重嵌"，功能照常、只是悄悄烧钱，没有任何现象提醒）；**hash 变了→`reprocessDocument` 重切重嵌**；**抓取失败→保留旧内容与旧向量**，只累加 `syncFailureCount`，连续 10 次转 `MANUAL` 熔断（任一次成功清零）。
+- ⚠️ **调度器的到期查询必须用原生 SQL**（`DocumentRepository.findDueWebPageIds`）：`Document extends BaseTenantEntity` 受 `@Filter` 保护，而调度线程没有 `TenantContext`——用 JPQL 会一条都查不到，且**任务照跑、日志照打，纯静默失败**。同「多级配置回退」那个坑。
+- ⚠️ **`addWebPage` → `syncDocumentAsync` → `syncDocument` 两跳都必须走 `self`**（`@Autowired @Lazy` 自注入）：同类直调不经代理，`@Async` 与 `@Transactional` 双双失效；后者失效时 doc 中途 detached，`save()` 会把陈旧字段 merge 回库、静默覆盖 `processDocument` 刚提交的结果，导致 `contentHash` 永不落库 → **每轮无条件重嵌，永远**。
+- ⚠️ 取知识库一律用 `knowledgeService.getKnowledgeBase(id)`（内含 `TenantOwnershipGuard`），**绝不用 `knowledgeBaseRepository.findById`**——后者不受 `@Filter` 保护，等于让任意租户往别人知识库里插文档。
+- ⚠️ **噪声剔除是启发式，只认语义标签**（`script/style/nav/header/footer/aside/noscript/iframe/form`）。真机实测：用 `<div>` 做导航的站点（如菜鸟教程）导航文字会大量入库并稀释检索相似度。这是已知局限，不是 bug；不够用时再按 URL 加自定义 CSS 选择器。
+- `processDocument`（`KnowledgeServiceImpl`）对 URL 类文档走独立分支：直接用 `doc.getContent()` 切分嵌入，**跳过 S3 下载与 Tika 解析**（网页文档 `filePath` 恒为 null）。新增非文件来源的文档类型时务必同步加分支。
 
 ### Webhook 事件推送（`event/` + `service/webhook/`）
 链路：业务发布 `WebhookDomainEvent` → `WebhookDispatcher`（`@TransactionalEventListener(AFTER_COMMIT)`，按 app 订阅事件过滤）落库 `WebhookDelivery(PENDING)` → `WebhookQueue.dispatch()`（**Redis Stream 队列**：XADD 入流，`WebhookStreamConsumer` 消费组拉取；队列关闭或 Redis 故障进入冷却期时回退 `WebhookSender.@Async deliverAsync()` 直投，fail-open）→ HTTP 投递，`WebhookSignature` 做 HMAC-SHA256 签名（头 `X-Qingyu-Signature: sha256=...`）→ 失败按 `backoff-minutes` 退避重试，`WebhookRetryScheduler`（`@Scheduled`）扫描到期的重投（同样经队列派发）。**语义边界：DB 投递行（PENDING + claim CAS）才是事实源与至少一次保证，队列只做加速分发——消费侧先 ACK 再投递，消息丢失/重复均无害。** 配置见 `WebhookProperties`（前缀 `qingyu.care.webhook`，队列子配置 `qingyu.care.webhook.queue.*`）。`WebhookQueueIT`（真 Redis 容器，独立 Spring 上下文）与 `WebhookDeliveryIT`（无 Redis，验证直投兜底）分别守护两条路径。

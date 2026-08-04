@@ -191,10 +191,11 @@
   目标：对齐 tgo 的标准化 Action URI，支持「链接跳转 / 发送消息 / 复制内容」三类动作。
   判断：刚完成的卡片能力的自然延伸，改动集中在两端 registry/render + UiSpec 协议扩展，**无新架构决策，投入产出比最高**。注意 widget 侧的 XSS 三防（跳转 URL 必须走 `safeUrl` 白名单，与 image 同款 fail-closed）。
 
-- [ ] **网站知识库（URL 抓取 + 定期同步）**
+- [x] **网站知识库（URL 抓取 + 定期同步）**
   现状：`DocumentType.URL` **枚举已占位但零实现**（全库无 Jsoup/crawl/fetchUrl 命中）。
   目标：给定 URL 抓取正文入知识库，并支持定期重新抓取同步（内容变更触发重嵌）。
   判断：客服知识的主要来源就是官网 FAQ/帮助中心，手工传文档是长期运营负担；**产品价值最大的一项**。摄取链路（切分/嵌入/重嵌）与向量重嵌能力均已就绪，主要新增抓取与调度。
+  落地：本期只做**单页抓取 + 定期同步**（站点爬取留第二期，见 spec §10）。`Document` 加 5 个 URL 专用字段，`WebPageFetcher`（SSRF 硬门槛 + Jsoup 剔噪声 + SHA-256）+ `WebPageSyncService`（未变不重嵌 / 变了重嵌 / 失败保留旧内容三分支 + 连续 10 次失败熔断转 `MANUAL`）+ `WebPageSyncScheduler`（原生 SQL 绕租户过滤器）。⚠️ 已知局限：噪声剔除只认语义标签，用 `<div>` 做导航的站点噪声会入库（详见 CLAUDE.md）。
 
 - [ ] **多媒体消息（图片 / 文件）**
   现状：`ChatMessage` 只有 `content` 文本 + `uiSpec` 卡片，无附件模型。
