@@ -62,6 +62,12 @@ class WebPageSyncServiceTest {
         assertThrows(RuntimeException.class,
                 () -> service.addWebPage(99L, "https://example.com/faq", SyncInterval.DAILY));
 
+        // 显式钉住"取知识库必须经过这条有归属校验的路径"——不然本测试的判别力全靠
+        // MockitoExtension 的 STRICT_STUBS 隐式兜底（换回裸 findById 时，上面的 stub
+        // 因未被消费而报 UnnecessaryStubbingException，测试碰巧也会红）。哪天有人给
+        // 这条测试加 lenient() 或调整了 strictness 配置，隐式判别力会悄悄失效，
+        // 这行显式 verify 是不依赖任何 Mockito 配置的独立断言
+        verify(knowledgeService).getKnowledgeBase(99L);
         verify(documentRepository, never()).save(any());
     }
 
