@@ -4,17 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import type { UiNode } from '@/types';
+import { safeUrl } from '@/lib/safeUrl';
+import { executeActionUri } from '@/lib/actionUri';
+import { useToast } from '@/hooks/use-toast';
 
-/** 仅允 http/https 且长度受限，其余返回空（防 javascript:/data: 注入）。 */
-export function safeUrl(u: unknown): string {
-  if (typeof u !== 'string' || u.length > 2048) return '';
-  try {
-    const p = new URL(u);
-    return (p.protocol === 'http:' || p.protocol === 'https:') ? u : '';
-  } catch {
-    return '';
-  }
-}
+// 保持既有导出路径不变
+export { safeUrl };
 
 function str(v: unknown): string {
   return v == null ? '' : String(v);
@@ -118,6 +113,45 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
   );
 }
 
+/** 按钮样式 → shadcn variant；非法/缺失落到默认。 */
+function btnVariant(style: unknown): 'outline' | 'default' | 'destructive' {
+  if (style === 'primary') return 'default';
+  if (style === 'danger') return 'destructive';
+  return 'outline';
+}
+
+/**
+ * 卡片按钮：props.action 走 Action URI（url/msg/copy），协议无效时回退 props.value 发消息。
+ * 单独抽成组件是因为复制反馈要用 useToast，而 renderNode 是普通函数不能用 hook。
+ */
+// 同上：本文件混合导出组件与工具函数是既有约定，ActionButton 是未导出的内部组件，
+// 混合导出不影响运行时正确性，仅 Fast Refresh 退化为整文件重载，故下行显式关闭该规则。
+// eslint-disable-next-line react-refresh/only-export-components
+function ActionButton({ node, onAction }: { node: UiNode; onAction: (v: string) => void }) {
+  const { toast } = useToast();
+  const p = node.props ?? {};
+  const label = str(p.label);
+
+  const handleClick = () => {
+    const handled = executeActionUri(p.action, {
+      onMessage: onAction,
+      onCopied: () => toast({ title: '已复制' }),
+      onCopyFailed: () =>
+        toast({ variant: 'destructive', title: '复制失败', description: '当前页面不允许访问剪贴板' }),
+    });
+    if (!handled) {
+      const fallback = str(p.value ?? p.label);
+      if (fallback) onAction(fallback);
+    }
+  };
+
+  return (
+    <Button size="sm" variant={btnVariant(p.style)} className="mr-2 mt-1" onClick={handleClick}>
+      {label}
+    </Button>
+  );
+}
+
 /**
  * type → 组件 注册表：递归渲染单个 UiNode。
  * 未知 type 一律返回 null（静默忽略，不抛错、不阻断其余卡片渲染）。
@@ -154,11 +188,7 @@ export function renderNode(node: UiNode, onAction: (value: string) => void, key:
       return src ? <img key={key} src={src} alt={str(p.alt)} className="max-w-full rounded" /> : null;
     }
     case 'button':
-      return (
-        <Button key={key} size="sm" variant="outline" className="mr-2 mt-1" onClick={() => onAction(str(p.value ?? p.label))}>
-          {str(p.label)}
-        </Button>
-      );
+      return <ActionButton key={key} node={node} onAction={onAction} />;
     case 'actions':
       return <div key={key} className="flex flex-wrap">{kids}</div>;
     case 'list': {
