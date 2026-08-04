@@ -123,7 +123,11 @@ public class Document extends BaseTenantEntity {
     @Column(name = "sync_interval", length = 20)
     private SyncInterval syncInterval;
 
-    /** 上次「成功」同步时间；抓取失败不更新，故它同时是「内容新鲜度」的下界。 */
+    /**
+     * 上次成功<b>抓取</b>时间：抓取失败不更新；抓取成功但后续重嵌失败<b>会</b>更新
+     * （那一轮确实拿到了新鲜内容，只是没嵌进去，重试由 contentHash 未落库来保证）。
+     * 调度器的到期判定读的就是它。
+     */
     @Column(name = "last_synced_at")
     private LocalDateTime lastSyncedAt;
 

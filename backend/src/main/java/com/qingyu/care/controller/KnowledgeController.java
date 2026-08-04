@@ -106,7 +106,7 @@ public class KnowledgeController {
 
     @PostMapping("/{knowledgeBaseId}/web-pages")
     @Operation(summary = "添加网页文档", description = "抓取指定 URL 的正文入知识库，可配置自动同步周期")
-    @AuditLog(action = "ADD_WEB_PAGE", targetType = "DOCUMENT")
+    @AuditLog(action = "ADD_WEB_PAGE", targetType = "Document")
     public ApiResponse<Document> addWebPage(@PathVariable Long knowledgeBaseId,
                                             @Valid @RequestBody AddWebPageRequest request) {
         return ApiResponse.success("网页已添加，正在抓取",
@@ -142,7 +142,7 @@ public class KnowledgeController {
 
     @PostMapping("/documents/{documentId}/sync")
     @Operation(summary = "立即同步网页", description = "手动触发一次重新抓取（异步执行）")
-    @AuditLog(action = "SYNC_WEB_PAGE", targetType = "DOCUMENT")
+    @AuditLog(action = "SYNC_WEB_PAGE", targetType = "Document")
     public ApiResponse<Void> syncWebPage(@PathVariable Long documentId) {
         knowledgeService.getDocument(documentId);   // 归属校验：越权直接抛，避免跨租户触发同步
         webPageSyncService.syncDocumentAsync(documentId);
