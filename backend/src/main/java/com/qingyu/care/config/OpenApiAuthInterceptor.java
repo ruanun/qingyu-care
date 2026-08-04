@@ -18,7 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.cors.CorsUtils;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.AsyncHandlerInterceptor;
 
 /**
  * 开放 API 拦截器：校验 appKey/appSecret，将 tenantId/appId 写入 TenantContext，
@@ -27,7 +27,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
  */
 @Component
 @RequiredArgsConstructor
-public class OpenApiAuthInterceptor implements HandlerInterceptor {
+public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     public static final String ATTR_APP = "openApiApplication";
 
@@ -112,6 +112,19 @@ public class OpenApiAuthInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
+        TenantContext.clear();
+    }
+
+    /**
+     * 同 {@link TenantInterceptor#afterConcurrentHandlingStarted}：异步分发（本拦截器守护的
+     * `/open/v1/chat/stream` 正是 widget 主流量）时 DispatcherServlet 不会调 afterCompletion，
+     * 原始 Tomcat 线程若不在此清理，会带着这次开放 API 请求的 tenantId/appId 回池，泄漏给
+     * 复用该线程的下一个请求——包括管理端请求（TenantInterceptor 也注册在 `/**`，理论上会兜底
+     * 清理，但那份保护依赖它的 path pattern 覆盖 `/open/**` 这个隐式前提，不该只靠邻居兜底）。
+     */
+    @Override
+    public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
+                                               Object handler) {
         TenantContext.clear();
     }
 
