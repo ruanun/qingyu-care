@@ -202,3 +202,82 @@ describe('表单必填校验', () => {
     expect(form.textContent).toContain('姓名 *');
   });
 });
+
+describe('button 的 Action URI', () => {
+  it('action=msg:// 时把内容当消息发出，不发 value', () => {
+    const onAction = vi.fn();
+    const el = renderNode(
+      { type: 'button', props: { label: '查物流', value: '旧文本', action: 'msg://新文本' } } as UiNode,
+      onAction,
+    )!;
+    el.dispatchEvent(new MouseEvent('click'));
+    expect(onAction).toHaveBeenCalledWith('新文本');
+    expect(onAction).not.toHaveBeenCalledWith('旧文本');
+  });
+
+  it('action 无效时回退 value', () => {
+    const onAction = vi.fn();
+    const el = renderNode(
+      { type: 'button', props: { label: '查物流', value: '旧文本', action: '没有协议前缀' } } as UiNode,
+      onAction,
+    )!;
+    el.dispatchEvent(new MouseEvent('click'));
+    expect(onAction).toHaveBeenCalledWith('旧文本');
+  });
+
+  it('无 action 时行为与改造前一致', () => {
+    const onAction = vi.fn();
+    const el = renderNode(
+      { type: 'button', props: { label: '查物流', value: '查询订单' } } as UiNode,
+      onAction,
+    )!;
+    el.dispatchEvent(new MouseEvent('click'));
+    expect(onAction).toHaveBeenCalledWith('查询订单');
+  });
+
+  it('action=url:// 被 safeUrl 拒绝时不打开也不回退 value', () => {
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    const onAction = vi.fn();
+    const el = renderNode(
+      { type: 'button', props: { label: '详情', value: '回退文本', action: 'url://javascript:alert(1)' } } as UiNode,
+      onAction,
+    )!;
+    el.dispatchEvent(new MouseEvent('click'));
+    expect(open).not.toHaveBeenCalled();
+    expect(onAction).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('copy 成功后按钮文案短暂变「已复制」再恢复', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const el = renderNode(
+      { type: 'button', props: { label: '复制单号', action: 'copy://SF123' } } as UiNode,
+      () => {},
+    )!;
+
+    el.dispatchEvent(new MouseEvent('click'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(el.textContent).toBe('已复制');
+
+    vi.advanceTimersByTime(2000);
+    expect(el.textContent).toBe('复制单号');
+
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('style 映射到 class，非法值落 default', () => {
+    const noop = () => {};
+    const primary = renderNode({ type: 'button', props: { label: 'A', style: 'primary' } } as UiNode, noop)!;
+    const danger = renderNode({ type: 'button', props: { label: 'B', style: 'danger' } } as UiNode, noop)!;
+    const weird = renderNode({ type: 'button', props: { label: 'C', style: '不存在' } } as UiNode, noop)!;
+
+    expect(primary.className).toContain('qy-card-btn-primary');
+    expect(danger.className).toContain('qy-card-btn-danger');
+    expect(weird.className).toBe('qy-card-btn');
+  });
+});

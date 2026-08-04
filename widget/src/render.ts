@@ -1,5 +1,6 @@
 import type { UiNode } from './api';
 import { safeUrl } from './safeUrl';
+import { executeActionUri } from './actionUri';
 
 // 保持既有导出路径不变（render.test.ts 从 './render' 导入 safeUrl）
 export { safeUrl };
@@ -12,6 +13,21 @@ function el(tag: string, className?: string): HTMLElement {
   const e = document.createElement(tag);
   if (className) e.className = className;
   return e;
+}
+
+/** 按钮样式 → class 后缀；非法/缺失落到默认样式。 */
+function btnStyleClass(style: unknown): string {
+  if (style === 'primary') return ' qy-card-btn-primary';
+  if (style === 'danger') return ' qy-card-btn-danger';
+  return '';
+}
+
+/** 按钮文案短暂切换为提示语，2 秒后恢复（widget 没有 toast 系统）。 */
+function flashLabel(btn: HTMLElement, temp: string, original: string): void {
+  btn.textContent = temp;
+  setTimeout(() => {
+    btn.textContent = original;
+  }, 2000);
 }
 
 /** 字段带标签的行容器：有 label 则「标签 + 控件」竖排，否则只返回控件；required 时标签追加必填星号。 */
@@ -90,10 +106,22 @@ export function renderNode(
       return img;
     }
     case 'button': {
-      const btn = el('button', 'qy-card-btn');
+      const btn = el('button', 'qy-card-btn' + btnStyleClass(p.style));
       (btn as HTMLButtonElement).type = 'button';
-      btn.textContent = str(p.label);
-      btn.addEventListener('click', () => onAction(str(p.value ?? p.label)));
+      const label = str(p.label);
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        // action 优先；协议无效时回退 value（详见 actionUri.ts 的 fail-closed 说明）
+        const handled = executeActionUri(p.action, {
+          onMessage: onAction,
+          onCopied: () => flashLabel(btn, '已复制', label),
+          onCopyFailed: () => flashLabel(btn, '复制失败', label),
+        });
+        if (!handled) {
+          const fallback = str(p.value ?? p.label);
+          if (fallback) onAction(fallback);
+        }
+      });
       return btn;
     }
     case 'actions': {
