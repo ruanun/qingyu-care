@@ -92,7 +92,12 @@ class KnowledgeServiceUrlDocumentTest {
                 .map(org.springframework.ai.document.Document::getText)
                 .reduce("", (a, b) -> a + b);
         assertThat(rejoined).contains(marker);
-        assertThat(chunks.get(0).getMetadata()).containsEntry("documentId", "6");
+        // embeddingModel 是检索护栏用来排除"跨模型/未打标"向量的关键键（见 vector-reembed 特性），
+        // 缺这一个键该文档会被检索静默排除——本次改动最容易漏掉、也最该守住的一条
+        for (org.springframework.ai.document.Document chunk : chunks) {
+            assertThat(chunk.getMetadata()).containsEntry("documentId", "6");
+            assertThat(chunk.getMetadata()).containsEntry("embeddingModel", "qwen3.7-text-embedding");
+        }
     }
 
     @Test

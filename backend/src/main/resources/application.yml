@@ -51,6 +51,16 @@ spring:
     async:
       request-timeout: 180000
 
+  # 定时任务线程池：Spring Boot 默认单线程（1），全仓 6 个 @Scheduled 共用。
+  # 新增的网页同步调度器（WebPageSyncScheduler）每小时批量逐篇抓取+重嵌，耗时可能超过
+  # 数十秒；若仍是单线程，会顶掉同一时刻该跑的其它定时任务（如 RealtimePresenceRegistry
+  # 心跳续期 STALE 阈值 45s、WebhookStreamConsumer 200ms 轮询），造成在线坐席被误判成
+  # 僵尸、webhook 消费停摆。调大到 4，各 @Scheduled 任务不再互相阻塞。
+  task:
+    scheduling:
+      pool:
+        size: 4
+
   # Spring AI 配置 (使用 OpenAI 兼容模式)
   ai:
     openai:

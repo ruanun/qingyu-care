@@ -107,6 +107,32 @@ class WebPageSyncServiceTest {
         // 会再次判定"内容有变"并重试——而不是被永久误判为"已处理，跳过"
         assertThat(doc.getContentHash()).isEqualTo("HASH_A");
         assertThat(doc.getContentHash()).isNotEqualTo("HASH_B");
+        // 重嵌失败也要计入失败计数、接入 MAX_FAILURES 熔断——否则永远嵌不进去的网页
+        // 会被每小时重试到天荒地老，永远碰不到自动转手动
+        assertThat(doc.getSyncFailureCount()).isEqualTo(4);   // 3 → 4
+        assertThat(doc.getErrorMessage()).contains("重新嵌入失败");
+    }
+
+    @Test
+    void 抓取总成功但重嵌总失败时失败计数持续累积不会卡在1() {
+        // 回归本次修复前的一个真实陷阱：若在"抓取成功"处就立刻把 syncFailureCount 清零，
+        // 那么"抓取总成功、重嵌总失败"这种场景会让计数每轮都被重置后只加到 1，永远到不了
+        // MAX_FAILURES，熔断形同虚设——必须等本轮真正确认成功（内容未变 / 重嵌完成）才清零
+        Document doc = urlDoc("HASH_A");
+        doc.setSyncFailureCount(0);
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        doAnswer(inv -> {
+            doc.setStatus(DocumentStatus.FAILED);
+            return null;
+        }).when(knowledgeService).processDocument(1L);
+
+        service.syncDocument(1L);
+        assertThat(doc.getSyncFailureCount()).isEqualTo(1);
+
+        service.syncDocument(1L);   // 第二轮：抓取依旧成功（HASH_B 不变），重嵌依旧失败
+        assertThat(doc.getSyncFailureCount()).isEqualTo(2);   // 而不是被"抓取成功"重置回 1
     }
 
     @Test
