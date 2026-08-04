@@ -7,7 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.AsyncHandlerInterceptor;
 
 /**
  * 租户拦截器
@@ -15,7 +15,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
  */
 @Component
 @Slf4j
-public class TenantInterceptor implements HandlerInterceptor {
+public class TenantInterceptor implements AsyncHandlerInterceptor {
     
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -61,6 +61,17 @@ public class TenantInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         // 清理 ThreadLocal，避免内存泄漏
+        TenantContext.clear();
+    }
+
+    /**
+     * 异步请求（DeferredResult/流式响应等）转入 ASYNC 分发时，DispatcherServlet 只调用本方法，
+     * 不调用 afterCompletion —— 原始 Tomcat 工作线程上的 ThreadLocal 若不在此清理，会带着
+     * 上一个请求的租户上下文回到线程池，被复用它的下一个请求（例如无租户上下文的平台管理员）
+     * 静默继承脏值。afterCompletion 仍然覆盖同步请求与 ASYNC 二次分发完成后的清理，二者互补。
+     */
+    @Override
+    public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response, Object handler) {
         TenantContext.clear();
     }
 }
