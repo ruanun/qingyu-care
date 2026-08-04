@@ -7,6 +7,7 @@ import com.qingyu.care.dto.UiPart;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.exception.BusinessException;
+import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -51,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import com.qingyu.care.event.WebhookDomainEvent;
 
 import java.time.LocalDateTime;
@@ -369,46 +371,60 @@ public class ChatServiceImpl implements ChatService {
         // 请求线程内捕获（Reactor 线程无 ThreadLocal 上下文，回退分支要手动搬运）
         final Long tenantIdForFallback = TenantContext.getTenantId();
         final Long appIdForFallback = TenantContext.getAppId();
+        final DocumentVisibility accessLevelForFallback = TenantContext.getAccessLevel();
 
         return Flux.defer(() -> {
-            // splitter 与累加器有状态，必须每次订阅各持一份，否则重复订阅会串状态
+            // splitter/累加器/emitted 均有状态，必须每次订阅各持一份，否则重复订阅会串状态；
+            // onErrorResume 一并挪进来（而非挂在 Flux.defer 外层），好让它能读到本次订阅专属的 emitted
             StreamingSpecSplitter splitter = new StreamingSpecSplitter(objectMapper);
             StringBuilder acc = new StringBuilder();
+            java.util.concurrent.atomic.AtomicBoolean emitted =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
             Flux<ChatStreamEvent> body = meterContentStream(source, onTokensUsed)
                     .doOnNext(acc::append)
                     .concatMap(chunk -> Flux.fromIterable(splitter.accept(chunk)))
-                    .concatWith(Flux.defer(() -> Flux.fromIterable(splitter.flush())));
+                    .concatWith(Flux.defer(() -> Flux.fromIterable(splitter.flush())))
+                    // 已经吐给客户端至少一个事件：回退会把完整答案整段重发，与已发内容重叠拼接成
+                    // 「半截+完整」，只有目标缺陷那种「首个 chunk 合并即炸、一个字节没吐出去」的场景才能安全回退
+                    .doOnNext(evt -> emitted.set(true));
             // 落库排在正文之后（DONE 的 messageId 必然有效）；客户端中断时该 Mono 根本不会被订阅，
             // 半截回复自然不落库（与改造前 doOnComplete 语义一致）
             Mono<ChatStreamEvent> done = Mono.fromCallable(() -> persistStreamedMessages(
                     session, userMessage, acc.toString(), maxScore, hitDocumentIds));
-            return Flux.concat(Flux.just(startEvent), body, done);
-        }).onErrorResume(e -> {
-            // 固定文案，绝不回传原始异常（widget 运行在客户网页里）；详情只进日志
-            log.warn("流式对话失败 sessionId={}: {}", session.getSessionId(), e.getMessage(), e);
-            if (tools.isEmpty()) {
-                return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
-            }
-            // 已知上游缺陷：Spring AI 2.0 合并含 tool_call 的流式 chunk 时抛 NoSuchElementException
-            // （spring-projects/spring-ai#4790，修复 PR #4794 未合并、2.0.0 已是最新稳定版）。
-            // 挂了工具的这一轮降级为非流式重跑，保住工具能力；无工具场景不走此路，
-            // 免得把真实故障静默重跑掩盖掉。上游修复后可整段删除。
-            return fallbackToNonStreaming(request, session, tenantIdForFallback, appIdForFallback);
+            return Flux.concat(Flux.just(startEvent), body, done)
+                    .onErrorResume(e -> {
+                        // 固定文案，绝不回传原始异常（widget 运行在客户网页里）；详情只进日志
+                        log.warn("流式对话失败 sessionId={}: {}", session.getSessionId(), e.getMessage(), e);
+                        if (tools.isEmpty() || emitted.get()) {
+                            return Flux.just(ChatStreamEvent.error("回复生成失败，请稍后重试"));
+                        }
+                        // 已知上游缺陷：Spring AI 2.0 合并含 tool_call 的流式 chunk 时抛 NoSuchElementException
+                        // （spring-projects/spring-ai#4790，修复 PR #4794 未合并、2.0.0 已是最新稳定版）。
+                        // 挂了工具且尚未吐出任何正文的这一轮降级为非流式重跑，保住工具能力；
+                        // 无工具、或已经吐过内容，均不走此路——前者免得把真实故障静默重跑掩盖掉，
+                        // 后者是为了不把内容拼两遍。
+                        return fallbackToNonStreaming(request, session, tenantIdForFallback,
+                                appIdForFallback, accessLevelForFallback);
+                    });
         });
     }
 
     /**
-     * 流式失败后的非流式兜底：在 Reactor 线程临时恢复租户上下文，用非流式 chat() 重跑一轮，
+     * 流式失败后的非流式兜底：在独立线程临时恢复租户上下文，用非流式 chat() 重跑一轮，
      * 把完整结果补发为 DELTA/CARD/DONE 事件（START 已在流首发出，此处不再补）。
      * <p>ThreadLocal 必须 finally 清理：boundedElastic 线程复用，漏清会把租户上下文泄漏给后续请求。
+     * <p>{@code subscribeOn(boundedElastic())}：调用方（Spring AI 发流的线程，生产上可能是事件循环线程）
+     * 不能被 {@code self.chat(...)} 这个阻塞的非流式 LLM 往返占用一整轮；隔离到独立线程还顺带避免了
+     * ThreadLocal 的 set/clear 在同步订阅下误伤调用方自己线程上的上下文。
      */
     Flux<ChatStreamEvent> fallbackToNonStreaming(ChatRequest request, ChatSession session,
-                                                 Long tenantId, Long appId) {
+                                                 Long tenantId, Long appId, DocumentVisibility accessLevel) {
         return Mono.fromCallable(() -> {
             List<ChatStreamEvent> events = new ArrayList<>();
             try {
                 TenantContext.setTenantId(tenantId);
                 TenantContext.setAppId(appId);
+                TenantContext.setAccessLevel(accessLevel);
                 // 钉住会话：START 已把该 sessionId 发给客户端，回退不能另起新会话
                 request.setSessionId(session.getSessionId());
                 ChatResponse resp = self.chat(request);          // 走代理，保事务
@@ -429,7 +445,8 @@ public class ChatServiceImpl implements ChatService {
                 TenantContext.clear();   // 必须无条件清理
             }
             return events;
-        }).flatMapMany(Flux::fromIterable)
+        }).subscribeOn(Schedulers.boundedElastic())
+          .flatMapMany(Flux::fromIterable)
           .onErrorResume(e2 -> {
               // 兜底的兜底：回退本身再失败就老实报错，不再递归
               log.warn("非流式回退同样失败 sessionId={}: {}", session.getSessionId(), e2.getMessage(), e2);
