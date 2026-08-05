@@ -108,8 +108,11 @@ class ChatAttachmentServiceTest {
     void 关联消息时附件不存在则拒绝() {
         when(attachmentRepository.findById(7L)).thenReturn(Optional.empty());
 
+        // 必须断到 ResourceNotFoundException（404），不能只断父类 BusinessException：
+        // 后者退化成 HTTP 200+code400，与下面越权分支抛的 404 之间就有了存在性差分，
+        // 「与查不到同语义、防枚举探测」这道设计当场失效——而断父类抓不住这个退化。
         assertThatThrownBy(() -> service.attachToMessage(List.of(7L), "s-1", 100L))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
 
         verify(attachmentRepository, never()).save(any());
     }
@@ -315,8 +318,16 @@ class ChatAttachmentServiceTest {
 
     // ---------- upload ----------
 
+    /**
+     * 落库字段的唯一断言点，故 contentType/宽高（取自 validator）之外，把 sessionId 与
+     * uploaderRole（取自调用方入参）也一起钉住：{@code uploaderRole} 一旦被写死成
+     * {@code USER}，坐席/管理端上传的附件会全被记成用户上传，而 {@code ChatAttachmentIT}
+     * 只断 tenantId/appId、照不到这处。
+     * <p>刻意传 {@code AGENT} 而非 {@code USER}——传 USER 的话「写死成 USER」的实现也能通过，
+     * 断言等于没写。
+     */
     @Test
-    void 上传时落库的contentType宽高全部取自validator不取客户端声明值() {
+    void 上传时落库字段取自validator与调用方入参不取客户端声明值() {
         byte[] bytes = "fake-image-bytes".getBytes();
         MultipartFile file = new MockMultipartFile("file", "a.png", "image/gif", bytes); // 客户端谎报 gif
         AttachmentValidator.ValidatedFile validated =
@@ -326,7 +337,7 @@ class ChatAttachmentServiceTest {
         when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
         when(attachmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.upload("s-1", file, MessageRole.USER);
+        service.upload("s-1", file, MessageRole.AGENT);
 
         verify(validator).validate(bytes, "a.png");
         ArgumentCaptor<ChatAttachment> captor = ArgumentCaptor.forClass(ChatAttachment.class);
@@ -334,6 +345,8 @@ class ChatAttachmentServiceTest {
         assertThat(captor.getValue().getContentType()).isEqualTo("image/png");
         assertThat(captor.getValue().getWidth()).isEqualTo(100);
         assertThat(captor.getValue().getHeight()).isEqualTo(200);
+        assertThat(captor.getValue().getSessionId()).isEqualTo("s-1");
+        assertThat(captor.getValue().getUploaderRole()).isEqualTo(MessageRole.AGENT);
     }
 
     @Test
