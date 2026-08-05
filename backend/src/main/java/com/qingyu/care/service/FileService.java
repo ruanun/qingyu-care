@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
@@ -55,6 +56,36 @@ public class FileService {
         
         log.info("文件上传成功: {} -> {}", originalFilename, fileInfo.getUrl());
         return fileInfo;
+    }
+
+    /**
+     * 上传聊天附件。与知识库文档分开放在 chat/ 前缀下（实际对象键带全局 base-path 前缀）。
+     *
+     * @return S3 对象键，供后续 openStream/deleteFile 使用
+     */
+    public String uploadChatBytes(byte[] bytes, String originalFilename, String contentType) {
+        String path = generateFilePath("chat");
+        String filename = generateFileName(originalFilename);
+
+        FileInfo fileInfo = fileStorageService.of(bytes)
+                .setPath(path)
+                .setSaveFilename(filename)
+                .setContentType(contentType)
+                .upload();
+
+        log.info("聊天附件上传成功: {} -> {}", originalFilename, fileInfo.getUrl());
+        return fileInfo.getUrl();
+    }
+
+    /**
+     * 流式读取对象。附件最大 20MB，用 byte[] 会让每个并发请求都吃满一份堆内存。
+     */
+    public InputStream openStream(String storageKey) {
+        GetObjectRequest request = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(storageKey)
+                .build();
+        return s3Client.getObject(request);
     }
 
     /**
