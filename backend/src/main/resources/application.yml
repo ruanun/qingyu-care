@@ -150,6 +150,14 @@ qingyu:
         # Redis 故障冷却时长（毫秒）：冷却期内直接直投
         failure-cooldown-ms: 5000
 
+    # 聊天附件
+    attachment:
+      # 「传了没发送」的孤儿保留时长（小时），超过即连同 S3 对象一起删
+      orphan-retain-hours: 24
+      # 清理任务首次延迟与间隔（毫秒）
+      cleanup-initial-delay-ms: 600000
+      cleanup-interval-ms: 3600000
+
     # 结构化卡片配置
     cards:
       # 是否向系统 Prompt 注入卡片能力片段（仅非流式 chat() 生效，streamChat 恒不注入）
