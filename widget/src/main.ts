@@ -56,8 +56,13 @@ async function init(): Promise<void> {
       }
       // 坐席消息目前后端标 role=ASSISTANT，但 MessageRole 枚举本有 AGENT；
       // 两者都当坐席消息渲染，防止后端未来切换标注值时客户端静默丢消息。
+      //
+      // attachments 必须原样透传：后端 RealtimeNotifier#messageJson 是在推送那一刻现查附件
+      // 塞进 payload 的（ChatServiceImpl#agentReply 特意把 attachToMessage 排在 toUserMessage
+      // 之前就是为了让这一查查得到），这里丢掉字段等于让坐席发的图只剩文本气泡、且无任何提示，
+      // 只有刷新页面走 getSession → restoreHistory 才看得见。
       if (event === 'message' && (p.role === 'ASSISTANT' || p.role === 'AGENT')) {
-        ui.addAgentMessage(p.content);
+        ui.addAgentMessage(p.content, p.attachments as WidgetAttachment[] | undefined);
       } else if (event === 'session') {
         ui.showSessionState(p.text || sessionStateText(p.kind));
       } else if (event === 'typing' && p.from === 'agent') {
