@@ -51,7 +51,8 @@ class AttachmentValidatorTest {
 
     @Test
     void 合法PNG通过并读出宽高() throws Exception {
-        AttachmentValidator.ValidatedFile r = validator.validate(pngBytes(800, 600), "截图.png");
+        // 大写扩展名：手机相机文件名普遍是 IMG_2024.JPG 这类，扩展名匹配必须大小写不敏感
+        AttachmentValidator.ValidatedFile r = validator.validate(pngBytes(800, 600), "截图.PNG");
 
         assertThat(r.contentType()).isEqualTo("image/png");
         assertThat(r.image()).isTrue();
@@ -65,6 +66,16 @@ class AttachmentValidatorTest {
         byte[] exe = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00, 0x03, 0x00, 0x00, 0x00};
 
         assertThatThrownBy(() -> validator.validate(exe, "photo.jpg"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("文件内容与扩展名不符");
+    }
+
+    @Test
+    void 可执行文件改名成pdf被拒() {
+        // 与上面图片分支对称：文件分支的 MIME 比对同样不能被绕过，否则这道防线只守了一半
+        byte[] exe = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00, 0x03, 0x00, 0x00, 0x00};
+
+        assertThatThrownBy(() -> validator.validate(exe, "report.pdf"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("文件内容与扩展名不符");
     }
@@ -135,6 +146,40 @@ class AttachmentValidatorTest {
         assertThatThrownBy(() -> validator.validate("hello".getBytes(StandardCharsets.UTF_8), "noext"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不支持的文件类型");
+    }
+
+    @Test
+    void 文件名为null被拒() {
+        // MultipartFile#getOriginalFilename() 按 Spring 契约允许返回 null，不能让它变成 NPE 逃出 validate
+        assertThatThrownBy(() -> validator.validate("hello".getBytes(StandardCharsets.UTF_8), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的文件类型");
+    }
+
+    @Test
+    void 压缩文件6MB通过() {
+        byte[] zip = new byte[6 * 1024 * 1024];
+        zip[0] = 0x50; // "PK\x03\x04" 是 zip 的魔数
+        zip[1] = 0x4B;
+        zip[2] = 0x03;
+        zip[3] = 0x04;
+
+        AttachmentValidator.ValidatedFile r = validator.validate(zip, "archive.zip");
+
+        assertThat(r.image()).isFalse();
+    }
+
+    @Test
+    void 压缩文件21MB被拒() {
+        byte[] zip = new byte[21 * 1024 * 1024];
+        zip[0] = 0x50;
+        zip[1] = 0x4B;
+        zip[2] = 0x03;
+        zip[3] = 0x04;
+
+        assertThatThrownBy(() -> validator.validate(zip, "archive.zip"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("文件不能超过 20MB");
     }
 
     @Test
