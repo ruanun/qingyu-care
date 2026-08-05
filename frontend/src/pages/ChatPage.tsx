@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Square, User, Bot, Loader2, Info, Database, UserPen, AlertCircle } from 'lucide-react';
+import { Send, Square, User, Bot, Loader2, Info, Database, UserPen, AlertCircle, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -8,23 +8,15 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { chatService } from '@/api/chat';
-import type { ChatMessage, ChatMessageEntity, KnowledgeHit, UiNode, UiPart } from '@/types';
+import type { ChatMessage, ChatMessageEntity, KnowledgeHit, UiNode, Attachment } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { JsonRender } from '@/components/chat/JsonRender';
 import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
+import { Attachments } from '@/components/chat/Attachments';
 import { loadChatSession, saveChatSession, clearChatSession } from '@/lib/chatSession';
 import { streamChat } from '@/lib/chatStream';
-
-/** 解析历史消息的 uiSpec JSON 字符串为 UiPart[]；空/损坏时返回 undefined（fail-soft，退纯文本渲染）。 */
-function parseUiSpec(uiSpec?: string | null): UiPart[] | undefined {
-    if (!uiSpec) return undefined;
-    try {
-        return JSON.parse(uiSpec) as UiPart[];
-    } catch {
-        return undefined;
-    }
-}
+import { parseUiSpec } from '@/lib/uiSpec';
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -34,7 +26,10 @@ const ChatPage: React.FC = () => {
     const [isWaitingAgent, setIsWaitingAgent] = useState(false);
     const [suggestHandover, setSuggestHandover] = useState(false);
     const [knowledgeHitsMap, setKnowledgeHitsMap] = useState<Record<number, KnowledgeHit[]>>({});
+    const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+    const [isUploading, setIsUploading] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
     const userId = 'user_001'; // Mock user ID
@@ -63,6 +58,7 @@ const ChatPage: React.FC = () => {
                         content: m.content,
                         createdAt: m.createdAt,
                         uiParts: parseUiSpec(m.uiSpec),
+                        attachments: m.attachments,
                     }));
                     // 仅当用户尚未开始对话(messages 仍为空)时才采纳历史快照，
                     // 避免历史 GET 晚于用户已发的新消息返回、整体覆盖掉刚发的乐观消息(竞态)。
@@ -99,8 +95,11 @@ const ChatPage: React.FC = () => {
         if (!text.trim() || isLoading) return;
 
         const now = Date.now();
+        const attachments = pendingAttachments;
+        const attachmentIds = attachments.map((a) => a.id);
         const userMessage: ChatMessage = {
             id: now, role: 'USER', content: text, createdAt: new Date().toISOString(),
+            attachments: attachments.length ? attachments : undefined,
         };
         const placeholderId = now + 1;
         const placeholder: ChatMessage = {
@@ -109,13 +108,17 @@ const ChatPage: React.FC = () => {
 
         setMessages((prev) => [...prev, userMessage, placeholder]);
         setInput('');
+        setPendingAttachments([]);
         setIsLoading(true);
 
         const controller = new AbortController();
         abortRef.current = controller;
 
         try {
-            await streamChat({ userId, sessionId, message: text }, {
+            await streamChat({
+                userId, sessionId, message: text,
+                attachmentIds: attachmentIds.length ? attachmentIds : undefined,
+            }, {
                 onStart: (d) => {
                     setSessionId(d.sessionId);
                     saveChatSession(userId, d.sessionId);
@@ -154,6 +157,32 @@ const ChatPage: React.FC = () => {
 
     // 卡片按钮回填：把按钮 value/label 作为用户消息重新发送
     const handleAction = (value: string) => send(value);
+
+    // 附件选中即上传（不等发送），拿到 id 存进 pendingAttachments 供发送时一并提交。
+    // sessionId 必填不能空串，故须等首条消息发出、会话建立后才允许上传（按钮同步禁用）。
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // 允许连续选择同一个文件
+        if (!file || !sessionId) return;
+        setIsUploading(true);
+        try {
+            const res = await chatService.uploadChatFile(sessionId, file);
+            if (res.code === 200) {
+                setPendingAttachments((prev) => [...prev, res.data]);
+            } else {
+                toast({ variant: 'destructive', title: '上传失败', description: res.message });
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: 'destructive', title: '上传失败', description: message });
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const removePendingAttachment = (id: number) => {
+        setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    };
 
     const handleRequestHandover = async () => {
         if (!sessionId) return;
@@ -229,6 +258,7 @@ const ChatPage: React.FC = () => {
                                             )
                                             : msg.content}
                                     </div>
+                                    <Attachments items={msg.attachments} />
                                     <span className="text-[10px] text-muted-foreground px-1">
                                         {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </span>
@@ -285,7 +315,32 @@ const ChatPage: React.FC = () => {
                                     </Button>
                                 </div>
                             )}
+                            {pendingAttachments.length > 0 && (
+                                <div className="max-w-3xl mx-auto">
+                                    <Attachments
+                                        items={pendingAttachments}
+                                        onRemove={removePendingAttachment}
+                                        compact
+                                    />
+                                </div>
+                            )}
                             <div className="max-w-3xl mx-auto flex gap-3">
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    hidden
+                                    onChange={handleFileSelect}
+                                />
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-12 w-12 rounded-xl shrink-0"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isLoading || isUploading || !sessionId}
+                                    title={sessionId ? '添加附件' : '发送第一条消息后才能添加附件'}
+                                >
+                                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                                </Button>
                                 <div className="relative flex-1">
                                     <Input
                                         placeholder="键入消息以开始对话..."

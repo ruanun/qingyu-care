@@ -36,16 +36,31 @@ export interface ChatMessage {
     content: string;
     createdAt: string;
     uiParts?: UiPart[];
+    attachments?: Attachment[];
 }
 
-// 会话历史原始消息实体：GET /chat/session/{id}/messages 返回的后端 ChatMessage 实体，
-// uiSpec 是结构化卡片 uiParts 的 JSON 原始字符串（未解析，可空），需前端自行 JSON.parse。
+// 会话历史消息：GET /chat/session/{id}/messages 返回的 ChatMessageDTO（MM-6 起不再是裸实体，
+// attachments 由后端按 messageId 批量组装好一并返回）。
+// uiSpec 是结构化卡片 uiParts 的 JSON 原始字符串（未解析，可空），需前端自行 JSON.parse（见 lib/uiSpec.ts）。
 export interface ChatMessageEntity {
     id: number;
     role: MessageRole;
     content: string;
     createdAt: string;
     uiSpec?: string | null;
+    attachments?: Attachment[];
+}
+
+// 消息附件（图片/文件）。⚠️ 不含 url：下载端点是请求头鉴权（satoken/X-Api-Key），
+// 浏览器原生 <img src>/<a href> 不会带自定义头，客户端须自行 fetch blob 再 URL.createObjectURL
+// （见 components/chat/Attachments.tsx）。width/height 对 webp 恒为 null（JDK ImageIO 无解码器）。
+export interface Attachment {
+    id: number;
+    fileName: string;
+    contentType: string;
+    fileSize: number;
+    width?: number | null;
+    height?: number | null;
 }
 
 // 结构化卡片：AI 回复的有序 text/ui 片段（Task 3 渲染引擎消费）

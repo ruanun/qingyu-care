@@ -25,6 +25,8 @@ export interface ChatStreamRequest {
   userId: string;
   sessionId?: string;
   message: string;
+  // 本条消息携带的附件 id（先经 chatService.uploadChatFile 上传拿到）。可空。
+  attachmentIds?: number[];
 }
 
 /**

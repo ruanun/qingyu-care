@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UserPen, AlertCircle, Send, User, RefreshCw, Loader2 } from 'lucide-react';
+import { UserPen, AlertCircle, Send, User, RefreshCw, Loader2, Paperclip } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,9 +7,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { agentService } from '@/api/agent';
 import { chatService } from '@/api/chat';
 import { connectSse } from '@/lib/sse';
-import type { ChatSession, ChatMessage, MessageRole } from '@/types';
+import type { ChatSession, ChatMessage, ChatMessageEntity, MessageRole, Attachment } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { JsonRender } from '@/components/chat/JsonRender';
+import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
+import { Attachments } from '@/components/chat/Attachments';
+import { parseUiSpec } from '@/lib/uiSpec';
 
 const AgentPage: React.FC = () => {
     const [waitingSessions, setWaitingSessions] = useState<ChatSession[]>([]);
@@ -19,6 +23,9 @@ const AgentPage: React.FC = () => {
     const [isSending, setIsSending] = useState(false);
     const [unread, setUnread] = useState<Record<string, number>>({});
     const [onlineCount, setOnlineCount] = useState(0);
+    const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+    const [isUploading, setIsUploading] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
     const selectedRef = useRef<ChatSession | null>(null);
@@ -50,6 +57,8 @@ const AgentPage: React.FC = () => {
                             role: payload.role as MessageRole,
                             content: payload.content as string,
                             createdAt: payload.createdAt as string,
+                            uiParts: parseUiSpec(payload.uiSpec as string | null | undefined),
+                            attachments: payload.attachments as Attachment[] | undefined,
                         }]);
                     } else if (sid) {
                         setUnread((prev) => ({ ...prev, [sid]: (prev[sid] ?? 0) + 1 }));
@@ -92,8 +101,17 @@ const AgentPage: React.FC = () => {
             const res = await agentService.acceptSession(session.sessionId);
             if (res.code === 200) {
                 setSelectedSession(res.data);
+                setPendingAttachments([]); // 切会话时清掉上一个会话残留的待发附件
                 const msgs = await chatService.getSessionMessages(session.sessionId);
-                setMessages(msgs.code === 200 ? msgs.data : []);
+                // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好
+                setMessages(msgs.code === 200 ? msgs.data.map((m: ChatMessageEntity) => ({
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    createdAt: m.createdAt,
+                    uiParts: parseUiSpec(m.uiSpec),
+                    attachments: m.attachments,
+                })) : []);
                 clearUnread(session.sessionId);
                 fetchWaitingSessions();
             }
@@ -102,16 +120,51 @@ const AgentPage: React.FC = () => {
         }
     };
 
+    // 卡片按钮回填：坐席不是对话的发起方，点击历史卡片按钮不代表要替用户发消息，
+    // 而是把内容填进回复框供坐席确认/编辑后再手动发送（与 ChatPage 的自动直发语义刻意不同）。
+    const handleAction = (value: string) => {
+        setReplyInput((prev) => (prev ? `${prev} ${value}` : value));
+    };
+
+    // 附件选中即上传，拿到 id 存进 pendingAttachments 供回复时一并提交；须已接管会话才可上传。
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file || !selectedSession) return;
+        setIsUploading(true);
+        try {
+            const res = await chatService.uploadChatFile(selectedSession.sessionId, file);
+            if (res.code === 200) {
+                setPendingAttachments((prev) => [...prev, res.data]);
+            } else {
+                toast({ variant: 'destructive', title: '上传失败', description: res.message });
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast({ variant: 'destructive', title: '上传失败', description: message });
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const removePendingAttachment = (id: number) => {
+        setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+    };
+
     const handleSendReply = async () => {
         if (!replyInput.trim() || !selectedSession) return;
 
         const content = replyInput;
+        const attachments = pendingAttachments;
+        const attachmentIds = attachments.map((a) => a.id);
         setReplyInput('');
+        setPendingAttachments([]);
         setIsSending(true);
         try {
             await agentService.agentReply({
                 sessionId: selectedSession.sessionId,
                 message: content,
+                attachmentIds: attachmentIds.length ? attachmentIds : undefined,
             });
 
             // 本地乐观追加（坐席不订阅会话消息流，用临时 id 即可）
@@ -120,10 +173,12 @@ const AgentPage: React.FC = () => {
                 role: 'ASSISTANT',
                 content,
                 createdAt: new Date().toISOString(),
+                attachments: attachments.length ? attachments : undefined,
             }]);
             toast({ title: '消息已发送' });
         } catch (error: any) {
             setReplyInput(content); // 发送失败回滚输入
+            setPendingAttachments(attachments); // 附件也回滚，避免用户重新上传
             toast({ variant: 'destructive', title: '发送失败', description: error.message });
         } finally {
             setIsSending(false);
@@ -137,6 +192,7 @@ const AgentPage: React.FC = () => {
             toast({ title: '会话已结束' });
             setSelectedSession(null);
             setMessages([]);
+            setPendingAttachments([]);
         } catch (error: any) {
             toast({ variant: 'destructive', title: '操作失败', description: error.message });
         }
@@ -150,6 +206,7 @@ const AgentPage: React.FC = () => {
                 toast({ title: '已交还 AI' });
                 setSelectedSession(null);
                 setMessages([]);
+                setPendingAttachments([]);
                 fetchWaitingSessions();
             }
         } catch (error: any) {
@@ -251,12 +308,24 @@ const AgentPage: React.FC = () => {
                                             {msg.role === 'USER' ? <User className="w-4 h-4" /> : <UserPen className="w-4 h-4" />}
                                         </div>
                                         <div className={cn(
-                                            "px-4 py-2 rounded-2xl text-sm max-w-[70%]",
-                                            msg.role === 'USER'
-                                                ? "bg-muted rounded-tl-none"
-                                                : "bg-blue-500 text-white rounded-tr-none"
+                                            "flex flex-col gap-1 max-w-[70%]",
+                                            msg.role === 'USER' ? "items-start" : "items-end"
                                         )}>
-                                            {msg.content}
+                                            <div className={cn(
+                                                "px-4 py-2 rounded-2xl text-sm",
+                                                msg.role === 'USER'
+                                                    ? "bg-muted rounded-tl-none"
+                                                    : "bg-blue-500 text-white rounded-tr-none"
+                                            )}>
+                                                {msg.uiParts?.length ? (
+                                                    <CardErrorBoundary fallback={msg.content}>
+                                                        <JsonRender parts={msg.uiParts} onAction={handleAction} />
+                                                    </CardErrorBoundary>
+                                                ) : (
+                                                    <span>{msg.content}</span>
+                                                )}
+                                            </div>
+                                            <Attachments items={msg.attachments} />
                                         </div>
                                     </div>
                                 ))}
@@ -265,7 +334,32 @@ const AgentPage: React.FC = () => {
 
                         {/* 输入区域 */}
                         <div className="p-4 border-t bg-muted/20">
+                            {pendingAttachments.length > 0 && (
+                                <div className="max-w-2xl mx-auto mb-2">
+                                    <Attachments
+                                        items={pendingAttachments}
+                                        onRemove={removePendingAttachment}
+                                        compact
+                                    />
+                                </div>
+                            )}
                             <div className="max-w-2xl mx-auto flex gap-3">
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    hidden
+                                    onChange={handleFileSelect}
+                                />
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="shrink-0"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isSending || isUploading}
+                                    title="添加附件"
+                                >
+                                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+                                </Button>
                                 <Input
                                     placeholder="输入回复内容..."
                                     value={replyInput}

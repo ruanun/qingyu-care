@@ -1,7 +1,21 @@
 import api from './client';
-import type { ChatSession, ChatMessageEntity, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
+import type { ChatSession, ChatMessageEntity, Attachment, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
 
 export const chatService = {
+    // 上传消息附件（图片/文件），仅落库拿 id，不关联到具体消息；发消息时把返回的 id 塞进 attachmentIds
+    uploadChatFile: (sessionId: string, file: File): Promise<ApiResponse<Attachment>> => {
+        const form = new FormData();
+        form.append('sessionId', sessionId);
+        form.append('file', file);
+        // 不要手工设置 Content-Type，浏览器需要自己带 boundary
+        return api.post('/chat/files', form);
+    },
+
+    // 下载附件二进制。私有桶 + 请求头鉴权，<img src>/<a href> 拿不到；
+    // 这里用 axios 实例（自动带 satoken/X-App-Id）取 blob，调用方自行 URL.createObjectURL。
+    downloadAttachment: (id: number): Promise<Blob> =>
+        api.get(`/chat/files/${id}`, { responseType: 'blob' }),
+
     // 获取会话详情
     getSession: (sessionId: string): Promise<ApiResponse<ChatSession>> =>
         api.get(`/chat/session/${sessionId}`),

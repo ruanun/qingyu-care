@@ -4,6 +4,8 @@ import type { ChatSession, ApiResponse, PageResponse } from '../types';
 export interface AgentReplyRequest {
     sessionId: string;
     message: string;
+    // 本条回复携带的附件 id（先经 uploadChatFile 上传拿到）。可空。
+    attachmentIds?: number[];
 }
 
 export const agentService = {
