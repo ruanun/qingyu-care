@@ -49,6 +49,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -268,6 +269,17 @@ class StreamChatEventPipelineTest {
      * 落点仍是用户消息，且必须在调用 attachToMessage 那一刻把请求线程捕获的租户上下文正确恢复——
      * 否则 TenantOwnershipGuard.mutableInCurrentContext 在 ctxTenantId 为 null 时无条件放行，
      * 归属校验形同虚设（本仓库 fallbackToNonStreaming 已有的同类教训）。
+     * <p>I-1（终审发现）：source 必须显式 {@code .publishOn(Schedulers.boundedElastic())}——
+     * 不加的话，{@code transactionTemplate} 是直通桩、{@code source} 是 {@code Flux.just(...)}，
+     * 整条链会同步跑在**本测试自己的线程**上，而 {@code @BeforeEach} 早已在这个线程上
+     * {@code setTenantId(9L)}；此时即便把生产代码里 {@code persistStreamedMessages} 的三行
+     * {@code TenantContext.set*} 整段删掉，探针读到的仍是测试线程遗留的 9L——测试只守住了
+     * "调用了 attachToMessage"，守不住"租户上下文真的是搬运过去的而不是巧合地读到了别的线程
+     * 遗留值"。加上 publishOn 后落库那段真的跑在另一个线程，该线程没有测试的 @BeforeEach
+     * 遗留值，删掉三行 set 后探针会读到 null，断言随之转红——这才是本用例要守护的核心。
+     * <p>不再断言"方法返回后 TenantContext 清空"：restore 逻辑现在跑在 boundedElastic 线程上
+     * （M-2 改为恢复原值而非无条件 clear），测试线程的 TenantContext 从未被那段代码触碰，
+     * 断言它是否清空测的是错误的线程、恒为 9L（@BeforeEach 遗留），不具判别力。
      */
     @Test
     void 流式完整落库时用用户消息id关联附件_且恢复了请求线程的租户上下文() {
@@ -275,9 +287,10 @@ class StreamChatEventPipelineTest {
         stubTransactionPassThrough();
         stubSaveWithIdSequence();
         when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
-                Flux.just(SpringAiResponses.of("好的，收到", 5)));
+                Flux.just(SpringAiResponses.of("好的，收到", 5))
+                        .publishOn(reactor.core.scheduler.Schedulers.boundedElastic()));
 
-        List<Long> tenantIdSeenByGuard = new ArrayList<>();
+        List<Long> tenantIdSeenByGuard = new java.util.concurrent.CopyOnWriteArrayList<>();
         doAnswer(inv -> {
             tenantIdSeenByGuard.add(TenantContext.getTenantId());
             return null;
@@ -294,10 +307,9 @@ class StreamChatEventPipelineTest {
 
         // 第 1 条 save 是用户消息（id=1），落点必须是它，不是随后的 AI 消息（id=2）
         verify(chatAttachmentService).attachToMessage(eq(List.of(7L)), eq("s8"), eq(1L));
-        // Reactor 线程内执行 attachToMessage 时，租户上下文已被正确恢复为请求线程原有的 9L
+        // 在 boundedElastic 线程上执行 attachToMessage 时，租户上下文已被正确搬运为请求线程原有的 9L
+        // （该线程本身没有这个值——不搬运就会读到 null，见上方 javadoc）
         assertThat(tenantIdSeenByGuard).containsExactly(9L);
-        // 方法返回后必须清理，不留给复用线程的下一轮请求
-        assertThat(TenantContext.getTenantId()).isNull();
     }
 
     @Test
@@ -317,5 +329,65 @@ class StreamChatEventPipelineTest {
                 .verifyComplete();
 
         verify(chatAttachmentService, never()).attachToMessage(any(), any(), any());
+    }
+
+    /**
+     * C-1 预校验：附件非法（存在性/租户归属/会话归属）时 streamChat 必须在流开始前
+     * **同步抛出**，不能进入 Flux 管道——否则用户要等一整轮回复流完才在 DONE 处静默失去这条对话
+     * （见 persistStreamedMessages 的 fail-soft 兜底）。同步抛出意味着模型压根不会被调用。
+     */
+    @Test
+    void 附件预校验失败时streamChat同步抛出_不进入模型调用() {
+        ChatSession session = ChatSession.builder().sessionId("s12")
+                .status(SessionStatus.AI_PROCESSING).build();
+        session.setTenantId(9L);
+        when(sessionRepository.findBySessionId("s12")).thenReturn(Optional.of(session));
+        org.mockito.Mockito.doThrow(new com.qingyu.care.exception.BusinessException("附件不属于当前会话"))
+                .when(chatAttachmentService).validateAttachable(eq(List.of(99L)), eq("s12"));
+
+        assertThatThrownBy(() -> service.streamChat(
+                ChatRequest.builder().sessionId("s12").message("图在这")
+                        .attachmentIds(List.of(99L)).build(),
+                tokens -> { }, tokens -> { }))
+                .isInstanceOf(com.qingyu.care.exception.BusinessException.class)
+                .hasMessageContaining("附件不属于当前会话");
+
+        verify(modelRouterService, never()).streamWithFallback(any(), any());
+    }
+
+    /**
+     * C-1 fail-soft：即便过了预校验，真正 attachToMessage 那一刻仍可能失败（如同一批附件被
+     * 并发重复提交的残余竞态）。这种失败不能连累整轮已经流式吐给用户的回复——DONE 事件必须
+     * 仍带真实 messageId（消息正常落库），而不是本仓库既有 fail-soft catch 兜底出的 null。
+     */
+    @Test
+    void 流式主路径附件关联失败时对话仍正常落库_不因附件失败丢失整轮回复() {
+        stubPipelineSession("s13");
+        stubTransactionPassThrough();
+        stubSaveWithIdSequence();
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("已收到", 5))
+                        .publishOn(reactor.core.scheduler.Schedulers.boundedElastic()));
+        org.mockito.Mockito.doThrow(new com.qingyu.care.exception.BusinessException("附件已被使用"))
+                .when(chatAttachmentService).attachToMessage(any(), any(), any());
+
+        java.util.concurrent.atomic.AtomicReference<ChatStreamEvent> doneEvent =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s13").message("图在这")
+                                .attachmentIds(List.of(7L)).build(),
+                        tokens -> { }, tokens -> { }))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
+                .assertNext(e -> {
+                    assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DONE);
+                    doneEvent.set(e);
+                })
+                .verifyComplete();
+
+        // 附件关联失败被降级为 fail-soft：DONE 事件仍带真实 messageId，不是"整轮丢失"的 null
+        assertThat(((ChatStreamEvent.Done) doneEvent.get().payload()).messageId()).isNotNull();
+        // userMsg + aiMsg 两条都正常落库了
+        verify(messageRepository, times(2)).save(any());
     }
 }

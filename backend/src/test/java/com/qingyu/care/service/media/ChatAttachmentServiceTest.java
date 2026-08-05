@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
@@ -229,6 +230,87 @@ class ChatAttachmentServiceTest {
         // 可验证的部分——循环真的处理到了 id=7 才在 id=8 处失败，而不是提前中断。
         verify(attachmentRepository).save(same(a1));
         verify(attachmentRepository, never()).save(same(a2));
+    }
+
+    // ---------- validateAttachable（C-1：streamChat 流开始前的预校验）----------
+
+    @Test
+    void 预校验时会话不匹配则拒绝() {
+        when(attachmentRepository.findById(7L))
+                .thenReturn(Optional.of(attachment(7L, "别人的会话", null)));
+
+        assertThatThrownBy(() -> service.validateAttachable(List.of(7L), "我的会话"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("附件不属于当前会话");
+    }
+
+    @Test
+    void 预校验时附件不存在则拒绝() {
+        when(attachmentRepository.findById(7L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.validateAttachable(List.of(7L), "s-1"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void 预校验时附件跨租户则拒绝() {
+        ChatAttachment a = attachment(7L, "s-1", null);
+        a.setTenantId(999L);
+        when(attachmentRepository.findById(7L)).thenReturn(Optional.of(a));
+        TenantContext.setTenantId(1L);
+
+        assertThatThrownBy(() -> service.validateAttachable(List.of(7L), "s-1"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void 预校验时会话标识为空则拒绝() {
+        assertThatThrownBy(() -> service.validateAttachable(List.of(7L), null))
+                .isInstanceOf(BusinessException.class);
+
+        verifyNoInteractions(attachmentRepository);
+    }
+
+    @Test
+    void 预校验附件数超过上限则拒绝() {
+        List<Long> tooMany = List.of(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
+
+        assertThatThrownBy(() -> service.validateAttachable(tooMany, "s-1"))
+                .isInstanceOf(BusinessException.class);
+
+        verifyNoInteractions(attachmentRepository);
+    }
+
+    @Test
+    void 预校验附件为空列表时什么都不做() {
+        service.validateAttachable(List.of(), "s-1");
+        service.validateAttachable(null, "s-1");
+
+        verifyNoInteractions(attachmentRepository);
+    }
+
+    @Test
+    void 预校验通过时不做任何写操作() {
+        ChatAttachment a = attachment(7L, "s-1", null);
+        when(attachmentRepository.findById(7L)).thenReturn(Optional.of(a));
+
+        service.validateAttachable(List.of(7L), "s-1");
+
+        verify(attachmentRepository, never()).save(any());
+    }
+
+    /**
+     * 预校验刻意不检查"是否已被占用"——占用状态在预校验与真正落库之间的窗口内仍可能变化
+     * （见 validateAttachable javadoc）。这是它与 attachToMessage 唯一的校验差异，用一条
+     * 用例钉死：已被别的消息占用的附件仍能通过预校验（不抛异常）。
+     */
+    @Test
+    void 预校验不检查占用状态_已占用的附件也能通过() {
+        ChatAttachment a = attachment(7L, "s-1", 999L);   // 已挂在别的消息 999 上
+        when(attachmentRepository.findById(7L)).thenReturn(Optional.of(a));
+
+        assertThatCode(() -> service.validateAttachable(List.of(7L), "s-1"))
+                .doesNotThrowAnyException();
     }
 
     // ---------- upload ----------

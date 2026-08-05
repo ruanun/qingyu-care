@@ -153,25 +153,63 @@ public class ChatAttachmentService {
         if (messageId == null) {
             throw new BusinessException("消息 id 不能为空");
         }
-        List<Long> distinctIds = attachmentIds.stream().distinct().toList();
-        if (distinctIds.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
-            throw new BusinessException("单条消息最多携带 " + MAX_ATTACHMENTS_PER_MESSAGE + " 个附件");
-        }
+        List<Long> distinctIds = distinctCapped(attachmentIds);
         for (Long id : distinctIds) {
-            ChatAttachment a = attachmentRepository.findById(id)
-                    .orElseThrow(() -> new ResourceNotFoundException("附件不存在: " + id));
-            if (!TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())) {
-                throw new ResourceNotFoundException("附件不存在: " + id);
-            }
-            if (!sessionId.equals(a.getSessionId())) {
-                throw new BusinessException("附件不属于当前会话");
-            }
+            ChatAttachment a = loadOwnedAttachment(id, sessionId);
             if (a.getMessageId() != null) {
                 throw new BusinessException("附件已被使用");
             }
             a.setMessageId(messageId);
             attachmentRepository.save(a);
         }
+    }
+
+    /**
+     * 附件可关联性预校验（不做实际关联、不落库）：供 {@code streamChat} 在开始流式响应前调用，
+     * 尽早暴露"会话已过期/附件不属于当前会话"这类**确定性**错误（如 widget 会话过期后清本地
+     * 重开、却带着旧 sessionId 下的 attachmentIds 发消息），用户能在流开始前就收到明确报错，
+     * 而不是等一整轮流式回复吐完、落库时才悄悄失败（C-1：{@code persistStreamedMessages}
+     * 运行在既有的 fail-soft 兜底 catch 之内，附件校验异常会连累整条 AI 消息一起静默丢失）。
+     * <p>只做「存在性 + 租户归属 + 会话归属」三项，**不检查是否已被占用**——占用状态在预校验
+     * 与真正落库之间的窗口内仍可能变化（如同一批附件被并发重复提交），属于本质上无法靠
+     * 预校验消灭的竞态；这类残余失败交给 {@code attachToMessage} 真正执行时兜底为 fail-soft，
+     * 不在这里提前拒绝制造误判。
+     */
+    public void validateAttachable(List<Long> attachmentIds, String sessionId) {
+        if (attachmentIds == null || attachmentIds.isEmpty()) {
+            return;
+        }
+        if (sessionId == null) {
+            throw new BusinessException("会话标识不能为空");
+        }
+        for (Long id : distinctCapped(attachmentIds)) {
+            loadOwnedAttachment(id, sessionId);
+        }
+    }
+
+    /** 去重 + 数量上限校验，attachToMessage 与 validateAttachable 共用。 */
+    private List<Long> distinctCapped(List<Long> attachmentIds) {
+        List<Long> distinctIds = attachmentIds.stream().distinct().toList();
+        if (distinctIds.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
+            throw new BusinessException("单条消息最多携带 " + MAX_ATTACHMENTS_PER_MESSAGE + " 个附件");
+        }
+        return distinctIds;
+    }
+
+    /**
+     * 存在性 + 租户归属 + 会话归属三道校验，{@code attachToMessage}（另加"占用状态"）与
+     * {@code validateAttachable} 共用。
+     */
+    private ChatAttachment loadOwnedAttachment(Long id, String sessionId) {
+        ChatAttachment a = attachmentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("附件不存在: " + id));
+        if (!TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())) {
+            throw new ResourceNotFoundException("附件不存在: " + id);
+        }
+        if (!sessionId.equals(a.getSessionId())) {
+            throw new BusinessException("附件不属于当前会话");
+        }
+        return a;
     }
 
     /** 读取用：归属校验交给调用方（两条访问端点的鉴权路径不同） */
