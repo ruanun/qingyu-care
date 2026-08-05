@@ -926,10 +926,22 @@ public class ChatServiceImpl implements ChatService {
      * 现象与 C-1 原始症状完全相同（两条消息一起消失）。REQUIRES_NEW 会挂起外层事务、开一个完全
      * 独立的新事务，失败只回滚这一个，外层事务毫发无损、继续正常提交。
      * <p>同 {@link #searchKnowledge(String, ChatStrategy)} 的既有先例：必须经 {@link #self}
-     * 代理调用，同类直调不经代理、注解失效。
+     * 代理调用，同类直调不经代理、注解失效；方法须 {@code public}——Spring 的
+     * {@code AnnotationTransactionAttributeSource} 默认只识别 public 方法上的
+     * {@code @Transactional}（{@code publicMethodsOnly}，Spring 6 起才接受非 public，本仓库
+     * spring-tx 7.0.8 恰好接受，但那是隐含的框架版本依赖，不是本方法应该依赖的契约——与
+     * {@code searchKnowledge} 对齐显式声明 public，不留这个坑给以后升级/降级的人）。
+     * <p><b>已知取舍（REQUIRES_NEW 打破"附件与消息同生共死"）</b>：本方法先于外层
+     * {@code transactionTemplate.execute} 提交（挂起-独立提交-恢复）。若外层事务在这之后失败
+     * （如 {@code aiMsg} 落库异常、或提交阶段失败），已经提交的附件行 {@code messageId} 会指向
+     * 一条最终被回滚掉、根本不存在的消息——前端按 {@code messageId} 查不到它，孤儿清理任务
+     * 也扫不到它（{@code findByMessageIdIsNullAndCreatedAtBefore} 只查 {@code messageId IS NULL}，
+     * 这一条的 {@code messageId} 非空）。结果是这条 DB 行 + 对应 S3 对象永久泄漏，无任何自动
+     * 回收路径。窗口很窄——内层提交后外层只剩 {@code aiMsg} 一次 save——接受为 REQUIRES_NEW
+     * 隔离的固有代价，不在本次范围内解决（需要的话应是 Saga/补偿型清理，改动面远大于收益）。
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    void attachInNewTransaction(List<Long> attachmentIds, String sessionId, Long messageId) {
+    public void attachInNewTransaction(List<Long> attachmentIds, String sessionId, Long messageId) {
         chatAttachmentService.attachToMessage(attachmentIds, sessionId, messageId);
     }
 
@@ -993,6 +1005,17 @@ public class ChatServiceImpl implements ChatService {
      * 降级为 warn 日志，不向外传播；{@code false} 时原样抛出。三处早退/静默分支
      * （{@code triggerKeywordHandoverIfHit}/{@code persistUserMessageDuringHandover}）与
      * {@code saveMessages} 共用同一套「对话/会话流程是主体、附件是附属」的取舍（C-1/I-3）。
+     * <p>⚠️ 与 {@code saveMessages} 的 fail-soft 分支不同，这里**没有**经 {@link #self} 走
+     * REQUIRES_NEW，是直调 {@code chatAttachmentService.attachToMessage}。正确性依赖一个
+     * 不变量：**这两个调用点被调用时，当前线程没有环绕它们的活动事务**——{@code streamChat()}
+     * 本身无 {@code @Transactional}；控制器方法非事务；{@code spring.jpa.open-in-view} 只在
+     * 请求线程绑定 {@code EntityManager} 延长会话，不等于开事务。今天这个前提成立，故
+     * {@code attachToMessage} 自己的 {@code @Transactional}（REQUIRED）在这里总是新建独立事务，
+     * 失败只影响它自己。**这个前提没有任何测试或注解钉住**——将来若有人给 {@code streamChat()}
+     * 或它的某条调用路径加上 {@code @Transactional}，这两处会静默变成参与型事务，C-1 那个
+     * "就地 catch 救不回被标记 rollback-only 的事务"的机制会在转人工分支原样复现。
+     * 改动 {@code streamChat()} 的事务边界时，必须回头检查这里是否也要换成
+     * {@code self.attachInNewTransaction}。
      */
     private void attachIfPresent(List<Long> attachmentIds, ChatSession session, Long messageId,
                                  boolean attachFailSoft) {

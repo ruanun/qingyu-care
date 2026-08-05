@@ -133,4 +133,65 @@ class StreamAttachmentFailSoftIT extends AbstractPostgresIT {
         ChatAttachment stillOccupied = attachmentRepository.findById(occupied.getId()).orElseThrow();
         assertThat(stillOccupied.getMessageId()).isEqualTo(999999L);
     }
+
+    /**
+     * N-1（复核终审发现）：上面那条只覆盖失败分支。全仓库唯一断言"附件真的挂上了"的是
+     * 纯 Mockito 的 StreamChatEventPipelineTest，那里 {@code self == service}（同一个 POJO，
+     * 直接 {@code setSelf(service)}），对"代理是否生效"一无所知——若 {@code self} 链哪天断掉，
+     * 流式路径下附件会**永远**挂不上：{@code self.attachInNewTransaction} 调用本身若失效为
+     * 空跑，异常不会抛出（fail-soft 连"记 warn"这步都轮不到），附件停留在
+     * {@code messageId IS NULL}，24 小时后被孤儿清理任务连同 S3 对象一起删掉——现象是
+     * "图发出去了、过一天没了"，而 {@code mvn test} + {@code mvn verify} 全绿。
+     * <p>本用例用一个干净附件（{@code messageId} 为 null）走正常流式一轮，断言跑完后它的
+     * {@code messageId} 被正确回填为**用户消息**的 id（不是 AI 消息的 id）——这是唯一在真实
+     * Spring 容器 + 真实事务代理链下断言"正向路径确实生效"的用例。
+     * <p>⚠️ 变异自证的口径修正（复核建议 vs 实测）：复核原本建议的变异是"把
+     * {@code self.attachInNewTransaction(...)} 改成直调 {@code attachInNewTransaction(...)}
+     * （绕过 self 代理）"。实测这条变异**只会让上面那条失败路径用例转红**（REQUIRES_NEW 退化
+     * 为参与型事务，复现 C-1 的 rollback-only 机制），**不会**让本用例转红——happy path 下
+     * 没有任何异常抛出，参与型事务与独立事务提交的最终结果（附件 messageId 正确回填）完全一致，
+     * Mockito 测不出的"事务隔离"这件事，在无失败发生时对可观测结果没有影响。
+     * 真正能单独抓住"self 链断掉、attach 变成静默空转"这一具体失效模式的变异是把
+     * {@code attachInNewTransaction} 方法体清空（模拟调用链在代理层之外被短路，什么都没发生、
+     * 也不抛异常）——该变异下本用例转红（{@code messageId} 停留 null 超时），而上面那条失败路径
+     * 用例反而保持绿（没有异常可捕获，DONE 正常带 id）。两条用例因此对"事务隔离被破坏"与
+     * "关联调用被短路"两种不同的坏法分别具有排他的判别力，合起来才不留死角。
+     */
+    @Test
+    void 附件关联成功时messageId被回填为用户消息id() throws Exception {
+        Application app = seedApp("attok" + System.nanoTime(), "http://attok.example.com");
+        String sessionId = "attok-sess-" + System.nanoTime();
+        seedSession(sessionId, app);
+
+        ChatAttachment clean = ChatAttachment.builder()
+                .sessionId(sessionId).fileName("clean.png").fileSize(1L).contentType("image/png")
+                .storageKey("k-" + System.nanoTime()).uploaderRole(MessageRole.USER).build();
+        clean.setTenantId(app.getTenant().getId());
+        clean.setAppId(app.getId());
+        clean = attachmentRepository.saveAndFlush(clean);
+        Long cleanId = clean.getId();
+        cleanupAttachmentIds.add(cleanId);
+
+        Mockito.when(modelRouterService.streamWithFallback(
+                        ArgumentMatchers.eq("default"), ArgumentMatchers.any()))
+                .thenReturn(Flux.just(SpringAiResponses.of("收到，马上处理", 5)));
+
+        MvcResult mvcResult = mockMvc.perform(post("/open/v1/chat/stream")
+                        .header("X-App-Id", app.getAppKey())
+                        .header("X-Api-Key", app.getAppSecret())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sessionId\":\"" + sessionId + "\",\"message\":\"这是报错截图\","
+                                + "\"attachmentIds\":[" + cleanId + "]}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        mockMvc.perform(asyncDispatch(mvcResult)).andExpect(status().isOk());
+
+        await().atMost(5, SECONDS).untilAsserted(() -> {
+            ChatMessage userMsg = messageRepository.findAll().stream()
+                    .filter(m -> "这是报错截图".equals(m.getContent()))
+                    .findFirst().orElseThrow();
+            ChatAttachment reloaded = attachmentRepository.findById(cleanId).orElseThrow();
+            assertThat(reloaded.getMessageId()).isEqualTo(userMsg.getId());
+        });
+    }
 }
