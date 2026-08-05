@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.zip.CRC32;
 import javax.imageio.ImageIO;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +27,28 @@ class AttachmentValidatorTest {
         return out.toByteArray();
     }
 
+    /**
+     * 造一张 IHDR 声明超大画布、但实际 IDAT 仍是 1x1 真实数据的 PNG——只用来验证「像素上限
+     * 校验发生在解码像素之前」。若实现退化成先 {@code ImageIO.read} 解码再判断像素数，这个
+     * 测试会因为要真的分配 fakeWidth×fakeHeight 的内存而变慢甚至 OOM，能反向暴露回归。
+     */
+    private static byte[] pngWithSpoofedDimensions(int fakeWidth, int fakeHeight) throws Exception {
+        byte[] png = pngBytes(1, 1).clone();
+        writeIntBE(png, 16, fakeWidth);
+        writeIntBE(png, 20, fakeHeight);
+        CRC32 crc = new CRC32();
+        crc.update(png, 12, 17); // "IHDR"(4) + 宽高等 13 字节数据，共 17 字节参与 CRC
+        writeIntBE(png, 29, (int) crc.getValue());
+        return png;
+    }
+
+    private static void writeIntBE(byte[] arr, int offset, int value) {
+        arr[offset] = (byte) (value >>> 24);
+        arr[offset + 1] = (byte) (value >>> 16);
+        arr[offset + 2] = (byte) (value >>> 8);
+        arr[offset + 3] = (byte) value;
+    }
+
     @Test
     void 合法PNG通过并读出宽高() throws Exception {
         AttachmentValidator.ValidatedFile r = validator.validate(pngBytes(800, 600), "截图.png");
@@ -44,6 +67,29 @@ class AttachmentValidatorTest {
         assertThatThrownBy(() -> validator.validate(exe, "photo.jpg"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("文件内容与扩展名不符");
+    }
+
+    @Test
+    void 图片声明像素超限被拒且不解码像素() throws Exception {
+        // 15000x15000 = 2.25 亿像素，远超 8000 万上限；文件本身仍是 1x1 真实数据，几十字节
+        byte[] bomb = pngWithSpoofedDimensions(15000, 15000);
+
+        assertThatThrownBy(() -> validator.validate(bomb, "bomb.png"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("图片尺寸过大");
+    }
+
+    @Test
+    void WEBP通过校验但因JDK无解码器宽高恒为空() {
+        // JDK 17 内置 ImageIO 没有 webp reader；Tika 仅靠 RIFF/WEBP 魔数即可探测，不需要完整文件
+        byte[] webp = new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'};
+
+        AttachmentValidator.ValidatedFile r = validator.validate(webp, "pic.webp");
+
+        assertThat(r.contentType()).isEqualTo("image/webp");
+        assertThat(r.image()).isTrue();
+        assertThat(r.width()).isNull();
+        assertThat(r.height()).isNull();
     }
 
     @Test

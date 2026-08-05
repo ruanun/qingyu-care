@@ -6,8 +6,10 @@ import org.apache.tika.Tika;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.io.ByteArrayInputStream;
+import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +23,11 @@ import java.util.Set;
  *
  * <p>SVG 不在白名单里：它是 XSS 载体，浏览器会执行其中的 script，而附件是从本域下发的。
  *
+ * <p>图片尺寸读取只解析文件头（{@link ImageReader#getWidth}/{@link ImageReader#getHeight}），
+ * 绝不用 {@code ImageIO.read} 完整解码像素——字节数限额只约束文件体积，一张几百 KB 但 IHDR
+ * 声明超大画布的 PNG（解压炸弹）解码后可轻松吃光几百 MB 堆内存，放大比可达千倍。故额外对
+ * 「宽 × 高」设像素上限，在真正解码之前就拒绝。
+ *
  * @author ruan
  */
 @Component
@@ -31,6 +38,8 @@ public class AttachmentValidator {
     private static final long MAX_IMAGE_BYTES = 5L * 1024 * 1024;
     /** 其它文件上限 20MB */
     private static final long MAX_FILE_BYTES = 20L * 1024 * 1024;
+    /** 图片像素上限 8000 万——手机截图 4000×3000 才 1200 万，够用有余；防解压炸弹 */
+    private static final long MAX_IMAGE_PIXELS = 80_000_000L;
 
     /** 扩展名 → 期望的真实 MIME。故意不含 svg */
     private static final Map<String, String> IMAGE_TYPES = Map.of(
@@ -104,16 +113,42 @@ public class AttachmentValidator {
         return filename.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
-    /** 读不出尺寸不算失败——宽高只用于前端预留占位，缺了顶多布局跳一下 */
+    /**
+     * 读不出尺寸不算失败——宽高只用于前端预留占位，缺了顶多布局跳一下。
+     *
+     * <p>只经 {@link ImageReader} 解析文件头取宽高，不调用 {@code reader.read(0)} 解码像素，
+     * 从源头避免解压炸弹（详见类注释）。JDK 内置 ImageIO 没有 webp 解码器，此时
+     * {@code getImageReaders} 拿不到任何 reader、只能放弃——webp 宽高恒为空是已知限制，
+     * 不是本方法的 bug。
+     */
     private Integer[] readImageSize(byte[] bytes) {
-        try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (img != null) {
-                return new Integer[]{img.getWidth(), img.getHeight()};
+        try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+            if (iis == null) {
+                log.warn("无法为图片字节创建 ImageInputStream，跳过宽高读取");
+                return new Integer[]{null, null};
             }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                log.warn("未找到该图片格式对应的解码器（如 JDK 内置 ImageIO 不支持 webp），跳过宽高读取");
+                return new Integer[]{null, null};
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(iis);
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                if ((long) width * height > MAX_IMAGE_PIXELS) {
+                    throw new BusinessException("图片尺寸过大（" + width + "x" + height + "），超过 8000 万像素上限");
+                }
+                return new Integer[]{width, height};
+            } finally {
+                reader.dispose();
+            }
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("读取图片尺寸失败，跳过宽高: {}", e.getMessage());
+            log.warn("读取图片尺寸失败（解码异常），跳过宽高: {}", e.getMessage());
+            return new Integer[]{null, null};
         }
-        return new Integer[]{null, null};
     }
 }
