@@ -71,7 +71,9 @@ public class AttachmentValidator {
             throw new BusinessException("不支持的文件类型：" + (ext.isEmpty() ? "（无扩展名）" : ext));
         }
 
-        // 先卡大小：按扩展名归类即可，此刻还没探测真实类型；探测后若类别翻转会在下面再卡一次
+        // 按扩展名归类即可确定限额：下面会校验「真实 MIME 必须等于扩展名对应值」，
+        // FILE_TYPES 的值集合里没有任何一项以 image/ 开头，类别因此不可能翻转——
+        // 按扩展名限额与按真实类型限额是等价的，无需在探测后再卡一次。
         long limit = isImage ? MAX_IMAGE_BYTES : MAX_FILE_BYTES;
         requireWithinLimit(bytes.length, limit, isImage);
 
@@ -87,10 +89,6 @@ public class AttachmentValidator {
 
         if (!FILE_TYPES.get(ext).contains(detected)) {
             throw new BusinessException("文件内容与扩展名不符");
-        }
-        // 探测出来是图片却用了文件扩展名：按图片限额重卡一次，防止拿 .txt 扩展名绕过 5MB
-        if (detected.startsWith("image/")) {
-            requireWithinLimit(bytes.length, MAX_IMAGE_BYTES, true);
         }
         return new ValidatedFile(detected, false, null, null);
     }

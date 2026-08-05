@@ -187,6 +187,7 @@ class AttachmentValidatorTest {
         AttachmentValidator.ValidatedFile r =
                 validator.validate("订单号 12345".getBytes(StandardCharsets.UTF_8), "备注.txt");
 
+        assertThat(r.contentType()).isEqualTo("text/plain");
         assertThat(r.image()).isFalse();
         assertThat(r.width()).isNull();
         assertThat(r.height()).isNull();
