@@ -3,12 +3,22 @@ import type { ChatSession, ChatMessageEntity, Attachment, ApiResponse, PageRespo
 
 export const chatService = {
     // 上传消息附件（图片/文件），仅落库拿 id，不关联到具体消息；发消息时把返回的 id 塞进 attachmentIds
+    //
+    // ⚠️ 必须显式设 Content-Type: multipart/form-data——client.ts 的 axios 实例在
+    // create() 时写死了默认头 application/json，axios 的 transformRequest 一看到
+    // JSON 头就会先对 body 走 formDataToJSON() 再序列化；FormData 里的 File 对象没有
+    // 可枚举属性，序列化结果是 {}，文件内容整个丢失（请求体变成 {"sessionId":"...","file":{}}，
+    // 服务端收到的不是 multipart 请求，报 500 "Current request is not a multipart request"）。
+    // 这里显式覆盖成 multipart/form-data 后，XHR adapter 检测到 body 是 FormData 会
+    // setContentType(false)，改由浏览器自己补上带正确 boundary 的头——同 knowledgeService.uploadDocument
+    // 的既有写法。
     uploadChatFile: (sessionId: string, file: File): Promise<ApiResponse<Attachment>> => {
         const form = new FormData();
         form.append('sessionId', sessionId);
         form.append('file', file);
-        // 不要手工设置 Content-Type，浏览器需要自己带 boundary
-        return api.post('/chat/files', form);
+        return api.post('/chat/files', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
     },
 
     // 下载附件二进制。私有桶 + 请求头鉴权，<img src>/<a href> 拿不到；
