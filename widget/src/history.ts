@@ -7,18 +7,21 @@
 import type { OpenSessionResponse } from './api';
 import type { WidgetUi } from './ui';
 
-/** 恢复历史消息到 UI（各角色分派；ASSISTANT 带历史卡片 uiParts）。历史消息不带反馈（避免重复计量/messageId 缺失）。 */
+/**
+ * 恢复历史消息到 UI（各角色分派；ASSISTANT 带历史卡片 uiParts，USER/AGENT 带历史附件）。
+ * 历史消息不带反馈（避免重复计量/messageId 缺失）。
+ */
 export function restoreHistory(ui: WidgetUi, messages: OpenSessionResponse['messages']): void {
   for (const m of messages) {
     switch (m.role) {
       case 'USER':
-        ui.addUserMessage(m.content);
+        ui.addUserMessage(m.content, m.attachments);
         break;
       case 'ASSISTANT':
-        ui.addBotMessage(m.content, undefined, m.uiParts);
+        ui.addBotMessage(m.content, undefined, m.uiParts, m.attachments);
         break;
       case 'AGENT':
-        ui.addAgentMessage(m.content);
+        ui.addAgentMessage(m.content, m.attachments);
         break;
       case 'SYSTEM':
         ui.showSessionState(m.content);

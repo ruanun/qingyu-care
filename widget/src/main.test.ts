@@ -26,10 +26,23 @@ describe('restoreHistory 会话恢复', () => {
       { role: 'AGENT', content: '客服接入', createdAt: '' },
       { role: 'SYSTEM', content: '会话结束', createdAt: '' },
     ]);
-    expect(ui.addUserMessage).toHaveBeenCalledWith('你好');
-    expect(ui.addBotMessage).toHaveBeenCalledWith('卡片回复', undefined, [{ kind: 'ui', node: { type: 'card' } }]);
-    expect(ui.addAgentMessage).toHaveBeenCalledWith('客服接入');
+    expect(ui.addUserMessage).toHaveBeenCalledWith('你好', undefined);
+    expect(ui.addBotMessage).toHaveBeenCalledWith(
+      '卡片回复', undefined, [{ kind: 'ui', node: { type: 'card' } }], undefined,
+    );
+    expect(ui.addAgentMessage).toHaveBeenCalledWith('客服接入', undefined);
     expect(ui.showSessionState).toHaveBeenCalledWith('会话结束');
+  });
+
+  it('USER/AGENT 历史消息带 attachments 时原样透传给 ui', () => {
+    const ui = fakeUi();
+    const atts = [{ id: 1, fileName: 'a.png', contentType: 'image/png', fileSize: 100 }];
+    restoreHistory(ui as unknown as WidgetUi, [
+      { role: 'USER', content: '看图', createdAt: '', attachments: atts },
+      { role: 'AGENT', content: '收到', createdAt: '', attachments: atts },
+    ]);
+    expect(ui.addUserMessage).toHaveBeenCalledWith('看图', atts);
+    expect(ui.addAgentMessage).toHaveBeenCalledWith('收到', atts);
   });
 
   it('空/未知角色不崩', () => {

@@ -76,5 +76,18 @@ export function buildStyles(themeColor: string): string {
     .qy-checkbox { display:flex; align-items:center; gap:6px; font-size:13px; }
     .qy-form-submit { align-self:flex-start; padding:6px 14px; border:none; border-radius:6px; background:${themeColor}; color:#fff; cursor:pointer; font-size:13px; }
     .qy-field-invalid { border-color:#ef4444; }
+    .qy-attach-btn { border:none; background:transparent; padding:0 8px; cursor:pointer; font-size:18px; line-height:48px; }
+    .qy-attach-btn:disabled { opacity:.35; cursor:not-allowed; }
+    .qy-attach-preview { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px; }
+    .qy-attach-preview:not(:empty) { padding-top:8px; }
+    .qy-attach-chip { display:flex; align-items:center; gap:4px; max-width:160px; padding:3px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#f7f7f8; font-size:12px; }
+    .qy-attach-chip-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qy-attach-chip-remove { border:none; background:none; cursor:pointer; color:#999; font-size:14px; line-height:1; padding:0; }
+    .qy-attach-chip-remove:hover { color:#111827; }
+    .qy-attachments { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .qy-attach-img { display:block; max-width:200px; max-height:200px; border-radius:8px; object-fit:cover; background:#f3f4f6; }
+    .qy-attach-file { display:flex; align-items:center; gap:6px; max-width:220px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; text-decoration:none; color:inherit; font-size:13px; }
+    .qy-attach-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qy-attach-size { color:#9ca3af; font-size:11px; white-space:nowrap; }
   `;
 }

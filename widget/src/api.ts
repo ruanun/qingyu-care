@@ -1,5 +1,6 @@
 import type { WidgetConfig } from './config';
 import { postSse, type ChatStreamHandlers } from './chatStream';
+import type { WidgetAttachment } from './attachments';
 
 /** 服务端判定会话失效（404）时抛出，供上层清本地会话并自动重开。 */
 export class SessionExpiredError extends Error {
@@ -36,12 +37,16 @@ export interface OpenSessionResponse {
   /** AI_PROCESSING / WAITING_AGENT / AGENT_PROCESSING / ENDED / TIMEOUT */
   status: string;
   messages: Array<{
+    /** 消息 id（对应后端 ChatMessage.id），用于定位该消息挂载的附件 */
+    id?: number | null;
     /** USER / ASSISTANT / SYSTEM / AGENT */
     role: string;
     content: string;
     createdAt: string;
     /** ASSISTANT 历史消息的结构化卡片片段（后端反序列化 ui_spec 而来，可空） */
     uiParts?: UiPart[];
+    /** 该消息挂载的图片/文件（可空，无附件为空数组） */
+    attachments?: WidgetAttachment[];
   }>;
 }
 
@@ -58,20 +63,59 @@ export function createApi(cfg: WidgetConfig) {
       return (await r.json()) as WidgetBrand;
     },
 
-    /** 流式对话；404 抛 SessionExpiredError（供上层清会话后重开）。 */
+    /**
+     * 流式对话；404 抛 SessionExpiredError（供上层清会话后重开）。
+     * attachmentIds 排在 signal 前——上层重开新会话重试时刻意不透传 attachmentIds
+     * （见 main.ts streamWithRetry 的说明：附件绑定在旧会话上，新会话下校验会拒绝，
+     * 宁可丢附件保文本也不能让整条消息发不出去），故常见调用不需要给 signal。
+     */
     async stream(
       message: string,
       sessionId: string | null,
       handlers: ChatStreamHandlers,
+      attachmentIds?: number[],
       signal?: AbortSignal,
     ): Promise<void> {
-      const body = sessionId ? { message, sessionId } : { message };
+      const body: { message: string; sessionId?: string; attachmentIds?: number[] } = { message };
+      if (sessionId) body.sessionId = sessionId;
+      if (attachmentIds && attachmentIds.length) body.attachmentIds = attachmentIds;
       try {
         await postSse(`${cfg.apiBase}/open/v1/chat/stream`, headers(), body, handlers, signal);
       } catch (e) {
         if (e instanceof Error && e.name === 'SessionExpiredError') throw new SessionExpiredError();
         throw e;
       }
+    },
+
+    /**
+     * 上传消息附件（图片/文件），仅落库拿 id，不关联到具体消息；发消息时把返回的 id
+     * 塞进 attachmentIds。sessionId 必填且不能是空串——后端直接拒绝（空串曾是所有租户
+     * 共享的命名空间，两端已统一拒绝，见 backend ChatAttachmentService#requireOwnedSession）。
+     * 不手工设置 Content-Type，交给浏览器自己带 multipart boundary。
+     */
+    async uploadAttachment(sessionId: string, file: File): Promise<WidgetAttachment> {
+      const form = new FormData();
+      form.append('sessionId', sessionId);
+      form.append('file', file);
+      const r = await fetch(`${cfg.apiBase}/open/v1/chat/files`, {
+        method: 'POST',
+        headers: { 'X-App-Id': cfg.appKey },
+        body: form,
+      });
+      if (!r.ok) throw new Error(`附件上传失败: ${r.status}`);
+      return (await r.json()) as WidgetAttachment;
+    },
+
+    /**
+     * 下载附件二进制。私有桶 + 请求头鉴权，<img src>/<a href> 拿不到；调用方自行
+     * URL.createObjectURL 换成可用于 img.src / 下载链接的 blob URL。
+     * sessionId 是必填查询参数——防止公网凭 appKey 枚举 id 拿到其它访客上传的文件。
+     */
+    async downloadAttachment(id: number, sessionId: string): Promise<Blob> {
+      const url = `${cfg.apiBase}/open/v1/chat/files/${id}?sessionId=${encodeURIComponent(sessionId)}`;
+      const r = await fetch(url, { headers: { 'X-App-Id': cfg.appKey } });
+      if (!r.ok) throw new Error(`附件下载失败: ${r.status}`);
+      return await r.blob();
     },
 
     async handover(sessionId: string): Promise<void> {

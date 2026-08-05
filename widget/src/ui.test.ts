@@ -83,6 +83,126 @@ describe('addBotMessage uiParts 渲染', () => {
   });
 });
 
+/** jsdom 下 input.files 是只读属性，靠 defineProperty 伪造选中的文件，再手动派发 change 事件。 */
+function selectFile(input: HTMLInputElement, file: File) {
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  input.dispatchEvent(new Event('change'));
+}
+
+describe('附件：选中即上传 + 待发送预览', () => {
+  it('会话建立前附件按钮禁用；setAttachEnabled(true) 后可用', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const host = lastHost();
+    const attachBtn = host?.shadowRoot?.querySelector('.qy-attach-btn') as HTMLButtonElement;
+    expect(attachBtn.disabled).toBe(true);
+    ui.setAttachEnabled(true);
+    expect(attachBtn.disabled).toBe(false);
+    ui.setAttachEnabled(false);
+    expect(attachBtn.disabled).toBe(true);
+  });
+
+  it('选中文件触发 onUploadFile，成功后预览区出现文件名（textContent，防 XSS）', async () => {
+    const onUploadFile = vi.fn().mockResolvedValue({
+      id: 1, fileName: '<img onerror=alert(1)>.png', contentType: 'image/png', fileSize: 100,
+    });
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {}, onUploadFile });
+    ui.setAttachEnabled(true);
+    const host = lastHost();
+    const input = host?.shadowRoot?.querySelector('.qy-attach-file-input') as HTMLInputElement;
+    selectFile(input, new File(['x'], 'a.png', { type: 'image/png' }));
+
+    expect(onUploadFile).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const preview = host?.shadowRoot?.querySelector('.qy-attach-preview')!;
+    expect(preview.textContent).toContain('<img onerror=alert(1)>.png');
+    expect(preview.querySelectorAll('img').length).toBe(0);
+  });
+
+  it('点击移除按钮从预览区去掉该附件', async () => {
+    const onUploadFile = vi.fn().mockResolvedValue({ id: 1, fileName: 'a.png', contentType: 'image/png', fileSize: 100 });
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {}, onUploadFile });
+    ui.setAttachEnabled(true);
+    const host = lastHost();
+    const input = host?.shadowRoot?.querySelector('.qy-attach-file-input') as HTMLInputElement;
+    selectFile(input, new File(['x'], 'a.png'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const preview = host?.shadowRoot?.querySelector('.qy-attach-preview')!;
+    expect(preview.children.length).toBe(1);
+    (preview.querySelector('.qy-attach-chip-remove') as HTMLButtonElement).click();
+    expect(preview.children.length).toBe(0);
+  });
+
+  it('上传失败不崩，附件按钮恢复此前的启用状态', async () => {
+    const onUploadFile = vi.fn().mockRejectedValue(new Error('403'));
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {}, onUploadFile });
+    ui.setAttachEnabled(true);
+    const host = lastHost();
+    const input = host?.shadowRoot?.querySelector('.qy-attach-file-input') as HTMLInputElement;
+    const attachBtn = host?.shadowRoot?.querySelector('.qy-attach-btn') as HTMLButtonElement;
+
+    expect(() => selectFile(input, new File(['x'], 'a.png'))).not.toThrow();
+    // .catch() 与 .finally() 各自额外占一个微任务 tick，比 .then() 链路更深，
+    // 用 setTimeout(0) 冲掉整条微任务队列，不去猜确切跳数
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(attachBtn.disabled).toBe(false); // 恢复为 setAttachEnabled(true) 设定的可用态
+  });
+
+  it('发送消息时把上传成功的附件一并带上，并清空预览区', async () => {
+    const onUploadFile = vi.fn().mockResolvedValue({ id: 9, fileName: 'a.png', contentType: 'image/png', fileSize: 100 });
+    const onSend = vi.fn();
+    const ui = mountUi(brand, { onSend, onHandover: () => {}, onUploadFile });
+    ui.setAttachEnabled(true);
+    const host = lastHost();
+    const input = host?.shadowRoot?.querySelector('.qy-attach-file-input') as HTMLInputElement;
+    selectFile(input, new File(['x'], 'a.png'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const textarea = host?.shadowRoot?.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = '你看这个';
+    const sendBtn = host?.shadowRoot?.querySelector('.qy-input button:not(.qy-attach-btn)') as HTMLButtonElement;
+    sendBtn.click();
+
+    expect(onSend).toHaveBeenCalledWith('你看这个', [{ id: 9, fileName: 'a.png', contentType: 'image/png', fileSize: 100 }]);
+    const preview = host?.shadowRoot?.querySelector('.qy-attach-preview')!;
+    expect(preview.children.length).toBe(0);
+  });
+
+  it('没有待发送附件时 onSend 第二个参数为 undefined（零回归）', () => {
+    const onSend = vi.fn();
+    mountUi(brand, { onSend, onHandover: () => {} });
+    const host = lastHost();
+    const textarea = host?.shadowRoot?.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = '普通消息';
+    const sendBtn = host?.shadowRoot?.querySelector('.qy-input button:not(.qy-attach-btn)') as HTMLButtonElement;
+    sendBtn.click();
+    expect(onSend).toHaveBeenCalledWith('普通消息', undefined);
+  });
+});
+
+describe('消息行渲染附件', () => {
+  it('addUserMessage 带 attachments 时消息行内出现附件容器', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('你看', [{ id: 1, fileName: 'a.png', contentType: 'image/png', fileSize: 100 }]);
+    const host = lastHost();
+    const row = host?.shadowRoot?.querySelector('.qy-msg.user')!;
+    expect(row.querySelector('.qy-attachments')).not.toBeNull();
+  });
+
+  it('无 attachments 时不产生附件容器（零回归）', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('普通消息');
+    const host = lastHost();
+    const row = host?.shadowRoot?.querySelector('.qy-msg.user')!;
+    expect(row.querySelector('.qy-attachments')).toBeNull();
+  });
+});
+
 describe('markOpened 抑制首开欢迎语', () => {
   const brandWithWelcome: WidgetBrand = {
     appName: '客服',

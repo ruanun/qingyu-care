@@ -1,7 +1,11 @@
 package com.qingyu.care.controller.open;
 
+import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.open.OpenSessionResponse;
+import com.qingyu.care.entity.ChatAttachment;
+import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.repository.ChatAttachmentRepository;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
@@ -17,7 +21,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 开放会话 API：查询会话 + 请求转人工 + 用户端实时通道（inbox / typing）。
@@ -34,15 +40,25 @@ public class OpenSessionController {
     private final RealtimeHub realtimeHub;
     private final RealtimeNotifier realtimeNotifier;
     private final ObjectMapper objectMapper;
+    private final ChatAttachmentRepository chatAttachmentRepository;
 
     /**
-     * 查询会话详情（含消息历史）
+     * 查询会话详情（含消息历史 + 每条消息的附件）。
+     * 附件按 messageId 一次性批量查出分组塞回去（同 {@code ChatController#getSessionMessages}
+     * 的做法），不在循环里逐条查，避免 N+1。
      * GET /open/v1/sessions/{sessionId}
      */
     @GetMapping("/{sessionId}")
     public OpenSessionResponse getSession(@PathVariable String sessionId) {
         ChatSession session = chatService.getSession(sessionId);
-        return OpenSessionResponse.of(session, chatService.getSessionMessages(sessionId), objectMapper);
+        List<ChatMessage> messages = chatService.getSessionMessages(sessionId);
+        List<Long> messageIds = messages.stream().map(ChatMessage::getId).filter(java.util.Objects::nonNull).toList();
+        Map<Long, List<AttachmentDTO>> attachmentsByMessageId = messageIds.isEmpty()
+                ? Map.of()
+                : chatAttachmentRepository.findByMessageIdInOrderById(messageIds).stream()
+                        .collect(Collectors.groupingBy(ChatAttachment::getMessageId,
+                                Collectors.mapping(AttachmentDTO::of, Collectors.toList())));
+        return OpenSessionResponse.of(session, messages, objectMapper, attachmentsByMessageId);
     }
 
     /**

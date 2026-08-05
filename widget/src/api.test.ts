@@ -89,4 +89,80 @@ describe('api', () => {
 
     await expect(createApi(cfg).getSession('s-1')).resolves.toEqual(body);
   });
+
+  it('stream 携带 attachmentIds 时写进请求体', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('event:done\ndata: {"messageId":1}\n\n'));
+        controller.close();
+      },
+    });
+    const f = vi.fn().mockResolvedValue(new Response(stream, { status: 200 }));
+    vi.stubGlobal('fetch', f);
+
+    await createApi(cfg).stream('看图', 's-1', {}, [10, 11]);
+
+    const [, init] = f.mock.calls[0];
+    const sent = JSON.parse((init as RequestInit).body as string);
+    expect(sent).toEqual({ message: '看图', sessionId: 's-1', attachmentIds: [10, 11] });
+  });
+
+  it('stream 不带附件时请求体不含 attachmentIds 字段', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('event:done\ndata: {"messageId":1}\n\n'));
+        controller.close();
+      },
+    });
+    const f = vi.fn().mockResolvedValue(new Response(stream, { status: 200 }));
+    vi.stubGlobal('fetch', f);
+
+    await createApi(cfg).stream('hi', null, {});
+
+    const [, init] = f.mock.calls[0];
+    const sent = JSON.parse((init as RequestInit).body as string);
+    expect(sent).toEqual({ message: 'hi' });
+  });
+
+  it('uploadAttachment 用 FormData 携带 sessionId+file，且不手工设 Content-Type', async () => {
+    const f = mockFetch(200, { id: 1, fileName: 'a.png', contentType: 'image/png', fileSize: 100 });
+    vi.stubGlobal('fetch', f);
+
+    const file = new File(['x'], 'a.png', { type: 'image/png' });
+    const result = await createApi(cfg).uploadAttachment('s-1', file);
+
+    expect(result.id).toBe(1);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe('https://host/api/open/v1/chat/files');
+    expect((init as RequestInit).body).toBeInstanceOf(FormData);
+    expect((init as any).headers['Content-Type']).toBeUndefined();
+    expect((init as any).headers['X-App-Id']).toBe('app_123');
+  });
+
+  it('uploadAttachment 非 2xx 抛错', async () => {
+    vi.stubGlobal('fetch', mockFetch(400, { error: 'bad' }));
+
+    await expect(createApi(cfg).uploadAttachment('s-1', new File(['x'], 'a.png'))).rejects.toThrow();
+  });
+
+  it('downloadAttachment 带 sessionId 查询参数与 X-App-Id 头，返回 blob', async () => {
+    const blob = new Blob(['x']);
+    const f = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: async () => blob });
+    vi.stubGlobal('fetch', f);
+
+    const result = await createApi(cfg).downloadAttachment(5, 's-1');
+
+    expect(result).toBe(blob);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe('https://host/api/open/v1/chat/files/5?sessionId=s-1');
+    expect((init as any).headers['X-App-Id']).toBe('app_123');
+  });
+
+  it('downloadAttachment 非 2xx 抛错', async () => {
+    vi.stubGlobal('fetch', mockFetch(404, {}));
+
+    await expect(createApi(cfg).downloadAttachment(5, 's-1')).rejects.toThrow();
+  });
 });

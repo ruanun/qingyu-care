@@ -6,6 +6,7 @@ import type { StreamingBotMessage } from './ui';
 import { connectSse } from './sse';
 import { restoreHistory } from './history';
 import type { ChatStreamHandlers } from './chatStream';
+import type { WidgetAttachment } from './attachments';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
 function sessionStateText(kind: string): string {
@@ -79,10 +80,23 @@ async function init(): Promise<void> {
   }
 
   const ui = mountUi(brand, {
-    onSend: (message) => void handleSend(message),
+    onSend: (message, attachments) => void handleSend(message, attachments),
     onHandover: () => void handleHandover(),
     onTyping: () => reportTyping(),
     onAction: (value) => void handleSend(value),
+    // sessionId 必填且不能是空串——后端上传端点直接拒绝（空串曾是所有租户共享的
+    // 命名空间，两端已统一拒绝）。附件按钮在会话建立前始终禁用（见下方 setAttachEnabled），
+    // 这里仍兜底判一次，防止两处状态不同步时打出一个必然 400 的请求。
+    onUploadFile: (file) => {
+      if (!sessionId) return Promise.reject(new Error('会话尚未建立，无法上传附件'));
+      return api.uploadAttachment(sessionId, file);
+    },
+    // 闭包读取的是外层 let sessionId 的当前值（不是挂载时刻的快照），故会话切换后取到的
+    // 始终是最新会话——历史消息里的附件也都属于当前这个会话，语义上是对的。
+    resolveAttachmentUrl: (id) => {
+      if (!sessionId) return Promise.reject(new Error('会话尚未建立，无法下载附件'));
+      return api.downloadAttachment(id, sessionId).then((blob) => URL.createObjectURL(blob));
+    },
   });
 
   // 刷新页面后若本地已恢复会话（可能已被坐席接管），先用 getSession 恢复历史消息（含历史卡片），
@@ -93,6 +107,7 @@ async function init(): Promise<void> {
     // 在 await getSession 网络往返之前就乐观抑制首开欢迎，避免"面板已可点开但 markOpened 未执行"的竞态窗口
     // （用户在等待窗口内点开面板会先插欢迎语、随后历史消息追加其后，导致「先欢迎后历史」错位）。
     ui.markOpened();
+    ui.setAttachEnabled(true); // 本地已有 sessionId，附件上传端点可用
     const restored = await api.getSession(sessionId);
     if (restored && restored.messages.length) {
       restoreHistory(ui, restored.messages);
@@ -100,8 +115,8 @@ async function init(): Promise<void> {
     ensureInbox(sessionId);
   }
 
-  async function handleSend(message: string): Promise<void> {
-    ui.addUserMessage(message);
+  async function handleSend(message: string, attachments?: WidgetAttachment[]): Promise<void> {
+    ui.addUserMessage(message, attachments);
     ui.setInputEnabled(false);
     ui.setTyping(true);
 
@@ -121,6 +136,7 @@ async function init(): Promise<void> {
           sessionId = d.sessionId;
           saveSession(cfg!.appKey, d.sessionId);
           ensureInbox(d.sessionId);   // 流首即建坐席通道，不必等整条回复结束
+          ui.setAttachEnabled(true); // 会话已建立（或确认存续），附件按钮可用
         },
         onDelta: (t) => ensureBot().appendText(t),
         onCard: (n) => ensureBot().appendCard(n),
@@ -133,7 +149,7 @@ async function init(): Promise<void> {
           );
         },
         onError: (msg) => ensureBot().appendText(`\n${msg}`),
-      });
+      }, attachments?.map((a) => a.id));
     } catch (e) {
       if (bot) (bot as StreamingBotMessage).appendText('\n回复中断，请重试。');
       else ui.addBotMessage('抱歉，服务暂时不可用，请稍后再试。');
@@ -146,13 +162,23 @@ async function init(): Promise<void> {
 
   // 会话失效兜底：首次 404 → 清本地会话、以新会话重发一次；用户无感。
   // 404 发生在响应头阶段（尚未开始吐字），故重试不会造成半截内容重复。
-  async function streamWithRetry(message: string, handlers: ChatStreamHandlers): Promise<void> {
+  //
+  // ⚠️ attachmentIds 只在首次尝试携带，重试时刻意不传：这些附件是绑在已失效的旧
+  // sessionId 上的（后端 chatAttachmentService.validateAttachable 按 sessionId 严格
+  // 匹配），换成新会话后校验必然判"附件不属于当前会话"直接拒绝——不是丢附件，而是
+  // 连文本一起发不出去。宁可丢附件保文本，用户可在新会话下重新选择文件再发一次。
+  async function streamWithRetry(
+    message: string,
+    handlers: ChatStreamHandlers,
+    attachmentIds?: number[],
+  ): Promise<void> {
     try {
-      await api.stream(message, sessionId, handlers);
+      await api.stream(message, sessionId, handlers, attachmentIds);
     } catch (e) {
       if (e instanceof SessionExpiredError) {
         clearSession(cfg!.appKey);
         sessionId = null;
+        ui.setAttachEnabled(false);
         await api.stream(message, null, handlers);
         return;
       }
