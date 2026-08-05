@@ -1,24 +1,38 @@
 package com.qingyu.care.controller.open;
 
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.config.TenantOwnershipGuard;
+import com.qingyu.care.controller.support.AttachmentResponses;
+import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.open.OpenChatRequest;
 import com.qingyu.care.dto.open.OpenChatResponse;
 import com.qingyu.care.dto.open.OpenFeedbackRequest;
+import com.qingyu.care.entity.ChatAttachment;
+import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.exception.OpenApiException;
+import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.service.ApiUsageService;
 import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.ChatStreamSseMapper;
+import com.qingyu.care.service.FileService;
+import com.qingyu.care.service.media.ChatAttachmentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import reactor.core.publisher.Flux;
 
 /**
@@ -36,6 +50,8 @@ public class OpenChatController {
     private final ApiUsageService apiUsageService;
     private final ChatFeedbackService chatFeedbackService;
     private final ChatStreamSseMapper sseMapper;
+    private final ChatAttachmentService chatAttachmentService;
+    private final FileService fileService;
 
     /**
      * 普通对话（同步）。
@@ -90,6 +106,31 @@ public class OpenChatController {
     public java.util.Map<String, Object> feedback(@Valid @RequestBody OpenFeedbackRequest req) {
         chatFeedbackService.submitFeedback(req.getSessionId(), req.getMessageId(), req.getFeedback());
         return java.util.Map.of("success", true);
+    }
+
+    // ===== 附件（多媒体消息）=====
+
+    /** Widget 用户上传附件 */
+    @PostMapping("/files")
+    public AttachmentDTO uploadAttachment(
+            @RequestParam("sessionId") String sessionId,
+            @RequestParam("file") MultipartFile file) {
+        ChatAttachment a = chatAttachmentService.upload(sessionId, file, MessageRole.USER);
+        return AttachmentDTO.of(a, "/open/v1/chat/files/");
+    }
+
+    /**
+     * 读取附件，同管理端一样经私有桶代理下发。{@code getForRead} 不做归属校验，
+     * 这里补上读语义的 {@link TenantOwnershipGuard#belongsToCurrentContext}——
+     * 漏了就是持任意合法 appKey/Origin 的调用方对全库附件的跨租户 IDOR。
+     */
+    @GetMapping("/files/{id}")
+    public ResponseEntity<StreamingResponseBody> downloadAttachment(@PathVariable Long id) {
+        ChatAttachment a = chatAttachmentService.getForRead(id);
+        if (!TenantOwnershipGuard.belongsToCurrentContext(a.getTenantId(), a.getAppId())) {
+            throw new ResourceNotFoundException("附件不存在: " + id);
+        }
+        return AttachmentResponses.stream(a, fileService);
     }
 
     /**

@@ -1,17 +1,26 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.config.TenantOwnershipGuard;
+import com.qingyu.care.controller.support.AttachmentResponses;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AgentReplyRequest;
+import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.PageDTO;
+import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
+import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.ChatStreamSseMapper;
+import com.qingyu.care.service.FileService;
+import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,8 +30,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import reactor.core.publisher.Flux;
 
 /**
@@ -37,6 +49,8 @@ public class ChatController {
     private final ChatService chatService;
     private final ChatFeedbackService chatFeedbackService;
     private final ChatStreamSseMapper sseMapper;
+    private final ChatAttachmentService chatAttachmentService;
+    private final FileService fileService;
 
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
@@ -175,6 +189,38 @@ public class ChatController {
             @RequestParam int feedback) {
         chatFeedbackService.submitFeedback(sessionId, messageId, feedback);
         return ApiResponse.success("反馈已记录", null);
+    }
+
+    // ===== 附件（多媒体消息）=====
+
+    /** 管理端/坐席上传附件。上传与发消息分两步，这里只落库拿 id */
+    @PostMapping("/files")
+    @AuditLog(action = "CHAT_ATTACHMENT_UPLOAD", targetType = "ChatAttachment")
+    @Operation(summary = "上传附件", description = "上传图片/文件，返回附件 id 与访问地址；发消息时再关联")
+    public ApiResponse<AttachmentDTO> uploadAttachment(
+            @RequestParam("sessionId") String sessionId,
+            @RequestParam("file") MultipartFile file) {
+        ChatAttachment a = chatAttachmentService.upload(sessionId, file, MessageRole.AGENT);
+        return ApiResponse.success(AttachmentDTO.of(a, "/v1/chat/files/"));
+    }
+
+    /**
+     * 读取附件。桶是私有的，客户端拿不到也不该拿到裸 S3 地址，一律经此代理。
+     *
+     * <p>图片 inline 供内嵌预览，其余一律 attachment 强制下载——不给浏览器渲染的机会。
+     *
+     * <p>{@code getForRead} 本身不做归属校验（两条访问端点鉴权路径不同，交给调用方），
+     * 这里用读语义的 {@link com.qingyu.care.config.TenantOwnershipGuard#belongsToCurrentContext}
+     * 补上——findById 不受 Hibernate {@code @Filter} 保护，漏了这一步就是对全库附件的跨租户 IDOR。
+     */
+    @GetMapping("/files/{id}")
+    @Operation(summary = "下载附件", description = "私有桶代理下载，图片 inline 预览，其余强制下载")
+    public ResponseEntity<StreamingResponseBody> downloadAttachment(@PathVariable Long id) {
+        ChatAttachment a = chatAttachmentService.getForRead(id);
+        if (!TenantOwnershipGuard.belongsToCurrentContext(a.getTenantId(), a.getAppId())) {
+            throw new ResourceNotFoundException("附件不存在: " + id);
+        }
+        return AttachmentResponses.stream(a, fileService);
     }
 }
 
