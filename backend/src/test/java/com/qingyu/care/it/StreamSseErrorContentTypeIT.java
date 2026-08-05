@@ -38,10 +38,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 401）；管理端这条没有那层连锁，但结果同样糟糕：空 body + 500，客户端连错误原因都看不到。
  *
  * <p>⚠️ 本类必须用真实内嵌 Servlet 容器（{@code RANDOM_PORT}）+ 真实 HTTP 客户端复现——
- * MockMvc（{@code MOCK} web environment）复现不出这条坑：MockMvc 的模拟分发不会真的触发
- * {@code writeWithMessageConverters} 对 Accept 头的强内容协商失败路径，同一份请求体在 MockMvc
- * 下永远拿到正确的 404+JSON，掩盖了真实 Servlet 容器下的行为。这是本次诊断过程本身踩出来的
- * 教训，为后来人少走弯路而记录。
+ * 但原因**不是**"MockMvc 对内容协商失败是盲的"（复核订正）：MockMvc 用的是真实
+ * {@code DispatcherServlet}/{@code ExceptionHandlerExceptionResolver}/真实消息转换器，
+ * 带上 {@code Accept: text/event-stream} 同样会撞上
+ * {@code HttpMediaTypeNotAcceptableException}——只是表现形态不同：异常会直接穿出
+ * {@code mockMvc.perform(...)} 变成测试报错，而不是 401+HTML，因为 {@code MOCK} 环境没有
+ * 真实容器的 {@code /error} 内部转发链与 {@code ErrorReportValve} 原生错误页。本次诊断最初
+ * 用 MockMvc 复现不出，真实原因是那次请求同样没带 {@code Accept: text/event-stream}
+ * （和真机冒烟一开始踩的是同一个盲区）。{@code RANDOM_PORT} 确实必要，理由是：**只有真实容器
+ * 才有 {@code /error} 转发链和原生错误页**，也只有在那里才能断言"终态状态码 = 404"与
+ * "不泄漏堆栈"这两件事本身——MockMvc 测不出这两件事，不是因为它对内容协商失败视而不见。
  *
  * @author ruan
  */
