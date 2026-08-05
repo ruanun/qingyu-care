@@ -124,8 +124,13 @@
         </dependency>
         
         <!-- Apache Tika：不再显式声明，随 spring-ai-tika-document-reader 传递引入
-             （1.1.8 → Tika 3.3.1）。项目未直接调用原生 Tika API，仅用 TikaDocumentReader 包装类，
-             显式 pin 2.9.1 反而会与针对 3.x 编译的 reader 运行时错配。 -->
+             （1.1.8 → Tika 3.3.1）。显式 pin 2.9.1 反而会与针对 3.x 编译的 reader 运行时错配。
+             ⚠️ 有一处编译期直接依赖了这个传递依赖：AttachmentValidator 用 org.apache.tika.Tika
+             做上传文件的真实类型探测（不能只信客户端声明的 Content-Type）。代价是将来 spring-ai
+             若把该 reader 模块挪走/换掉，编译会在升级那一刻才炸。**仍然不要**为此加显式依赖：
+             一旦写死版本号就回到了当年 pin 2.9.1 的老坑（版本被压回、与 reader 运行时错配，
+             且错配是运行期才现形，比编译期报错难查得多）；真需要收敛版本时用
+             dependencyManagement 对齐 spring-ai 的版本，而非另立一条 dependency。 -->
 
         <!-- Utilities -->
         <dependency>

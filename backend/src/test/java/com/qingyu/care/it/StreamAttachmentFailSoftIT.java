@@ -138,10 +138,12 @@ class StreamAttachmentFailSoftIT extends AbstractPostgresIT {
      * N-1（复核终审发现）：上面那条只覆盖失败分支。全仓库唯一断言"附件真的挂上了"的是
      * 纯 Mockito 的 StreamChatEventPipelineTest，那里 {@code self == service}（同一个 POJO，
      * 直接 {@code setSelf(service)}），对"代理是否生效"一无所知——若 {@code self} 链哪天断掉，
-     * 流式路径下附件会**永远**挂不上：{@code self.attachInNewTransaction} 调用本身若失效为
-     * 空跑，异常不会抛出（fail-soft 连"记 warn"这步都轮不到），附件停留在
-     * {@code messageId IS NULL}，24 小时后被孤儿清理任务连同 S3 对象一起删掉——现象是
-     * "图发出去了、过一天没了"，而 {@code mvn test} + {@code mvn verify} 全绿。
+     * 流式路径下附件会**永远**挂不上：{@code self} 为 null 时 {@code self.attachInNewTransaction}
+     * 抛 NPE，被 {@code saveMessages} 的 fail-soft catch 兜住记一条 warn（**会**打日志，只是
+     * 没人看），对话照常落库、请求照常返回 200；调用被短路成空跑（方法体什么都不做）时连
+     * warn 都没有。两种坏法的后果一样：附件停留在 {@code messageId IS NULL}，24 小时后被孤儿
+     * 清理任务连同 S3 对象一起删掉——现象是"图发出去了、过一天没了"，而 {@code mvn test} +
+     * {@code mvn verify} 全绿。
      * <p>本用例用一个干净附件（{@code messageId} 为 null）走正常流式一轮，断言跑完后它的
      * {@code messageId} 被正确回填为**用户消息**的 id（不是 AI 消息的 id）——这是唯一在真实
      * Spring 容器 + 真实事务代理链下断言"正向路径确实生效"的用例。

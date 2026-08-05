@@ -1007,12 +1007,17 @@ public class ChatServiceImpl implements ChatService {
      * {@code saveMessages} 共用同一套「对话/会话流程是主体、附件是附属」的取舍（C-1/I-3）。
      * <p>⚠️ 与 {@code saveMessages} 的 fail-soft 分支不同，这里**没有**经 {@link #self} 走
      * REQUIRES_NEW，是直调 {@code chatAttachmentService.attachToMessage}。正确性依赖一个
-     * 不变量：**这两个调用点被调用时，当前线程没有环绕它们的活动事务**——{@code streamChat()}
-     * 本身无 {@code @Transactional}；控制器方法非事务；{@code spring.jpa.open-in-view} 只在
-     * 请求线程绑定 {@code EntityManager} 延长会话，不等于开事务。今天这个前提成立，故
-     * {@code attachToMessage} 自己的 {@code @Transactional}（REQUIRED）在这里总是新建独立事务，
-     * 失败只影响它自己。**这个前提没有任何测试或注解钉住**——将来若有人给 {@code streamChat()}
-     * 或它的某条调用路径加上 {@code @Transactional}，这两处会静默变成参与型事务，C-1 那个
+     * 不变量，且**只对 fail-soft 那一支成立**（{@code attachFailSoft=true}，即
+     * {@code streamChat()} 的两个调用点）：**这一支被走到时，当前线程没有环绕它的活动事务**
+     * ——{@code streamChat()} 本身无 {@code @Transactional}；控制器方法非事务；
+     * {@code spring.jpa.open-in-view} 只在请求线程绑定 {@code EntityManager} 延长会话，不等于
+     * 开事务。今天这个前提成立，故 {@code attachToMessage} 自己的 {@code @Transactional}
+     * （REQUIRED）在这一支里总是新建独立事务，失败只影响它自己，就地 catch 才真的兜得住。
+     * <p>{@code attachFailSoft=false} 那一支不需要这个前提，语义上恰好相反：{@code chat()}
+     * 带 {@code @Transactional}，调到这里时**确实处于环绕事务之内**——参与进去、附件失败让
+     * 整轮一起回滚正是它要的行为（硬约束 3，见 {@code triggerKeywordHandoverIfHit} javadoc）。
+     * <p>**fail-soft 这一支的前提没有任何测试或注解钉住**——将来若有人给 {@code streamChat()}
+     * 或它的某条调用路径加上 {@code @Transactional}，它会静默变成参与型事务，C-1 那个
      * "就地 catch 救不回被标记 rollback-only 的事务"的机制会在转人工分支原样复现。
      * 改动 {@code streamChat()} 的事务边界时，必须回头检查这里是否也要换成
      * {@code self.attachInNewTransaction}。
