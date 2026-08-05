@@ -22,6 +22,7 @@ import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.UiSpecService;
+import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import com.qingyu.care.support.SpringAiResponses;
 import org.junit.jupiter.api.AfterEach;
@@ -42,12 +43,15 @@ import reactor.test.StepVerifier;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -87,6 +91,7 @@ class StreamChatEventPipelineTest {
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock ChatAttachmentService chatAttachmentService;
     @Spy UiSpecService uiSpecService = new UiSpecService(new ObjectMapper());
     @Spy ObjectMapper objectMapper = new ObjectMapper();
     @InjectMocks ChatServiceImpl service;
@@ -256,5 +261,61 @@ class StreamChatEventPipelineTest {
         assertThat(message).isEqualTo("回复生成失败，请稍后重试");
         assertThat(message).doesNotContain("502").doesNotContain("10.0.0.7");
         verify(messageRepository, never()).save(any());
+    }
+
+    /**
+     * MM-6：流式主路径落库最终经 persistStreamedMessages 完成（Reactor 线程，无 TenantContext）。
+     * 落点仍是用户消息，且必须在调用 attachToMessage 那一刻把请求线程捕获的租户上下文正确恢复——
+     * 否则 TenantOwnershipGuard.mutableInCurrentContext 在 ctxTenantId 为 null 时无条件放行，
+     * 归属校验形同虚设（本仓库 fallbackToNonStreaming 已有的同类教训）。
+     */
+    @Test
+    void 流式完整落库时用用户消息id关联附件_且恢复了请求线程的租户上下文() {
+        stubPipelineSession("s8");
+        stubTransactionPassThrough();
+        stubSaveWithIdSequence();
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("好的，收到", 5)));
+
+        List<Long> tenantIdSeenByGuard = new ArrayList<>();
+        doAnswer(inv -> {
+            tenantIdSeenByGuard.add(TenantContext.getTenantId());
+            return null;
+        }).when(chatAttachmentService).attachToMessage(any(), any(), any());
+
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s8").message("这是报错截图")
+                                .attachmentIds(List.of(7L)).build(),
+                        tokens -> { }, tokens -> { }))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DONE))
+                .verifyComplete();
+
+        // 第 1 条 save 是用户消息（id=1），落点必须是它，不是随后的 AI 消息（id=2）
+        verify(chatAttachmentService).attachToMessage(eq(List.of(7L)), eq("s8"), eq(1L));
+        // Reactor 线程内执行 attachToMessage 时，租户上下文已被正确恢复为请求线程原有的 9L
+        assertThat(tenantIdSeenByGuard).containsExactly(9L);
+        // 方法返回后必须清理，不留给复用线程的下一轮请求
+        assertThat(TenantContext.getTenantId()).isNull();
+    }
+
+    @Test
+    void 流式完整落库时没带附件_不调用关联_也不触碰租户上下文() {
+        stubPipelineSession("s9");
+        stubTransactionPassThrough();
+        stubSaveWithIdSequence();
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("你好", 5)));
+
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s9").message("你好").build(),
+                        tokens -> { }, tokens -> { }))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.START))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DELTA))
+                .assertNext(e -> assertThat(e.type()).isEqualTo(ChatStreamEvent.Type.DONE))
+                .verifyComplete();
+
+        verify(chatAttachmentService, never()).attachToMessage(any(), any(), any());
     }
 }

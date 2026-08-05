@@ -2,13 +2,16 @@ package com.qingyu.care.service.realtime;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.repository.ChatAttachmentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -23,6 +26,8 @@ import java.util.Map;
 public class RealtimeNotifier {
 
     private final RealtimeHub hub;
+    /** 附件反查（MM-6）：messageJson 按 msg.getId() 现查，不依赖调用方额外传参。 */
+    private final ChatAttachmentRepository attachmentRepository;
     /** 不走 Spring 注入：本类只序列化基本类型/字符串的扁平 Map，默认实例即可，避免单测缺 mock 时被注入 null。 */
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -78,6 +83,13 @@ public class RealtimeNotifier {
         toTenantAgents(tenantId, "presence", json(m));
     }
 
+    /**
+     * MM-6：补 attachments 与 uiSpec 两个字段——不补的话用户发的图/AI・坐席的卡片推不到坐席端
+     * （或用户端），双向实时只剩一半。attachments 现查（不依赖调用方传参，谁调 toUserMessage/
+     * toAgentMessage 都自动带上），URL 前缀固定用管理端 {@code /v1/chat/files/}：这两个推送方法
+     * 目前只喂给坐席工作台（用户 inbox 走 {@code toUserSessionEvent}/{@code toUserMessage}，
+     * 而 {@code toUserMessage} 的唯一生产调用点是 agentReply 推给用户，同样是管理端会话）。
+     */
     private String messageJson(String sessionId, ChatMessage msg) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("sessionId", sessionId);
@@ -85,7 +97,24 @@ public class RealtimeNotifier {
         m.put("role", msg.getRole() != null ? msg.getRole().name() : null);
         m.put("content", msg.getContent());
         m.put("createdAt", msg.getCreatedAt() != null ? msg.getCreatedAt().toString() : null);
+        m.put("attachments", findAttachments(msg.getId()));
+        m.put("uiSpec", msg.getUiSpec());
         return json(m);
+    }
+
+    /** 查某条消息已关联的附件；messageId 为空或查询失败均安全返回空列表（best-effort，同类惯例）。 */
+    private List<AttachmentDTO> findAttachments(Long messageId) {
+        if (messageId == null) {
+            return List.of();
+        }
+        try {
+            return attachmentRepository.findByMessageIdIn(List.of(messageId)).stream()
+                    .map(AttachmentDTO::of)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("实时推送查询附件失败 messageId={}: {}", messageId, e.getMessage());
+            return List.of();
+        }
     }
 
     private String json(Map<String, ?> m) {

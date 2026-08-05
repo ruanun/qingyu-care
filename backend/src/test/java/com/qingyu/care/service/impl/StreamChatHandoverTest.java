@@ -4,6 +4,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.ChatStreamEvent;
+import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
@@ -19,6 +20,7 @@ import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.UiSpecService;
+import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -73,6 +75,7 @@ class StreamChatHandoverTest {
     @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
+    @Mock ChatAttachmentService chatAttachmentService;
     @InjectMocks ChatServiceImpl chatService;
 
     @BeforeEach
@@ -203,5 +206,52 @@ class StreamChatHandoverTest {
         assertThat(resp.isSuggestHandover()).isFalse();
         verify(modelRouterService, never()).callWithFallback(any(), any());
         verify(realtimeNotifier).toAgentMessage(eq(9L), eq(3L), any());
+    }
+
+    /**
+     * MM-6：人工接管态静默存消息的分支（persistUserMessageDuringHandover）也要接线附件，
+     * 否则用户在等待接管期间发的图会静默变孤儿。
+     */
+    @Test
+    void streamChat_人工接管态_带附件时关联到用户消息() {
+        ChatSession session = ChatSession.builder().sessionId("s1").build();
+        session.setStatus(SessionStatus.AGENT_PROCESSING);
+        session.setTenantId(9L);
+        session.setAgentId(3L);
+        when(sessionRepository.findBySessionId("s1")).thenReturn(Optional.of(session));
+        when(messageRepository.save(any())).thenAnswer(i -> {
+            ChatMessage m = i.getArgument(0);
+            m.setId(55L);
+            return m;
+        });
+
+        chatService.streamChat(ChatRequest.builder().sessionId("s1").message("图在这")
+                .attachmentIds(List.of(9L)).build()).collectList().block();
+
+        verify(chatAttachmentService).attachToMessage(eq(List.of(9L)), eq("s1"), eq(55L));
+    }
+
+    /**
+     * MM-6：关键词触发转人工的分支（triggerKeywordHandoverIfHit）也要接线附件——用户很可能就是
+     * 在附截图的同时打出"转人工"这类关键词。
+     */
+    @Test
+    void streamChat_命中关键词转人工_带附件时关联到用户消息() {
+        ChatSession session = ChatSession.builder().sessionId("s2").build();
+        session.setStatus(SessionStatus.AI_PROCESSING);
+        session.setTenantId(9L);
+        when(sessionRepository.findBySessionId("s2")).thenReturn(Optional.of(session));
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(i -> i.getArgument(0));
+        when(messageRepository.save(any())).thenAnswer(i -> {
+            ChatMessage m = i.getArgument(0);
+            m.setId(66L);
+            return m;
+        });
+        when(handoverRuleService.checkKeywordTrigger("人工")).thenReturn(true);
+
+        chatService.streamChat(ChatRequest.builder().sessionId("s2").message("人工")
+                .attachmentIds(List.of(11L)).build()).collectList().block();
+
+        verify(chatAttachmentService).attachToMessage(eq(List.of(11L)), eq("s2"), eq(66L));
     }
 }

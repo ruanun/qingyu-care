@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * 客服回复请求 DTO。
  * agentId 不再由请求体传入，控制器一律取登录态（StpUtil.getLoginIdAsLong()），
@@ -22,4 +24,9 @@ public class AgentReplyRequest {
 
     @NotBlank(message = "消息内容不能为空")
     private String message;
+
+    /**
+     * 本条回复携带的附件 id（先经 /v1/chat/files 上传拿到）。可空。
+     */
+    private List<Long> attachmentIds;
 }

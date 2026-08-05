@@ -6,6 +6,7 @@ import com.qingyu.care.controller.support.AttachmentResponses;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AgentReplyRequest;
 import com.qingyu.care.dto.AttachmentDTO;
+import com.qingyu.care.dto.ChatMessageDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.PageDTO;
@@ -16,6 +17,7 @@ import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.exception.ResourceNotFoundException;
+import com.qingyu.care.repository.ChatAttachmentRepository;
 import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.ChatStreamSseMapper;
@@ -37,6 +39,10 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 /**
  * 聊天控制器
  */
@@ -50,6 +56,7 @@ public class ChatController {
     private final ChatFeedbackService chatFeedbackService;
     private final ChatStreamSseMapper sseMapper;
     private final ChatAttachmentService chatAttachmentService;
+    private final ChatAttachmentRepository chatAttachmentRepository;
     private final FileService fileService;
 
     @PostMapping
@@ -152,7 +159,8 @@ public class ChatController {
     public ApiResponse<Void> agentReply(@Valid @RequestBody AgentReplyRequest request) {
         SecurityUtil.requireAgent();
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
-        chatService.agentReply(request.getSessionId(), request.getMessage(), agentId);
+        chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
+                request.getAttachmentIds());
         return ApiResponse.success("消息已发送", null);
     }
 
@@ -167,10 +175,21 @@ public class ChatController {
 
     @GetMapping("/session/{sessionId}/messages")
     @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息")
-    public ApiResponse<java.util.List<ChatMessage>> getSessionMessages(
+    public ApiResponse<List<ChatMessageDTO>> getSessionMessages(
             @PathVariable String sessionId) {
         SecurityUtil.requireAgent();
-        return ApiResponse.success(chatService.getSessionMessages(sessionId));
+        List<ChatMessage> messages = chatService.getSessionMessages(sessionId);
+        List<Long> messageIds = messages.stream().map(ChatMessage::getId).toList();
+        // 一次查完全部消息的附件，按 messageId 分组塞回去——不在循环里逐条查，避免 N+1
+        Map<Long, List<AttachmentDTO>> attachmentsByMessageId = messageIds.isEmpty()
+                ? Map.of()
+                : chatAttachmentRepository.findByMessageIdIn(messageIds).stream()
+                        .collect(Collectors.groupingBy(ChatAttachment::getMessageId,
+                                Collectors.mapping(AttachmentDTO::of, Collectors.toList())));
+        List<ChatMessageDTO> dtos = messages.stream()
+                .map(m -> ChatMessageDTO.of(m, attachmentsByMessageId.getOrDefault(m.getId(), List.of())))
+                .toList();
+        return ApiResponse.success(dtos);
     }
 
     @PostMapping("/session/{sessionId}/return-to-ai")

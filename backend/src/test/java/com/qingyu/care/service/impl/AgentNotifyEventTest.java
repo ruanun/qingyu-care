@@ -19,6 +19,7 @@ import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.UiSpecService;
+import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -32,11 +33,13 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +71,7 @@ class AgentNotifyEventTest {
     @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
+    @Mock ChatAttachmentService chatAttachmentService;
     @InjectMocks ChatServiceImpl chatService;
 
     @AfterEach
@@ -129,5 +133,29 @@ class AgentNotifyEventTest {
         assertThat(pushed.getId()).isEqualTo(99L);
         assertThat(pushed.getRole()).isEqualTo(MessageRole.ASSISTANT);
         assertThat(pushed.getContent()).isEqualTo("您好，我是人工客服");
+
+        // 没传 attachmentIds：不调用关联（同 ChatAttachmentWiringTest 的"没带附件"用例同语义）
+        verify(chatAttachmentService, never()).attachToMessage(any(), any(), any());
+    }
+
+    /**
+     * MM-6：agentReply 携带附件时，落点是坐席自己这条消息（同用户消息路径同语义），
+     * 不是别的——挂错了坐席发的图会显示在错误的位置。
+     */
+    @Test
+    void agentReply_带附件时用坐席消息自己的id关联() {
+        ChatSession session = waitingSession();
+        session.setStatus(SessionStatus.AGENT_PROCESSING);
+        session.setAgentId(10L);
+        when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(session));
+        when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> {
+            ChatMessage msg = inv.getArgument(0);
+            msg.setId(99L);
+            return msg;
+        });
+
+        chatService.agentReply("sess-1", "这是处理结果截图", 10L, List.of(3L, 4L));
+
+        verify(chatAttachmentService).attachToMessage(eq(List.of(3L, 4L)), eq("sess-1"), eq(99L));
     }
 }

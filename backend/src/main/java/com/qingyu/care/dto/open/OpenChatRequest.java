@@ -3,6 +3,8 @@ package com.qingyu.care.dto.open;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 开放对话请求 DTO
  *
@@ -26,4 +28,9 @@ public class OpenChatRequest {
      */
     @NotBlank(message = "消息内容不能为空")
     private String message;
+
+    /**
+     * 本条消息携带的附件 id（先经 /open/v1/chat/files 上传拿到）。可空。
+     */
+    private List<Long> attachmentIds;
 }

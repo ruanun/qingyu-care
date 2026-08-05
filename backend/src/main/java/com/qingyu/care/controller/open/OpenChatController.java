@@ -162,6 +162,7 @@ public class OpenChatController {
                 .message(req.getMessage())
                 .stream(stream)
                 .openChannel(true)
+                .attachmentIds(req.getAttachmentIds())
                 .build();
     }
 }

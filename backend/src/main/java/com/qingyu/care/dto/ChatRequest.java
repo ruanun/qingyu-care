@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * 聊天请求 DTO
  *
@@ -53,4 +55,9 @@ public class ChatRequest {
     @com.fasterxml.jackson.annotation.JsonIgnore
     @Builder.Default
     private boolean openChannel = false;
+
+    /**
+     * 本条消息携带的附件 id（先经 /files 上传拿到）。可空。
+     */
+    private List<Long> attachmentIds;
 }
