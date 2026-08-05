@@ -236,6 +236,49 @@ class ChatAttachmentIT extends AbstractPostgresIT {
                 .isFalse();
     }
 
+    // ===== N-1：空白 sessionId 是共享命名空间，上传/下载两端都必须拒绝 =====
+
+    @Test
+    void 上传时sessionId为空白则拒绝且不落库() throws Exception {
+        Actor actor = seedActor("blankup" + System.nanoTime());
+        MockMultipartFile file = new MockMultipartFile("file", "a.png", "image/png", png());
+
+        mockMvc.perform(multipart("/v1/chat/files")
+                        .file(file)
+                        .param("sessionId", "")
+                        .header("satoken", actor.token())
+                        .header("X-App-Id", String.valueOf(actor.app().getId())))
+                .andExpect(status().isOk())   // BusinessException 走 HTTP 200 + code 400
+                .andExpect(jsonPath("$.code").value(400));
+
+        assertThat(attachmentRepository.findAll().stream()
+                .anyMatch(a -> "".equals(a.getSessionId())
+                        && actor.app().getId().equals(a.getAppId())))
+                .isFalse();
+    }
+
+    /**
+     * 上传端已拒绝空白 sessionId，但历史脏数据（修复上线前遗留的空会话附件）仍可能存在。
+     * 直接绕过 service 校验、模拟这批遗留行，验证下载端点独立地拒绝空白 sessionId
+     * ——不能指望"以后不会再产生"就够，已存在的脏数据也不能被 ?sessionId= 空值命中。
+     */
+    @Test
+    void 开放API下载时sessionId为空白直接拒绝_即便存在同空白session的历史脏数据() throws Exception {
+        Application app = seedApp("blankdl" + System.nanoTime(), "http://blankdl.example.com");
+        ChatAttachment legacy = ChatAttachment.builder()
+                .sessionId("").fileName("legacy.png").fileSize(1L).contentType("image/png")
+                .storageKey("legacy-key-" + System.nanoTime()).uploaderRole(MessageRole.USER).build();
+        ownBy(legacy, app);
+        legacy = attachmentRepository.saveAndFlush(legacy);
+        cleanupIds.add(legacy.getId());
+
+        mockMvc.perform(get("/open/v1/chat/files/{id}", legacy.getId())
+                        .param("sessionId", "")
+                        .header("X-App-Id", app.getAppKey())
+                        .header("X-Api-Key", app.getAppSecret()))
+                .andExpect(status().isNotFound());
+    }
+
     // ===== A. 跨租户访问被拒（两条访问端点分别验证）=====
 
     @Test

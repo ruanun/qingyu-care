@@ -301,21 +301,17 @@ class ChatAttachmentServiceTest {
     // ---------- upload：sessionId 归属校验（I-2）----------
 
     @Test
-    void 上传时sessionId为空白放行不查会话() {
-        byte[] bytes = "fake-image-bytes".getBytes();
-        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", bytes);
-        AttachmentValidator.ValidatedFile validated =
-                new AttachmentValidator.ValidatedFile("image/png", true, 100, 200);
-        when(validator.validate(bytes, "a.png")).thenReturn(validated);
-        when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
-        when(attachmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    void 上传时sessionId为空白则拒绝且不落库() {
+        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", "x".getBytes());
 
-        // widget 允许「先选图再发第一条消息」，那一刻会话尚未创建——空白 sessionId 必须放行，
-        // 不能强行要求会话已存在，否则打死这个交互
-        ChatAttachment saved = service.upload("  ", file, MessageRole.USER);
+        // chat_attachment.session_id 是 NOT NULL，空白会话上传只能落成 ""——一个所有租户/
+        // 应用共享的命名空间：既让下载端的 sessionId 相等校验对该批附件形同虚设（同 app 内
+        // 任何调用方带 ?sessionId= 空值就能命中），又因 attachToMessage 要求精确相等而永远
+        // 挂不上真实会话，是一条只能等孤儿清理的死数据。故空白必须拒绝，不能放行。
+        assertThatThrownBy(() -> service.upload("  ", file, MessageRole.USER))
+                .isInstanceOf(BusinessException.class);
 
-        assertThat(saved).isNotNull();
-        verifyNoInteractions(sessionRepository);
+        verifyNoInteractions(sessionRepository, validator, fileService, attachmentRepository);
     }
 
     @Test
