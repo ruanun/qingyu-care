@@ -196,7 +196,7 @@ public class ChatController {
     /**
      * 管理端/坐席上传附件。上传与发消息分两步，这里只落库拿 id。
      *
-     * <p>{@code file} 排在 {@code sessionId} 前——{@link AuditLogAspect#extractTargetId}
+     * <p>{@code file} 排在 {@code sessionId} 前——{@code AuditLogAspect#extractTargetId}
      * 约定取方法首参当 targetId（仅当其为 Long/String），若 sessionId 排首位会被误记成
      * "ChatAttachment 的 targetId"，实际是会话标识不是附件 id；MultipartFile 不落这条
      * 约定的判断分支，天然落回「create 类操作 targetId 为 null」这一既有惯例

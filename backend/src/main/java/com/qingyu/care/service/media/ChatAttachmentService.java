@@ -90,13 +90,24 @@ public class ChatAttachmentService {
     }
 
     /**
-     * sessionId 归属校验：传了就必须指向一个当前上下文能写的会话，越权/不存在与「不存在」
-     * 同语义处理（防枚举探测）。故意不要求必须传——widget 允许「先选图再发第一条消息」，
-     * 那一刻会话尚未创建，硬性要求会打死这个交互，因此 sessionId 为 null/空白时直接放行。
+     * sessionId 归属校验：必须指向一个当前上下文能写的会话，越权/不存在与「不存在」
+     * 同语义处理（防枚举探测）。
      *
-     * <p>不校验会放行两个后果：其一，管理端这条上传端点没有任何限流（开放 API 那条还有
-     * 60/min），配上 24h 的孤儿保留期，任意已登录成员可以对着一个压根不存在/别人的会话
-     * 无限次传 20MB 文件，是不受限的存储通道；其二，库里会堆出指向不存在或他人会话的脏行。
+     * <p>⚠️ 空白 sessionId **拒绝**，不是放行（复核推翻了本方法上一版"空白放行"的裁定）：
+     * {@code chat_attachment.session_id} 是 {@code NOT NULL}，空白会话上传只能落成
+     * {@code ""}——这是一个所有租户/应用共享的命名空间。放行会引出两个后果：
+     * <ol>
+     *   <li>安全——开放 API 下载端点靠 sessionId 相等作第二重凭证（见
+     *       {@code OpenChatController#downloadAttachment}），任何调用方带一个空白
+     *       sessionId 就能命中同一 app 下所有"空会话上传"的附件，把该防线开回一半；</li>
+     *   <li>功能——{@link #attachToMessage} 要求 sessionId 精确相等，空白附件的
+     *       sessionId 永远等不上真实会话的 sessionId，传上去就是一条只能等 24 小时孤儿
+     *       清理的死数据，没有任何补救路径能把它安全地过继给某个具体访客的真实会话
+     *       （空白命名空间下所有访客的孤儿都长一个样，服务端分不清归属）。</li>
+     * </ol>
+     * 「先选图再发第一条消息」这个交互仍然成立，但責任在调用方：widget 必须在上传前确保
+     * 会话已存在（初始化时建会话，或本地先用 {@code URL.createObjectURL} 预览、发送时
+     * 才真正上传），不该由服务端开一个共享命名空间来迁就。
      *
      * <p>不直接复用 {@code ChatServiceImpl.getSession}（做的是同一件事）——避免与
      * {@code ChatServiceImpl} 形成循环依赖（后续会话消息关联会反过来让 ChatServiceImpl
@@ -109,7 +120,7 @@ public class ChatAttachmentService {
      */
     private void requireOwnedSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
-            return;
+            throw new BusinessException("缺少会话标识");
         }
         ChatSession session = sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话", sessionId));

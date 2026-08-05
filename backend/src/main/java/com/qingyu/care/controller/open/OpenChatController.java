@@ -122,8 +122,12 @@ public class OpenChatController {
     /**
      * 读取附件，同管理端一样经私有桶代理下发。{@code getForRead} 不做归属校验，交给这里补上。
      *
-     * <p>⚠️ 两道校验缺一不可：
+     * <p>⚠️ 三道校验缺一不可：
      * <ol>
+     *   <li>{@code sessionId} 非空白——{@code chat_attachment.session_id} 是 NOT NULL，
+     *       上传端已拒绝空白 sessionId（见 {@code ChatAttachmentService#requireOwnedSession}），
+     *       但历史脏数据/修复前遗留的空白会话附件仍可能存在，这里纵深防御一道，防止靠
+     *       {@code ?sessionId=} 空值命中这批"所有人共享"的孤儿；
      *   <li>{@link TenantOwnershipGuard#mutableInCurrentContext}——用写语义而非读语义的
      *       {@code belongsToCurrentContext}：后者对 NULL 租户无条件放行（配置类实体那是有意
      *       为之的共享回退语义，附件没有这层含义）；
@@ -140,7 +144,8 @@ public class OpenChatController {
     public ResponseEntity<StreamingResponseBody> downloadAttachment(
             @PathVariable Long id, @RequestParam String sessionId) {
         ChatAttachment a = chatAttachmentService.getForRead(id);
-        if (!TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())
+        if (sessionId.isBlank()
+                || !TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())
                 || !sessionId.equals(a.getSessionId())) {
             throw new ResourceNotFoundException("附件不存在: " + id);
         }
