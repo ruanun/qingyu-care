@@ -79,6 +79,9 @@ public class FileService {
 
     /**
      * 流式读取对象。附件最大 20MB，用 byte[] 会让每个并发请求都吃满一份堆内存。
+     *
+     * <p>返回的是 S3 SDK 的 {@code ResponseInputStream}，调用方需 try-with-resources 关闭，
+     * 否则会泄漏底层连接。
      */
     public InputStream openStream(String storageKey) {
         GetObjectRequest request = GetObjectRequest.builder()
