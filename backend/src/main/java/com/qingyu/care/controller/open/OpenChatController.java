@@ -113,21 +113,35 @@ public class OpenChatController {
     /** Widget 用户上传附件 */
     @PostMapping("/files")
     public AttachmentDTO uploadAttachment(
-            @RequestParam("sessionId") String sessionId,
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("sessionId") String sessionId) {
         ChatAttachment a = chatAttachmentService.upload(sessionId, file, MessageRole.USER);
-        return AttachmentDTO.of(a, "/open/v1/chat/files/");
+        return AttachmentDTO.of(a);
     }
 
     /**
-     * 读取附件，同管理端一样经私有桶代理下发。{@code getForRead} 不做归属校验，
-     * 这里补上读语义的 {@link TenantOwnershipGuard#belongsToCurrentContext}——
-     * 漏了就是持任意合法 appKey/Origin 的调用方对全库附件的跨租户 IDOR。
+     * 读取附件，同管理端一样经私有桶代理下发。{@code getForRead} 不做归属校验，交给这里补上。
+     *
+     * <p>⚠️ 两道校验缺一不可：
+     * <ol>
+     *   <li>{@link TenantOwnershipGuard#mutableInCurrentContext}——用写语义而非读语义的
+     *       {@code belongsToCurrentContext}：后者对 NULL 租户无条件放行（配置类实体那是有意
+     *       为之的共享回退语义，附件没有这层含义）；
+     *   <li>{@code sessionId} 必须与附件所属会话一致——开放 API 的身份粒度是「整个 app」，
+     *       只查 tenant/app 归属堵不住同一 app 内部的越权：appKey 本身是公开信息（Widget 明写
+     *       在页面源码里），{@code ChatAttachment.id} 又是全局自增整数，攻击者持公开 appKey
+     *       逐 id 枚举即可读到该 app 下所有访客上传的文件（含身份证、发票等）。要求调用方带上
+     *       自己会话的 sessionId 作为第二重能力凭证，把身份粒度从「app」收紧到「session」，
+     *       与 {@code OpenSessionController} 用 sessionId 作访问凭证是同一模式。
+     * </ol>
+     * 任一条不满足都按「不存在」同语义处理，防枚举探测。
      */
     @GetMapping("/files/{id}")
-    public ResponseEntity<StreamingResponseBody> downloadAttachment(@PathVariable Long id) {
+    public ResponseEntity<StreamingResponseBody> downloadAttachment(
+            @PathVariable Long id, @RequestParam String sessionId) {
         ChatAttachment a = chatAttachmentService.getForRead(id);
-        if (!TenantOwnershipGuard.belongsToCurrentContext(a.getTenantId(), a.getAppId())) {
+        if (!TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())
+                || !sessionId.equals(a.getSessionId())) {
             throw new ResourceNotFoundException("附件不存在: " + id);
         }
         return AttachmentResponses.stream(a, fileService);

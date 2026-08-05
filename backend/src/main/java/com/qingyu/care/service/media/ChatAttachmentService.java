@@ -2,10 +2,12 @@ package com.qingyu.care.service.media;
 
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.ChatAttachment;
+import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.ChatAttachmentRepository;
+import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.FileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +48,7 @@ public class ChatAttachmentService {
     private static final int CLEANUP_BATCH_SIZE = 200;
 
     private final ChatAttachmentRepository attachmentRepository;
+    private final ChatSessionRepository sessionRepository;
     private final FileService fileService;
     private final AttachmentValidator validator;
 
@@ -53,6 +56,7 @@ public class ChatAttachmentService {
         if (file.getSize() > MAX_UPLOAD_BYTES) {
             throw new BusinessException("文件不能超过 20MB");
         }
+        requireOwnedSession(sessionId);
         byte[] bytes;
         try {
             bytes = file.getBytes();
@@ -82,6 +86,35 @@ public class ChatAttachmentService {
             log.warn("附件落库失败，回滚已上传的 S3 对象 key={}: {}", storageKey, e.getMessage());
             fileService.deleteFile(storageKey);
             throw e;
+        }
+    }
+
+    /**
+     * sessionId 归属校验：传了就必须指向一个当前上下文能写的会话，越权/不存在与「不存在」
+     * 同语义处理（防枚举探测）。故意不要求必须传——widget 允许「先选图再发第一条消息」，
+     * 那一刻会话尚未创建，硬性要求会打死这个交互，因此 sessionId 为 null/空白时直接放行。
+     *
+     * <p>不校验会放行两个后果：其一，管理端这条上传端点没有任何限流（开放 API 那条还有
+     * 60/min），配上 24h 的孤儿保留期，任意已登录成员可以对着一个压根不存在/别人的会话
+     * 无限次传 20MB 文件，是不受限的存储通道；其二，库里会堆出指向不存在或他人会话的脏行。
+     *
+     * <p>不直接复用 {@code ChatServiceImpl.getSession}（做的是同一件事）——避免与
+     * {@code ChatServiceImpl} 形成循环依赖（后续会话消息关联会反过来让 ChatServiceImpl
+     * 调用本类把附件挂上新消息），故在此复刻同一套「{@code findBySessionId} 不受 Hibernate
+     * {@code @Filter} 保护、加载后须显式校验归属」的既定模式（同 {@code ChatServiceImpl#getSession}）。
+     *
+     * <p>用写语义的 {@link TenantOwnershipGuard#mutableInCurrentContext}
+     * 而非读语义——上传相当于往目标会话名下追加数据，语义上更接近「写」，
+     * 且与 {@link #attachToMessage} 对附件本身的归属判定保持同一严格度。
+     */
+    private void requireOwnedSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        ChatSession session = sessionRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("会话", sessionId));
+        if (!TenantOwnershipGuard.mutableInCurrentContext(session.getTenantId(), session.getAppId())) {
+            throw new ResourceNotFoundException("会话", sessionId);
         }
     }
 

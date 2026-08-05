@@ -193,15 +193,23 @@ public class ChatController {
 
     // ===== 附件（多媒体消息）=====
 
-    /** 管理端/坐席上传附件。上传与发消息分两步，这里只落库拿 id */
+    /**
+     * 管理端/坐席上传附件。上传与发消息分两步，这里只落库拿 id。
+     *
+     * <p>{@code file} 排在 {@code sessionId} 前——{@link AuditLogAspect#extractTargetId}
+     * 约定取方法首参当 targetId（仅当其为 Long/String），若 sessionId 排首位会被误记成
+     * "ChatAttachment 的 targetId"，实际是会话标识不是附件 id；MultipartFile 不落这条
+     * 约定的判断分支，天然落回「create 类操作 targetId 为 null」这一既有惯例
+     * （同 {@code AbTestController#create}）。sessionId 仍完整保留在 detail 里（记录全部入参）。
+     */
     @PostMapping("/files")
     @AuditLog(action = "CHAT_ATTACHMENT_UPLOAD", targetType = "ChatAttachment")
-    @Operation(summary = "上传附件", description = "上传图片/文件，返回附件 id 与访问地址；发消息时再关联")
+    @Operation(summary = "上传附件", description = "上传图片/文件，返回附件 id；发消息时再关联")
     public ApiResponse<AttachmentDTO> uploadAttachment(
-            @RequestParam("sessionId") String sessionId,
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("sessionId") String sessionId) {
         ChatAttachment a = chatAttachmentService.upload(sessionId, file, MessageRole.AGENT);
-        return ApiResponse.success(AttachmentDTO.of(a, "/v1/chat/files/"));
+        return ApiResponse.success(AttachmentDTO.of(a));
     }
 
     /**
@@ -210,14 +218,17 @@ public class ChatController {
      * <p>图片 inline 供内嵌预览，其余一律 attachment 强制下载——不给浏览器渲染的机会。
      *
      * <p>{@code getForRead} 本身不做归属校验（两条访问端点鉴权路径不同，交给调用方），
-     * 这里用读语义的 {@link com.qingyu.care.config.TenantOwnershipGuard#belongsToCurrentContext}
-     * 补上——findById 不受 Hibernate {@code @Filter} 保护，漏了这一步就是对全库附件的跨租户 IDOR。
+     * 这里补上——findById 不受 Hibernate {@code @Filter} 保护，漏了这一步就是对全库附件的跨租户 IDOR。
+     * 用写语义的 {@link TenantOwnershipGuard#mutableInCurrentContext} 而非读语义的
+     * {@code belongsToCurrentContext}：后者对 NULL 租户（如平台管理员上传、未走 tenant 上下文
+     * 落库的行）无条件放行——那对配置类实体是有意为之（NULL=平台默认=有意共享回退），但对附件
+     * 不成立（NULL 只是没有归属，从无共享意图），会让平台管理员的文件对任意租户可读。
      */
     @GetMapping("/files/{id}")
     @Operation(summary = "下载附件", description = "私有桶代理下载，图片 inline 预览，其余强制下载")
     public ResponseEntity<StreamingResponseBody> downloadAttachment(@PathVariable Long id) {
         ChatAttachment a = chatAttachmentService.getForRead(id);
-        if (!TenantOwnershipGuard.belongsToCurrentContext(a.getTenantId(), a.getAppId())) {
+        if (!TenantOwnershipGuard.mutableInCurrentContext(a.getTenantId(), a.getAppId())) {
             throw new ResourceNotFoundException("附件不存在: " + id);
         }
         return AttachmentResponses.stream(a, fileService);
