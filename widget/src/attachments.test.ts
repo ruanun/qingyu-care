@@ -69,6 +69,28 @@ describe('renderAttachments', () => {
     expect(img.alt).toContain('加载失败');
   });
 
+  it('图片换源前点击被拦下（不跳去占位 #），换源后点击放行', async () => {
+    let resolveFn!: (url: string) => void;
+    const resolveUrl = vi.fn(() => new Promise<string>((r) => { resolveFn = r; }));
+    const el = renderAttachments(
+      [{ id: 13, fileName: 'h.png', contentType: 'image/png', fileSize: 100 }],
+      resolveUrl,
+    )!;
+    const link = el.querySelector('a.qy-attach-img-link') as HTMLAnchorElement;
+
+    const early = new MouseEvent('click', { cancelable: true });
+    link.dispatchEvent(early);
+    expect(early.defaultPrevented).toBe(true); // 换源前点击：拦下，不跳去占位 '#'
+
+    resolveFn('blob:img2');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const late = new MouseEvent('click', { cancelable: true });
+    link.dispatchEvent(late);
+    expect(late.defaultPrevented).toBe(false); // 换源后点击：放行，走原生 <a target=_blank>
+  });
+
   it('文件条点击阻止默认导航并触发 resolveUrl 下载', async () => {
     const resolveUrl = vi.fn().mockResolvedValue('blob:file');
     const el = renderAttachments(
@@ -81,6 +103,21 @@ describe('renderAttachments', () => {
     expect(evt.defaultPrevented).toBe(true);
     await Promise.resolve();
     expect(resolveUrl).toHaveBeenCalledWith(7);
+  });
+
+  it('文件下载触发后立即释放 blob URL，不泄漏', async () => {
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const resolveUrl = vi.fn().mockResolvedValue('blob:file2');
+    const el = renderAttachments(
+      [{ id: 12, fileName: 'g.pdf', contentType: 'application/pdf', fileSize: 100 }],
+      resolveUrl,
+    )!;
+    const link = el.querySelector('a.qy-attach-file') as HTMLAnchorElement;
+    link.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(revokeSpy).toHaveBeenCalledWith('blob:file2');
+    revokeSpy.mockRestore();
   });
 
   it('文件条无 resolveUrl 时点击不抛（无副作用）', () => {

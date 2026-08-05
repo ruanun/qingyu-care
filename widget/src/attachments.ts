@@ -65,8 +65,17 @@ function renderImage(a: WidgetAttachment, resolveUrl?: ResolveAttachmentUrl): HT
   link.appendChild(img);
 
   if (resolveUrl) {
+    // 换源前 href 还是占位的 '#'；用户在 fetch 完成前点"新标签查看原图"会拦下这次点击
+    // （不让它跳去 '#'），换源后 href 已是真 blob URL，后续点击走原生 <a target=_blank>
+    // 行为放行，不用 window.open 补触发——那是从 fetch 回调里发起的非直接用户手势，
+    // 大概率被浏览器弹窗拦截器挡掉，体验反而更差；影响面很小（早点一次不生效，再点一次即可）。
+    let resolved = false;
+    link.addEventListener('click', (e) => {
+      if (!resolved) e.preventDefault();
+    });
     resolveUrl(a.id)
       .then((blobUrl) => {
+        resolved = true;
         img.src = blobUrl;
         link.href = blobUrl;
       })
@@ -100,6 +109,10 @@ function renderFile(a: WidgetAttachment, resolveUrl?: ResolveAttachmentUrl): HTM
           tmp.href = blobUrl;
           tmp.download = a.fileName;
           tmp.click();
+          // 临时锚点用完即弃，立即释放——不像图片预览的 blob 还要继续挂在 <img>/新标签链接上
+          // 显示，这份 blob 触发下载后再无用途，不释放就是纯泄漏（反复点同一份文件下载会
+          // 累积到标签页关闭才回收）。
+          URL.revokeObjectURL(blobUrl);
         })
         .catch(() => {
           // 下载失败静默：不打断对话，用户可重新点击重试
