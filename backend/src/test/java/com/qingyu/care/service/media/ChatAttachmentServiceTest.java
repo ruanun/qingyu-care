@@ -2,10 +2,12 @@ package com.qingyu.care.service.media;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatAttachment;
+import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.ChatAttachmentRepository;
+import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.service.FileService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,8 @@ class ChatAttachmentServiceTest {
     @Mock
     private ChatAttachmentRepository attachmentRepository;
     @Mock
+    private ChatSessionRepository sessionRepository;
+    @Mock
     private FileService fileService;
     @Mock
     private AttachmentValidator validator;
@@ -63,6 +67,14 @@ class ChatAttachmentServiceTest {
                 .build();
         a.setId(id);
         return a;
+    }
+
+    /** upload() 的 sessionId 归属校验用：一个存在的会话，tenantId 由调用方指定（null 表示无归属）。 */
+    private static ChatSession session(Long tenantId, Long appId) {
+        ChatSession s = new ChatSession();
+        s.setTenantId(tenantId);
+        s.setAppId(appId);
+        return s;
     }
 
     // ---------- attachToMessage：归属校验 ----------
@@ -227,6 +239,7 @@ class ChatAttachmentServiceTest {
         MultipartFile file = new MockMultipartFile("file", "a.png", "image/gif", bytes); // 客户端谎报 gif
         AttachmentValidator.ValidatedFile validated =
                 new AttachmentValidator.ValidatedFile("image/png", true, 100, 200);        // 服务端探测出的真实类型
+        when(sessionRepository.findBySessionId("s-1")).thenReturn(Optional.of(session(null, null)));
         when(validator.validate(bytes, "a.png")).thenReturn(validated);
         when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
         when(attachmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -245,6 +258,7 @@ class ChatAttachmentServiceTest {
     void 上传时校验失败则不上传不落库() {
         byte[] bytes = "bad".getBytes();
         MultipartFile file = new MockMultipartFile("file", "a.exe", "application/octet-stream", bytes);
+        when(sessionRepository.findBySessionId("s-1")).thenReturn(Optional.of(session(null, null)));
         when(validator.validate(bytes, "a.exe")).thenThrow(new BusinessException("不支持的文件类型：exe"));
 
         assertThatThrownBy(() -> service.upload("s-1", file, MessageRole.USER))
@@ -273,6 +287,7 @@ class ChatAttachmentServiceTest {
         MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", bytes);
         AttachmentValidator.ValidatedFile validated =
                 new AttachmentValidator.ValidatedFile("image/png", true, 100, 200);
+        when(sessionRepository.findBySessionId("s-1")).thenReturn(Optional.of(session(null, null)));
         when(validator.validate(bytes, "a.png")).thenReturn(validated);
         when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
         when(attachmentRepository.save(any())).thenThrow(new RuntimeException("DB 挂了"));
@@ -281,6 +296,67 @@ class ChatAttachmentServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         verify(fileService).deleteFile("chat/2026/x.png");
+    }
+
+    // ---------- upload：sessionId 归属校验（I-2）----------
+
+    @Test
+    void 上传时sessionId为空白放行不查会话() {
+        byte[] bytes = "fake-image-bytes".getBytes();
+        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", bytes);
+        AttachmentValidator.ValidatedFile validated =
+                new AttachmentValidator.ValidatedFile("image/png", true, 100, 200);
+        when(validator.validate(bytes, "a.png")).thenReturn(validated);
+        when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
+        when(attachmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // widget 允许「先选图再发第一条消息」，那一刻会话尚未创建——空白 sessionId 必须放行，
+        // 不能强行要求会话已存在，否则打死这个交互
+        ChatAttachment saved = service.upload("  ", file, MessageRole.USER);
+
+        assertThat(saved).isNotNull();
+        verifyNoInteractions(sessionRepository);
+    }
+
+    @Test
+    void 上传时sessionId指向不存在的会话则拒绝且不落库() {
+        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", "x".getBytes());
+        when(sessionRepository.findBySessionId("no-such-session")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.upload("no-such-session", file, MessageRole.USER))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verifyNoInteractions(validator, fileService, attachmentRepository);
+    }
+
+    @Test
+    void 上传时sessionId属于其他租户则拒绝且不落库() {
+        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", "x".getBytes());
+        when(sessionRepository.findBySessionId("s-tenant-2")).thenReturn(Optional.of(session(2L, null)));
+        TenantContext.setTenantId(1L); // 当前调用方是租户 1，会话属于租户 2
+
+        // 与「查不到」同语义（防枚举探测），不是 BusinessException 字面 400
+        assertThatThrownBy(() -> service.upload("s-tenant-2", file, MessageRole.USER))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verifyNoInteractions(validator, fileService, attachmentRepository);
+    }
+
+    @Test
+    void 上传时sessionId属于本租户则放行() {
+        byte[] bytes = "fake-image-bytes".getBytes();
+        MultipartFile file = new MockMultipartFile("file", "a.png", "image/png", bytes);
+        AttachmentValidator.ValidatedFile validated =
+                new AttachmentValidator.ValidatedFile("image/png", true, 100, 200);
+        when(sessionRepository.findBySessionId("s-tenant-1")).thenReturn(Optional.of(session(1L, null)));
+        when(validator.validate(bytes, "a.png")).thenReturn(validated);
+        when(fileService.uploadChatBytes(bytes, "a.png", "image/png")).thenReturn("chat/2026/x.png");
+        when(attachmentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        TenantContext.setTenantId(1L);
+
+        ChatAttachment saved = service.upload("s-tenant-1", file, MessageRole.USER);
+
+        assertThat(saved).isNotNull();
     }
 
     // ---------- cleanupOrphans ----------
