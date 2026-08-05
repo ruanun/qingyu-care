@@ -50,7 +50,7 @@ class RealtimeNotifierTest {
         msg.setUiSpec("[{\"kind\":\"text\",\"text\":\"hi\"}]");
         ChatAttachment attachment = ChatAttachment.builder().fileName("a.png").contentType("image/png").build();
         attachment.setId(7L);
-        when(attachmentRepository.findByMessageIdIn(List.of(42L))).thenReturn(List.of(attachment));
+        when(attachmentRepository.findByMessageIdInOrderById(List.of(42L))).thenReturn(List.of(attachment));
 
         notifier.toUserMessage("sess-1", msg);
 
@@ -67,7 +67,7 @@ class RealtimeNotifierTest {
 
         notifier.toUserMessage("sess-1", msg);
 
-        verify(attachmentRepository, never()).findByMessageIdIn(any());
+        verify(attachmentRepository, never()).findByMessageIdInOrderById(any());
     }
 
     @Test

@@ -13,8 +13,12 @@ import java.util.List;
  */
 public interface ChatAttachmentRepository extends JpaRepository<ChatAttachment, Long> {
 
-    /** 批量取消息的附件——历史消息一次查完，避免逐条 LAZY 的 N+1 */
-    List<ChatAttachment> findByMessageIdIn(Collection<Long> messageIds);
+    /**
+     * 批量取消息的附件——历史消息一次查完，避免逐条 LAZY 的 N+1。
+     * 按 id 升序（近似上传顺序）：不排序时同一条消息带多张图，渲染顺序由 PG 返回顺序决定，
+     * 两次刷新可能不同（M-3）。
+     */
+    List<ChatAttachment> findByMessageIdInOrderById(Collection<Long> messageIds);
 
     /**
      * 孤儿：始终没被任何消息引用、且早于给定时间创建。带 Pageable 分批取——

@@ -86,9 +86,14 @@ public class RealtimeNotifier {
     /**
      * MM-6：补 attachments 与 uiSpec 两个字段——不补的话用户发的图/AI・坐席的卡片推不到坐席端
      * （或用户端），双向实时只剩一半。attachments 现查（不依赖调用方传参，谁调 toUserMessage/
-     * toAgentMessage 都自动带上），URL 前缀固定用管理端 {@code /v1/chat/files/}：这两个推送方法
-     * 目前只喂给坐席工作台（用户 inbox 走 {@code toUserSessionEvent}/{@code toUserMessage}，
-     * 而 {@code toUserMessage} 的唯一生产调用点是 agentReply 推给用户，同样是管理端会话）。
+     * toAgentMessage 都自动带上）。
+     * <p>⚠️ {@link AttachmentDTO} 刻意不带 url（两条下载端点都是请求头鉴权，浏览器原生
+     * {@code <img src>} 用不了，见 {@code AttachmentDTO} 类注释），本方法自然也不拼。
+     * 消费方按各自鉴权模型自拼前缀：{@code toAgentMessage} 的消费方是坐席工作台（管理端，
+     * {@code /v1/chat/files/{id}}）；{@code toUserMessage} 发布到 {@link RealtimeKeys#session}
+     * ——这是**用户 inbox**，消费方是 Widget（{@code widget/src/api.ts} 订阅
+     * {@code /open/v1/sessions/{id}/inbox}），必须拼 {@code /open/v1/chat/files/{id}?sessionId=...}
+     * （开放 API 的第二重凭证，管理端前缀在那边鉴权不过）。
      */
     private String messageJson(String sessionId, ChatMessage msg) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -108,7 +113,7 @@ public class RealtimeNotifier {
             return List.of();
         }
         try {
-            return attachmentRepository.findByMessageIdIn(List.of(messageId)).stream()
+            return attachmentRepository.findByMessageIdInOrderById(List.of(messageId)).stream()
                     .map(AttachmentDTO::of)
                     .toList();
         } catch (Exception e) {

@@ -184,8 +184,15 @@ class ChatAttachmentWiringTest {
                 .attachmentIds(List.of(7L))
                 .build());
 
-        ArgumentCaptor<String> sessionIdCaptor = ArgumentCaptor.forClass(String.class);
-        verify(chatAttachmentService).attachToMessage(eq(List.of(7L)), sessionIdCaptor.capture(), eq(1L));
-        assertThat(sessionIdCaptor.getValue()).isNotEqualTo("victim-session");
+        // M-5（终审发现）：只断言"不是 victim-session"判别力不够——把参数改成 null 也能通过。
+        // 改为捕获真正被新建/保存的会话，断言 attachToMessage 收到的 sessionId 与它逐字相等。
+        // atLeastOnce：本用例走到未命中分支会再 save 一次（回写 noHitStreak），两次都是同一个
+        // 会话对象引用，取哪次捕获值都一样。
+        ArgumentCaptor<ChatSession> savedSessionCaptor = ArgumentCaptor.forClass(ChatSession.class);
+        verify(sessionRepository, atLeastOnce()).save(savedSessionCaptor.capture());
+        String createdSessionId = savedSessionCaptor.getValue().getSessionId();
+        assertThat(createdSessionId).isNotEqualTo("victim-session");   // 确认走的是新建会话分支
+
+        verify(chatAttachmentService).attachToMessage(eq(List.of(7L)), eq(createdSessionId), eq(1L));
     }
 }

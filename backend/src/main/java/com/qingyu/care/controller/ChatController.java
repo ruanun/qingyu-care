@@ -183,7 +183,7 @@ public class ChatController {
         // 一次查完全部消息的附件，按 messageId 分组塞回去——不在循环里逐条查，避免 N+1
         Map<Long, List<AttachmentDTO>> attachmentsByMessageId = messageIds.isEmpty()
                 ? Map.of()
-                : chatAttachmentRepository.findByMessageIdIn(messageIds).stream()
+                : chatAttachmentRepository.findByMessageIdInOrderById(messageIds).stream()
                         .collect(Collectors.groupingBy(ChatAttachment::getMessageId,
                                 Collectors.mapping(AttachmentDTO::of, Collectors.toList())));
         List<ChatMessageDTO> dtos = messages.stream()
