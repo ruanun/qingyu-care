@@ -11,6 +11,15 @@ import java.time.LocalDateTime;
  * 聊天消息附件。上传与发消息分两步，故 {@code messageId} 可空——
  * 上传时为 null，发消息时才回填；始终为 null 的是「传了没发」的孤儿，由定时任务清理。
  *
+ * <p>显式声明按 {@code id} 判等，而不是像其它 10 个实体那样用 {@code @Data}——
+ * {@code @Data} 生成的 equals/hashCode 会比较全部字段，对 JPA 实体是反模式
+ * （可能触发懒加载、与 Hibernate 代理冲突）。不声明则会直接继承
+ * {@link BaseTenantEntity} 上 {@code @Data} 生成的 equals/hashCode，那个版本
+ * 只比较 {@code tenantId}/{@code appId}——两个内容完全不同、但都还没落租户
+ * 上下文（两者皆为 null）的附件实例会被判定为"相等"，用在 {@code Set}/{@code Map}
+ * 去重或索引时会静默错误合并，是本仓库唯一一个继承 {@code BaseTenantEntity}
+ * 却没有自己 {@code @Data}/{@code @EqualsAndHashCode} 的实体。
+ *
  * @author ruan
  */
 @Entity
@@ -20,10 +29,12 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@EqualsAndHashCode(onlyExplicitlyIncluded = true, callSuper = false)
 public class ChatAttachment extends BaseTenantEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     /** 所属消息。上传时为 null，发消息时回填 */
