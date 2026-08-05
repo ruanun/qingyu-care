@@ -915,6 +915,24 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
+    /**
+     * C-1（复核终审发现）：附件关联在独立的 REQUIRES_NEW 事务里执行，供 {@code saveMessages} 的
+     * fail-soft 分支（{@code attachFailSoft=true}）经 {@link #self} 代理调用。
+     * <p>不能直接调 {@code chatAttachmentService.attachToMessage}——它自带 {@code @Transactional}
+     * （REQUIRED）：若调用发生在 {@code persistStreamedMessages} 已经用 {@code transactionTemplate}
+     * 开启的事务内，它会作为**参与型事务**加入，抛异常时 Spring 把外层事务标记 rollback-only
+     * 后重新抛出；就地 try/catch 只是不让异常继续往外冒，救不回已经被标记的事务——外层
+     * {@code execute} 返回时仍会因 rollback-only 而回滚、抛 {@code UnexpectedRollbackException}，
+     * 现象与 C-1 原始症状完全相同（两条消息一起消失）。REQUIRES_NEW 会挂起外层事务、开一个完全
+     * 独立的新事务，失败只回滚这一个，外层事务毫发无损、继续正常提交。
+     * <p>同 {@link #searchKnowledge(String, ChatStrategy)} 的既有先例：必须经 {@link #self}
+     * 代理调用，同类直调不经代理、注解失效。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    void attachInNewTransaction(List<Long> attachmentIds, String sessionId, Long messageId) {
+        chatAttachmentService.attachToMessage(attachmentIds, sessionId, messageId);
+    }
+
     /** 会话是否处于人工掌控（等待接管 / 已接管）。 */
     private boolean isAgentControlled(ChatSession session) {
         return session.getStatus() == SessionStatus.AGENT_PROCESSING
@@ -951,19 +969,23 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 人工掌控态：存用户消息；若已被坐席接管则实时推给该坐席；关联附件。
-     * <p>I-3：附件关联同样排在 {@code toAgentMessage} 通知之后 + 流式调用 fail-soft，理由同
-     * {@link #triggerKeywordHandoverIfHit}——不能让附属的附件失败连累已经完成的坐席实时通知。
+     * 人工掌控态：存用户消息、关联附件；若已被坐席接管则实时推给该坐席。
+     * <p>I-3 复核修正：附件关联挪回 {@code toAgentMessage} 通知**之前**（回到原始顺序）。
+     * 挪到通知之后是多余的——{@code attachFailSoft} 本身已经用 try/catch 兜住失败、
+     * 不会向外传播，无论附件关联放在通知前后，通知都保证会执行到；反而挪到通知之后会让
+     * {@link RealtimeNotifier#messageJson} 在推送那一刻现查附件时，附件的 messageId
+     * 还没来得及回填，坐席收到的这条推送 attachments 恒为空——用户发的图实时推送里
+     * 看不见，只能等刷新历史才有，这正是 Step 4 存在的理由。
      */
     private void persistUserMessageDuringHandover(ChatSession session, String message, List<Long> attachmentIds,
                                                    boolean attachFailSoft) {
         ChatMessage userMsg = ChatMessage.builder().session(session)
                 .role(MessageRole.USER).content(message).build();
         messageRepository.save(userMsg);
+        attachIfPresent(attachmentIds, session, userMsg.getId(), attachFailSoft);
         if (session.getStatus() == SessionStatus.AGENT_PROCESSING && session.getAgentId() != null) {
             realtimeNotifier.toAgentMessage(session.getTenantId(), session.getAgentId(), userMsg);
         }
-        attachIfPresent(attachmentIds, session, userMsg.getId(), attachFailSoft);
     }
 
     /**
@@ -1057,8 +1079,12 @@ public class ChatServiceImpl implements ChatService {
         messageRepository.save(userMsg);
         if (attachmentIds != null && !attachmentIds.isEmpty()) {
             if (attachFailSoft) {
+                // 必须经 self 走 REQUIRES_NEW 独立事务——本方法此刻正跑在
+                // persistStreamedMessages 的 transactionTemplate.execute 事务内，
+                // 直调 chatAttachmentService.attachToMessage 会作为参与型事务加入，
+                // 失败时把这个事务标记 rollback-only，救不回来（见 attachInNewTransaction javadoc）
                 try {
-                    chatAttachmentService.attachToMessage(attachmentIds, session.getSessionId(), userMsg.getId());
+                    self.attachInNewTransaction(attachmentIds, session.getSessionId(), userMsg.getId());
                 } catch (Exception e) {
                     log.warn("附件关联失败，本轮对话仍正常保存（附件可能已在预校验后被占用/删除）"
                             + " sessionId={}: {}", session.getSessionId(), e.getMessage());

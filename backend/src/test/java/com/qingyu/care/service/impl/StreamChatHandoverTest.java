@@ -254,4 +254,30 @@ class StreamChatHandoverTest {
 
         verify(chatAttachmentService).attachToMessage(eq(List.of(11L)), eq("s2"), eq(66L));
     }
+
+    /**
+     * I-3 复核修正（回归钉死）：附件关联必须排在 toAgentMessage 通知**之前**。挪到通知之后
+     * 曾是一次真实回归——RealtimeNotifier.messageJson 在推送那一刻现查附件，若通知先发生，
+     * 附件的 messageId 还没来得及回填，坐席收到的推送 attachments 恒为空。
+     */
+    @Test
+    void streamChat_人工接管态_附件关联先于toAgentMessage通知() {
+        ChatSession session = ChatSession.builder().sessionId("s1").build();
+        session.setStatus(SessionStatus.AGENT_PROCESSING);
+        session.setTenantId(9L);
+        session.setAgentId(3L);
+        when(sessionRepository.findBySessionId("s1")).thenReturn(Optional.of(session));
+        when(messageRepository.save(any())).thenAnswer(i -> {
+            ChatMessage m = i.getArgument(0);
+            m.setId(55L);
+            return m;
+        });
+
+        chatService.streamChat(ChatRequest.builder().sessionId("s1").message("图在这")
+                .attachmentIds(List.of(9L)).build()).collectList().block();
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(chatAttachmentService, realtimeNotifier);
+        inOrder.verify(chatAttachmentService).attachToMessage(eq(List.of(9L)), eq("s1"), eq(55L));
+        inOrder.verify(realtimeNotifier).toAgentMessage(eq(9L), eq(3L), any());
+    }
 }

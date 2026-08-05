@@ -359,6 +359,15 @@ class StreamChatEventPipelineTest {
      * C-1 fail-soft：即便过了预校验，真正 attachToMessage 那一刻仍可能失败（如同一批附件被
      * 并发重复提交的残余竞态）。这种失败不能连累整轮已经流式吐给用户的回复——DONE 事件必须
      * 仍带真实 messageId（消息正常落库），而不是本仓库既有 fail-soft catch 兜底出的 null。
+     * <p>⚠️ 本用例的判别力边界（复核终审明确指出的坑）：{@code chatAttachmentService} 是
+     * mock、{@code transactionTemplate} 是直通桩，纯 Mockito 环境下没有真实
+     * {@code JpaTransactionManager}，感知不到"参与型事务被标记 rollback-only"这件事——
+     * 无论 {@code saveMessages} 是直调 {@code chatAttachmentService.attachToMessage} 还是
+     * 经 {@code self.attachInNewTransaction} 走 REQUIRES_NEW，本用例都会一样通过，测不出
+     * 两者的关键差异。本用例只守护"异常被捕获、不向外传播、DONE 携带真实 id"这一层
+     * wiring；REQUIRES_NEW 真的隔离了参与型事务这件事，由真实事务的
+     * {@code StreamAttachmentFailSoftIT}（it 包，Testcontainers 真实 PG）兜底验证——
+     * 那条 IT 才是本坑唯一有效的判别力来源。
      */
     @Test
     void 流式主路径附件关联失败时对话仍正常落库_不因附件失败丢失整轮回复() {
