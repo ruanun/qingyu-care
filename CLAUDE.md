@@ -59,6 +59,14 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 
 排查网页文档问题时，**先跟文件文档做同身份对照**再归因新代码——真机冒烟中「网页文档 `tenant_id` 落成 NULL」曾被误判为本特性缺陷，实为平台管理员建档的既有行为（文件上传路径一模一样）。
 
+### 改动聊天附件链路后必须手工验证
+自动化测试覆盖不到的五条，每条都是真机冒烟实际抓到过东西的地方：
+1. **管理端真的能传上去**。前端 `uploadChatFile` **必须显式设 `'Content-Type': 'multipart/form-data'`**（同 `knowledge.ts` 的 `uploadDocument`）——axios 实例在 `create` 时写死了 `application/json`，而 axios 1.x 的 `transformRequest` 遇到 FormData 会看 Content-Type，是 JSON 就调 `formDataToJSON` 把它转成 JSON，`File` 没有可枚举属性于是变成 `{}`，**328KB 的图只发出 62 字节**，后端回 `Current request is not a multipart request`。这条 8 轮代码评审全部漏掉——`chat.ts` 孤立看完全正确，缺陷只存在于「实例级默认头 × axios 版本行为」的交互里。
+2. **SSE 端点的错误响应形态**。用**真实 HTTP 客户端带 `Accept: text/event-stream`** 请求 `/open/v1/chat/stream` 并触发一个业务异常（如带不存在的 attachmentId），确认是 JSON 而非 Tomcat HTML 错误页、且 body 里**没有 Java 堆栈**。⚠️ **MockMvc 与不带 Accept 头的 curl 都复现不出**——异常处理器走内容协商时 JSON 转换器与该 Accept 不匹配，会抛 `HttpMediaTypeNotAcceptableException` 并连锁触发 `/error` 转发（不在 Sa-Token 豁免名单）撞 `NotLoginException`，最终 401 + HTML + 完整堆栈发给公网客户端。
+3. **坐席端实时收图**（不刷新）：坐席接管后让用户发图，坐席台应立刻出现图片而不只是文本。这条守的是 attach 与 notify 的顺序（见上）。
+4. **孤儿清理连 S3 一起删**：上传但不发送，临时把 `qingyu.care.attachment.orphan-retain-hours` 改成 0、间隔改短，确认库行**和 RustFS 里的对象**都没了。⚠️ 改成 0 会把「选了图还没点发送」的附件秒删，验完记得改回来。
+5. **文件名 XSS 三重否定**：上传一个叫 `<img onerror=alert(1) src=x>.png` 的文件，断言**不弹窗、DOM 里没有多出 img 元素、文件名原样作为文本显示**——只看"没弹窗"抓不住 `innerHTML` 写法。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -132,6 +140,21 @@ pnpm test    # vitest
 - ⚠️ 取知识库一律用 `knowledgeService.getKnowledgeBase(id)`（内含 `TenantOwnershipGuard`），**绝不用 `knowledgeBaseRepository.findById`**——后者不受 `@Filter` 保护，等于让任意租户往别人知识库里插文档。
 - ⚠️ **噪声剔除是启发式，只认语义标签**（`script/style/nav/header/footer/aside/noscript/iframe/form`）。真机实测：用 `<div>` 做导航的站点（如菜鸟教程）导航文字会大量入库并稀释检索相似度。这是已知局限，不是 bug；不够用时再按 URL 加自定义 CSS 选择器。
 - `processDocument`（`KnowledgeServiceImpl`）对 URL 类文档走独立分支：直接用 `doc.getContent()` 切分嵌入，**跳过 S3 下载与 Tika 解析**（网页文档 `filePath` 恒为 null）。新增非文件来源的文档类型时务必同步加分支。
+
+### 聊天附件（多媒体消息，`service/media/` + `controller/support/AttachmentResponses`）
+用户（Widget）与坐席（工作台）互发图片/文件。`ChatAttachment` 独立表（继承 `BaseTenantEntity`），**上传与发消息分两步**：先 `POST .../chat/files` 拿 id，再发消息带 `attachmentIds`。
+- **`messageId` 可空**是这套设计的核心，带来两个必须处理的后果：① 「传了没发」的孤儿由 `AttachmentCleanupScheduler` 清理，**必须连 S3 对象一起删**——只删库行会留下永久占用且再也查不到的对象（`cleanupOrphans` 只按 `messageId IS NULL` 查）；② 发消息时必须校验 `attachmentIds` **属于当前租户（`mutableInCurrentContext`）+ 属于当前会话 + 未被占用**，少一道就能遍历 id 把别人的附件挂到自己消息上。
+- ⚠️ **`sessionId` 空串两端都拒绝**。它曾经是「所有访客共享的命名空间」：既能被任意同 app 调用方枚举下载，且这类附件**永远挂不上消息**（`attachToMessage` 要求 sessionId 相等）→ 传上去就是死数据。**上传前必须先有会话**（widget 的附件按钮在建会话前禁用）。
+- ⚠️ **开放 API 的下载端点必须带 `?sessionId=`**：`belongsToCurrentContext` 在开放 API 上只能校到 **app 粒度**，而开放 API 的身份本来就是「这个 app」——守卫对同 app 调用方等于不设防，而 `id` 是自增整数。sessionId(UUID) 是第二重能力凭证，与本仓库其它访客私有资源一致。
+- ⚠️ **读路径用 `mutableInCurrentContext` 而非 `belongsToCurrentContext`**：后者对 `tenantId == null` 返回 true（那是为「平台默认配置=有意共享」设计的豁免），而平台管理员上传的附件 NULL 租户**从无共享意图** → 会被任意租户读到。
+- **私有桶 → 一律经代理端点**，图片 `Content-Disposition: inline`、其余强制 `attachment`，都带 `X-Content-Type-Options: nosniff`（与「白名单不收 SVG」是同一防御目标的两半）。
+- ⚠️ **`AttachmentDTO` 不含 url，客户端必须 fetch 带鉴权头取 blob 再 `createObjectURL`**：下载端点是**请求头鉴权**，而浏览器 `<img src>`/`<a download>` **不发自定义头**，直接用必 401。也**不能复用卡片的 `image` 组件**——`safeUrl` 白名单只放行 http/https，`blob:` 会被 fail-closed 拒掉且**静默不显示、无任何报错**。
+- ⚠️ **`width`/`height` 对 webp 恒为 null**：JDK 内置 ImageIO 无 WebP 解码器，且 `ImageIO.read` 无解码器时是**返回 null 不抛异常**。占位代码必须容忍 null。
+- ⚠️ **读图片尺寸只读文件头、不解码像素**（`ImageIO.createImageInputStream` + `getImageReaders` + `getWidth(0)`），并对 `width*height` 设 8000 万像素上限。用 `ImageIO.read` 全解码时，一枚 410KB 的合法 PNG（IHDR 声明 12000×12000）就能分配 411MB 堆 + 2.8s CPU，**5MB 的字节限额对解码后内存零约束**。
+- **上传校验四道顺序不可换**：按类型分别限额（图 5MB/文件 20MB）→ 扩展名白名单 → **Tika 探测真实 MIME 并与扩展名比对** → 图片再读尺寸。只信客户端 `Content-Type` 等于没校验。**SVG 不进白名单**（XSS 载体，而附件从本域下发）。
+- **`getSize()` 硬闸门必须早于 `getBytes()`**：Spring 的 multipart 上限是 100MB（与知识库上传共用，**别改**），不先卡就会把 99MB 完整读进堆才拒绝。
+- ⚠️ **`RealtimeNotifier.messageJson` 是在推送那一刻现查附件**，所以 attach 必须排在 notify **之前**——顺序颠倒会让「坐席已接管、用户发截图」这个最核心场景下推给坐席的 `attachments` 恒为空数组（只有文本没有图），而没有任何测试会红。
+- ⚠️ **流式路径的 attach 走 `self.attachInNewTransaction`（REQUIRES_NEW）**：`attachToMessage` 自带 `@Transactional`，若在 `transactionTemplate.execute` 内以**参与型**事务抛异常，`globalRollbackOnParticipationFailure` 会把外层标 rollback-only，catch 住也救不回来 → 提交时抛 `UnexpectedRollbackException` 被既有 catch 吞掉 → **用户消息与 AI 回复双双回滚，而客户端收到正常 DONE、刷新后整轮问答消失**。非流式 `chat()` 保持整轮回滚（异常可见、用户能重试），两条路径的取舍**有意不同**。
 
 ### Webhook 事件推送（`event/` + `service/webhook/`）
 链路：业务发布 `WebhookDomainEvent` → `WebhookDispatcher`（`@TransactionalEventListener(AFTER_COMMIT)`，按 app 订阅事件过滤）落库 `WebhookDelivery(PENDING)` → `WebhookQueue.dispatch()`（**Redis Stream 队列**：XADD 入流，`WebhookStreamConsumer` 消费组拉取；队列关闭或 Redis 故障进入冷却期时回退 `WebhookSender.@Async deliverAsync()` 直投，fail-open）→ HTTP 投递，`WebhookSignature` 做 HMAC-SHA256 签名（头 `X-Qingyu-Signature: sha256=...`）→ 失败按 `backoff-minutes` 退避重试，`WebhookRetryScheduler`（`@Scheduled`）扫描到期的重投（同样经队列派发）。**语义边界：DB 投递行（PENDING + claim CAS）才是事实源与至少一次保证，队列只做加速分发——消费侧先 ACK 再投递，消息丢失/重复均无害。** 配置见 `WebhookProperties`（前缀 `qingyu.care.webhook`，队列子配置 `qingyu.care.webhook.queue.*`）。`WebhookQueueIT`（真 Redis 容器，独立 Spring 上下文）与 `WebhookDeliveryIT`（无 Redis，验证直投兜底）分别守护两条路径。
