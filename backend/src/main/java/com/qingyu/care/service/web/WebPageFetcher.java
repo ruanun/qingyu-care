@@ -61,6 +61,19 @@ public class WebPageFetcher {
      * <p>⚠️ 必须是副本而不是原树引用：{@link #extractFrom} 会就地移除
      * {@code nav}/{@code header}/{@code footer}，而帮助中心的目录导航恰恰常在这些标签里。
      * 交出残树的后果是链接发现几乎抓不到东西，且<b>不报错</b>——表现为「爬了 1 页就结束」。
+     *
+     * <p>⚠️ 加了 {@code dom} 字段后，record 自动生成的 {@code equals()}/{@code hashCode()}/
+     * {@code toString()} 已经不能按字面意思用了，两条都要留意：
+     * <ul>
+     *   <li>{@code equals()}：Jsoup 的 {@code org.jsoup.nodes.Document} 没有重写
+     *       {@code equals}/{@code hashCode}，用的是 {@link Object} 的恒等语义——连
+     *       {@code a.equals(a.clone())} 都是 {@code false}。<b>不要用 {@code FetchResult}
+     *       做相等比较</b>（含把它塞进 {@code Set}/当 {@code Map} 键），内容完全相同的两次抓取
+     *       结果也会被判不等。</li>
+     *   <li>{@code toString()}：会把 {@code dom} 整棵 DOM 树序列化成 outerHtml 字符串塞进去。
+     *       <b>不要把整个 {@code FetchResult} 记进日志</b>（含用 {@code {}} 占位符隐式调用
+     *       {@code toString()}）——响应体上限是 5MB，对应的树一次就是一次日志事故。</li>
+     * </ul>
      */
     public record FetchResult(String title, String content, String contentHash,
                               int httpStatus, org.jsoup.nodes.Document dom) {}
