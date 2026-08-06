@@ -39,6 +39,9 @@ export function CrawlSiteList({ knowledgeBaseId, onCrawlFinished }: Props) {
     const [deleteTarget, setDeleteTarget] = useState<CrawlSite | null>(null);
     const [deleteWithDocs, setDeleteWithDocs] = useState(false);
     const timersRef = useRef<Record<string, number>>({});
+    // 见下方卸载 effect：只用来在异步回调里判断"此刻组件还挂载着吗"，
+    // 不驱动任何渲染，所以特意不用 state
+    const isMountedRef = useRef(true);
     const { toast } = useToast();
 
     const loadSites = useCallback(async () => {
@@ -57,34 +60,49 @@ export function CrawlSiteList({ knowledgeBaseId, onCrawlFinished }: Props) {
         void loadSites();
     }, [loadSites]);
 
-    // 组件卸载时清掉全部轮询定时器（同一知识库下可能同时有多个任务在跑）。
+    // 组件卸载时清掉全部轮询定时器（同一知识库下可能同时有多个任务在跑），并
+    // 翻转 isMountedRef——前者只能拦住"还没发出去的"下一次调度，拦不住"卸载那一刻
+    // 恰好已经在飞的请求"：那次请求的响应回来后，tick 会继续往下走（见下方 poll
+    // 里的判断），若不靠 isMountedRef 挡住，它在 RUNNING 分支里重新挂的 setTimeout
+    // 完全不受 React 生命周期管辖，会在这个孤儿 timersRef 对象上自续期到该任务
+    // 真正到达终态为止，且终态时仍会调旧闭包的 onCrawlFinished() 用旧知识库的
+    // 文档列表覆盖用户正在看的新知识库列表——不是只发生一次，链条会一直续到底。
     // 依赖数组用 `[]` 的前提是父组件已给本组件传 key={knowledgeBaseId}——切知识库
     // 会让 React 真正卸载旧实例而不是仅仅更新 props，这里才会在正确的时机触发；
     // 若哪天有人删掉那个 key，这个假设就不成立了，需要跟着重新评估
     useEffect(() => () => {
+        isMountedRef.current = false;
         Object.values(timersRef.current).forEach((id) => window.clearTimeout(id));
     }, []);
 
     const poll = useCallback((jobId: string) => {
         const tick = async () => {
+            let p: CrawlProgress | null = null;
             try {
                 const res = await knowledgeService.getCrawlProgress(jobId);
                 // 业务异常（如应用重启后任务已从内存丢失）走本仓库既定的
                 // "HTTP 200 + body.code" 约定，不会被 axios 当错误抛出；
                 // 此时 res.data 为 null，下面的 p 判空分支会自然停止轮询
-                const p = res.code === 200 ? res.data : null;
-                if (p && p.status === 'RUNNING') {
-                    setProgressMap((prev) => ({ ...prev, [jobId]: p }));
-                    timersRef.current[jobId] = window.setTimeout(tick, 2000);
-                    return;
-                }
-                if (p && p.status === 'FAILED') {
-                    // 下面会把这条进度记录立即移除，失败原因只在这里露一次面——
-                    // 不额外 toast 的话用户完全不会知道这次爬取失败了
-                    toast({ variant: 'destructive', title: '爬取失败', description: p.errorMessage ?? undefined });
-                }
+                p = res.code === 200 ? res.data : null;
             } catch {
-                // 网络异常等意外情况：同样静默结束该任务的轮询
+                // 网络异常等意外情况：视同拿不到进度，走下面的统一收尾
+            }
+
+            // 响应回来时组件可能已经卸载（见上方卸载 effect 的注释）：不管拿到的是
+            // RUNNING 还是终态，都不能再产生任何副作用——不续期定时器、不更新状态、
+            // 不刷新列表、不通知父组件。直接返回，不做下面的清理记账也没关系：
+            // timersRef/progressMap 是这个已卸载实例自己的，不会再被任何人读取
+            if (!isMountedRef.current) return;
+
+            if (p && p.status === 'RUNNING') {
+                setProgressMap((prev) => ({ ...prev, [jobId]: p }));
+                timersRef.current[jobId] = window.setTimeout(tick, 2000);
+                return;
+            }
+            if (p && p.status === 'FAILED') {
+                // 下面会把这条进度记录立即移除，失败原因只在这里露一次面——
+                // 不额外 toast 的话用户完全不会知道这次爬取失败了
+                toast({ variant: 'destructive', title: '爬取失败', description: p.errorMessage ?? undefined });
             }
             // 终态 / 业务错误 / 异常都在这里统一收尾：从定时器表与进度表里移除
             // 这个 jobId，避免残留展示或组件卸载后继续发请求
