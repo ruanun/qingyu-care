@@ -2,6 +2,8 @@ package com.qingyu.care.service.web;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -31,11 +33,26 @@ public final class LinkExtractor {
             Set.of("fbclid", "gclid", "msclkid", "yclid", "spm");
 
     /**
-     * URL 规范化。非法、非 http(s)、无主机名一律返回 {@code null}，由调用方过滤。
+     * URL 规范化。非法、非 http(s)、无主机名、路径含目录穿越段一律返回 {@code null}，
+     * 由调用方过滤。
      *
      * <p>不做规范化的话，{@code /faq}、{@code /faq/}、{@code /faq#top}、
      * {@code /faq?utm_source=x} 会被当成四页各抓一次各建一篇档，同一篇内容在知识库里
      * 重复四份、检索时互相挤占 top-K。
+     *
+     * <p>⚠️ 路径与查询串必须用 {@link URI#getRawPath()}/{@link URI#getRawQuery()}
+     * （百分号编码原样保留）而不是 {@link URI#getPath()}/{@link URI#getQuery()}
+     * （已解码）重建，两个后果都用 {@code java.net.URI} 实测过：
+     * <ol>
+     *   <li>{@code %20} 这类编码会被 {@code getPath()} 解码成字面空格，拼回字符串后
+     *       下游 {@code WebPageFetcher.downloadRaw} 里 {@code URI.create(url).getHost()}
+     *       直接抛 {@code IllegalArgumentException}（路径带字面空格是非法 URI），
+     *       逃到 {@code processPage} 的 {@code catch (Exception)} 计 failed——帮助中心
+     *       常见的 {@code /help/getting%20started.html} 这类地址会大批链接发现失败；</li>
+     *   <li>{@code %26}（编码的 {@code &}）会被 {@code getQuery()} 解码成字面 {@code &}，
+     *       把 {@code q=a%26b&utm_source=x} 这一个参数误拆成三段，query 清洗的结果不可预期。</li>
+     * </ol>
+     * 用原始（已编码）分量重建则两条都不发生。
      */
     public static String normalize(String url) {
         if (url == null || url.isBlank()) {
@@ -59,13 +76,17 @@ public final class LinkExtractor {
         if (host == null || host.isBlank()) {
             return null;
         }
+        String rawPath = uri.getRawPath();
+        if (containsDotSegment(rawPath)) {
+            return null;
+        }
 
         StringBuilder sb = new StringBuilder(scheme).append("://").append(host.toLowerCase(Locale.ROOT));
         if (uri.getPort() != -1) {
             sb.append(':').append(uri.getPort());
         }
-        sb.append(normalizePath(uri.getPath()));
-        String query = cleanQuery(uri.getQuery());
+        sb.append(normalizePath(rawPath));
+        String query = cleanQuery(uri.getRawQuery());
         if (query != null && !query.isEmpty()) {
             sb.append('?').append(query);
         }
@@ -73,8 +94,48 @@ public final class LinkExtractor {
     }
 
     /**
+     * 路径含 {@code .}/{@code ..} 目录穿越段时判非法，交由 {@link #normalize} 整体拒绝
+     * （而不是折叠成规范路径）。
+     *
+     * <p>⚠️ 必须先按段<b>解码</b>再比对，不能直接在 {@code rawPath}（已编码）上找字面
+     * {@code ".."}：{@link URI#normalize()} 只折叠<b>字面</b>点号段，对
+     * {@code %2E%2E} 这种已编码写法完全不生效——已用 {@code java.net.URI} 实测确认，
+     * {@code new URI("https://x.com/help/%2E%2E/admin").normalize().getPath()} 仍是
+     * {@code "/help/../admin"}，没有被折叠。直接放行的后果：规范化结果里仍带着
+     * {@code ..}，而实际发起请求时会被下游解析成 {@code /admin}——静默绕出运营配置的
+     * {@code scopePrefix}（同域内，不是跨域越权，但会把知识库灌进运营没打算收录的页面）。
+     *
+     * <p>选择<b>拒绝整条 URL</b> 而不是「解码后折叠回规范路径再重新编码」：手写一遍
+     * RFC 3986 的 dot-segment removal 算法本身就是常见的绕过来源（大小写混合编码、
+     * 多层编码等变体），拒绝更简单，也不需要为「折叠后的路径该如何重新编码」再操心。
+     */
+    private static boolean containsDotSegment(String rawPath) {
+        if (rawPath == null || rawPath.isEmpty()) {
+            return false;
+        }
+        String decoded;
+        try {
+            // 路径段的 '+' 不是空格的同义写法（那是 query 字符串的约定），先转义成
+            // %2B 防止 URLDecoder 把字面 '+' 误译成空格
+            decoded = URLDecoder.decode(rawPath.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            // 非法的 % 转义序列：按非法 URL 处理更安全，不放行
+            return true;
+        }
+        for (String segment : decoded.split("/", -1)) {
+            if (".".equals(segment) || "..".equals(segment)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 路径末尾斜杠统一去掉，<b>根路径例外</b>——{@code https://x.com/} 若也去掉斜杠
      * 就退化成不带路径的裸 origin，与 {@link #inScope} 的边界处理对不上。
+     *
+     * <p>入参是{@link URI#getRawPath()}（已编码），只做纯 ASCII 的 {@code /} 判断与截断，
+     * 不涉及解码，编码内容原样保留。
      */
     private static String normalizePath(String rawPath) {
         String path = rawPath == null ? "" : rawPath;
@@ -84,7 +145,11 @@ public final class LinkExtractor {
         return path.isEmpty() ? "/" : path;
     }
 
-    /** 剔除 tracking 参数，其余按名排序（分页/语言参数是有意义的，必须保留）。 */
+    /**
+     * 剔除 tracking 参数，其余按名排序（分页/语言参数是有意义的，必须保留）。
+     * 入参是 {@link URI#getRawQuery()}（已编码）——分隔符 {@code &}/{@code =} 按字面切分，
+     * 值里编码的 {@code %26}/{@code %3D} 不会被误当分隔符。
+     */
     private static String cleanQuery(String query) {
         if (query == null || query.isBlank()) {
             return null;

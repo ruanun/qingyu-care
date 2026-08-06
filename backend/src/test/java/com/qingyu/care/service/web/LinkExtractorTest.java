@@ -66,6 +66,51 @@ class LinkExtractorTest {
         void keeps_explicit_port() {
             assertThat(LinkExtractor.normalize("https://x.com:8443/help/")).isEqualTo("https://x.com:8443/help");
         }
+
+        @Test
+        @DisplayName("路径含 %20 等百分号编码时原样保留编码形态，不还原成字面字符——"
+                + "字面空格会让下游 WebPageFetcher.downloadRaw 里的 URI.create(url).getHost() "
+                + "抛 IllegalArgumentException，帮助中心常见的这类地址会大批链接发现失败")
+        void keeps_percent_encoding_instead_of_decoding_to_literal_characters() {
+            String normalized = LinkExtractor.normalize("https://x.com/help/getting%20started.html");
+            assertThat(normalized).isEqualTo("https://x.com/help/getting%20started.html");
+            // 这才是这条守护真正要保的东西：下游必须能拿它去重新解析取 host 而不抛异常
+            assertThat(java.net.URI.create(normalized).getHost()).isEqualTo("x.com");
+        }
+
+        @Test
+        @DisplayName("查询串里编码的 & 不会被误当参数分隔符拆散")
+        void keeps_encoded_ampersand_in_query_value_intact() {
+            assertThat(LinkExtractor.normalize("https://x.com/search?q=a%26b"))
+                    .isEqualTo("https://x.com/search?q=a%26b");
+        }
+
+        @Test
+        @DisplayName("路径含百分号编码的 .. 段（%2E%2E）判非法——URI#normalize() 对已编码写法"
+                + "不生效（已实测确认），放行会让实际请求被下游解析成跳出 scopePrefix 的地址")
+        void rejects_percent_encoded_dot_segment() {
+            assertThat(LinkExtractor.normalize("https://x.com/help/%2E%2E/admin")).isNull();
+        }
+
+        @Test
+        @DisplayName("字面 .. 段同样判非法，与编码写法共用同一道防线")
+        void rejects_literal_dot_segment() {
+            assertThat(LinkExtractor.normalize("https://x.com/help/../admin")).isNull();
+        }
+
+        @Test
+        @DisplayName("单独的 . 段同样判非法")
+        void rejects_single_dot_segment() {
+            assertThat(LinkExtractor.normalize("https://x.com/help/./admin")).isNull();
+        }
+
+        @Test
+        @DisplayName("路径段里出现字面 .. 的合法内容不受影响——只精确匹配整段等于 . 或 .."
+                + "（RFC 3986 dot-segment 定义），不误伤 a..b 这类真实文件名")
+        void does_not_reject_path_segment_that_merely_contains_dots() {
+            assertThat(LinkExtractor.normalize("https://x.com/help/a..b/"))
+                    .isEqualTo("https://x.com/help/a..b");
+        }
     }
 
     @Nested
