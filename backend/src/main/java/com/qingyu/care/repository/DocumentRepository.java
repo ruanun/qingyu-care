@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface DocumentRepository extends JpaRepository<Document, Long> {
@@ -130,4 +131,17 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             LIMIT 50
             """, nativeQuery = true)
     List<Long> findDueWebPageIds(@Param("now") LocalDateTime now);
+
+    /**
+     * 按知识库 + 源地址找已存在的文档，供爬取判断"这一页是否已建过档"。
+     *
+     * <p>⚠️ 用 {@code findFirst} 而不是返回单个结果的 {@code findBy...}：第一期的
+     * {@code addWebPage} 没有去重校验，存量库可能已有同 URL 的重复文档，
+     * 用单结果查询会在那些库上抛 {@code IncorrectResultSizeDataAccessException}
+     * 把整轮爬取打断。加 {@code ORDER BY id} 保证选中的是最早那篇、结果稳定。
+     */
+    Optional<Document> findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(Long knowledgeBaseId, String sourceUrl);
+
+    /** 某爬取站点下的全部文档，供删除站点时连带处理。 */
+    List<Document> findByCrawlSiteId(Long crawlSiteId);
 }

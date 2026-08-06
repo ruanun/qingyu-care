@@ -140,6 +140,14 @@ public class Document extends BaseTenantEntity {
     @Column(name = "sync_failure_count")
     private Integer syncFailureCount = 0;
 
+    /**
+     * 所属爬取站点；单页手动添加的网页文档与文件类文档为 null。
+     * 定期同步经它读 {@code contentSelector}（见 WebPageSyncService.syncDocument）。
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "crawl_site_id")
+    private CrawlSite crawlSite;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
