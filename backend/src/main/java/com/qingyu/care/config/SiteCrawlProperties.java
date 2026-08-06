@@ -32,9 +32,27 @@ public class SiteCrawlProperties {
     private long maxDelayMs = 10_000;
 
     /**
-     * 全局并发爬取任务上限。不只是对目标站点礼貌的问题：@Async 池
-     * （Spring Boot 默认 applicationTaskExecutor，core 8）是和审计日志异步落库、
-     * webhook 直投、文档摄取共享的，几分钟的长任务无上界并发会挤掉那些短任务。
+     * 全局并发爬取任务上限，<b>不区分租户</b>。不只是对目标站点礼貌的问题：{@code @Async}
+     * 池（{@code AsyncConfig} 是空壳，用的是 Spring Boot 默认 {@code applicationTaskExecutor}，
+     * core 8、<b>队列无界</b>）是和审计日志异步落库、webhook 直投、文档摄取共享的——
+     * 核心线程占满后，无界队列意味着永不扩容（{@code maxPoolSize} 只在队列也满时才生效，
+     * 无界队列下这个条件永远不成立），几分钟的长任务无上界并发会把后续所有短任务全部
+     * 排在一条 FIFO 后面等，等待时长最坏可达 {@code maxPagesLimit} × {@code maxDelayMs}
+     * （500 页 × 10s ≈ 83 分钟）。
+     *
+     * <p>⚠️ 这条上限必须与 {@link #maxConcurrentJobsPerTenant} 一起判——只留后者会让
+     * 总量变成「租户数 × 每租户上限」、彻底失去对共享线程池的保护（真实教训：曾经改成
+     * 纯按租户分桶，总量随租户数线性增长，4 个租户各起 2 个爬取就能占满 core 8，
+     * 审计日志落库/webhook 直投/文档摄取全部卡在爬取剩余时长后面）。
      */
     private int maxConcurrentJobs = 2;
+
+    /**
+     * 单租户并发爬取任务上限，在 {@link #maxConcurrentJobs} 之内再按
+     * {@code TenantContext.getTenantId()} 细分。只有全局上限时，一个租户占满会连带
+     * 拒绝同实例其他所有租户点「爬取」——跨租户可用性耦合。两层上限一起判：
+     * {@link com.qingyu.care.service.web.SiteCrawlService#launch} 先判全局（保护共享
+     * 线程池），再判租户桶（保护跨租户公平），任一超限都拒绝。
+     */
+    private int maxConcurrentJobsPerTenant = 2;
 }

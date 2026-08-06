@@ -52,10 +52,12 @@ spring:
       request-timeout: 180000
 
   # 定时任务线程池：Spring Boot 默认单线程（1），全仓 6 个 @Scheduled 共用。
-  # 新增的网页同步调度器（WebPageSyncScheduler）每小时批量逐篇抓取+重嵌，耗时可能超过
-  # 数十秒；若仍是单线程，会顶掉同一时刻该跑的其它定时任务（如 RealtimePresenceRegistry
-  # 心跳续期 STALE 阈值 45s、WebhookStreamConsumer 200ms 轮询），造成在线坐席被误判成
-  # 僵尸、webhook 消费停摆。调大到 4，各 @Scheduled 任务不再互相阻塞。
+  # 网页同步调度器（WebPageSyncScheduler）每小时批量逐篇抓取+重嵌，且逐篇之间按
+  # site-crawl.default-delay-ms 限速（避免爬取产出的一批文档同时到期后对同一 host
+  # 背靠背发请求）——LIMIT 50 篇、每篇 ≥1s，一轮耗时下限就有 ≈50s，上不封顶（单篇抓取
+  # 本身的网络耗时另计）。若仍是单线程，会顶掉同一时刻该跑的其它定时任务（如
+  # RealtimePresenceRegistry 心跳续期 STALE 阈值 45s、WebhookStreamConsumer 200ms 轮询），
+  # 造成在线坐席被误判成僵尸、webhook 消费停摆。调大到 4，各 @Scheduled 任务不再互相阻塞。
   task:
     scheduling:
       pool:
@@ -165,7 +167,8 @@ qingyu:
       default-delay-ms: 1000      # 默认抓取间隔（robots 的 Crawl-delay 优先）
       max-delay-ms: 10000         # robots 的 Crawl-delay 上限——第三方可控值，不设上限时
                                    # Crawl-delay:300 × 500 页能占死共享线程池一个线程 40 小时
-      max-concurrent-jobs: 2      # 全局并发爬取任务上限
+      max-concurrent-jobs: 2      # 全局并发爬取任务上限（不区分租户，保护共享 @Async 池）
+      max-concurrent-jobs-per-tenant: 2   # 单租户并发爬取任务上限（全局上限之内再按租户分桶）
 
     # 结构化卡片配置
     cards:

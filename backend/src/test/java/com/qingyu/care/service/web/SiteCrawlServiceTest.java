@@ -455,6 +455,41 @@ class SiteCrawlServiceTest {
     }
 
     @Test
+    @DisplayName("范围前缀推导对百分号编码目录段保留编码形态，不还原成字面字符——用 getPath()"
+            + "（已解码）会把 %20 还原成字面空格，推导出的前缀带字面空格重新拼回字符串后"
+            + "不再是合法 URI，下游 hostOf 解析失败会报「范围前缀必须与入口 URL 同域」，"
+            + "而真实原因是编码问题、跟同域无关")
+    void derives_scope_prefix_keeps_percent_encoding_in_directory_segment() {
+        assertThat(SiteCrawlService.deriveScopePrefix("https://x.com/help/getting%20started/"))
+                .isEqualTo("https://x.com/help/getting%20started/");
+    }
+
+    @Test
+    @DisplayName("入口地址含百分号编码目录段时能正常建站——端到端复现上面那条静态用例守的"
+            + "问题：旧实现会在 requireSameHost 这一步误报「范围前缀必须与入口 URL 同域」")
+    void starts_crawl_with_percent_encoded_directory_segment_in_entry_url() {
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help/getting%20started/");
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
+        List<CrawlSite> saved = new ArrayList<>();
+        when(crawlSiteRepository.save(any(CrawlSite.class))).thenAnswer(inv -> {
+            CrawlSite cs = inv.getArgument(0);
+            cs.setId(9L);
+            saved.add(cs);
+            return cs;
+        });
+        when(crawlSiteRepository.findById(9L)).thenAnswer(inv -> Optional.of(saved.get(0)));
+        stubIngestSucceeds();
+        stubPage("https://x.com/help/getting%20started");
+
+        service.startCrawl(100L, req);
+
+        assertThat(saved.get(0).getScopePrefix()).isEqualTo("https://x.com/help/getting%20started/");
+    }
+
+    @Test
     @DisplayName("originOf 对缺协议/主机名的 URL 抛业务异常而非 NPE")
     void origin_of_rejects_url_without_scheme_or_host() {
         // new URI("x.com/help") 不抛 URISyntaxException（合法的无协议相对引用），
@@ -643,6 +678,22 @@ class SiteCrawlServiceTest {
     }
 
     @Test
+    @DisplayName("改配置时清空「爬取范围」保留站点原有范围，不重新推导——改配置路径上前端预填"
+            + "的 entryUrl 是已规范化的库值（尾斜杠已去掉），deriveScopePrefix 正是靠尾斜杠"
+            + "区分目录/文件形态，喂规范化值会把 /help 误判成文件形态、推导出整站范围")
+    void update_with_blank_scope_prefix_keeps_the_sites_existing_scope_not_rederived() {
+        CrawlSite s = site(50, 0);   // id=9，entryUrl/scopePrefix 均为 "https://x.com/help/"
+        s.setScopePrefix("https://x.com/help/faq/");   // 模拟站点已有一个更窄的自定义范围
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help");   // 已规范化（尾斜杠已去）——改配置回填的常见形态
+        req.setScopePrefix("");   // 用户清空了范围输入框
+
+        CrawlSite updated = service.updateSite(9L, req);
+
+        assertThat(updated.getScopePrefix()).isEqualTo("https://x.com/help/faq/");
+    }
+
+    @Test
     @DisplayName("同一站点已有爬取在进行时拒绝再起一个")
     void rejects_concurrent_crawl_of_the_same_site() {
         CrawlSite s = site(50, 0);
@@ -672,7 +723,7 @@ class SiteCrawlServiceTest {
                 .isInstanceOf(RuntimeException.class).hasMessageContaining("线程池拒绝");
 
         // 换回真实 self：若 jobs 里两条 RUNNING 的僵尸 Progress 没被回收，
-        // maxConcurrentJobs=2 会让这次直接被"已有 2 个爬取任务在进行"拒绝
+        // maxConcurrentJobs=2（全局）会让这次直接被拒绝
         service.setSelf(service);
         stubIngestSucceeds();
         stubPage("https://x.com/help");
@@ -680,16 +731,87 @@ class SiteCrawlServiceTest {
         assertThat(jobId).isNotBlank();
     }
 
+    // ===== 并发额度：全局与按租户分桶两层上限（缺一不可，见 launch Javadoc）=====
+
     /**
      * 早期版本按全局扫 {@code jobs} 计数：一个租户占满 {@code maxConcurrentJobs} 后，
-     * <b>同实例的所有其他租户</b>点「爬取」都会被拒——跨租户可用性耦合，且旧文案里
-     * 直接带 {@code running} 数字，把平台全局活动量回显给了租户。改成按
-     * {@code TenantContext.getTenantId()} 分桶后，租户 A 占满自己的配额不该影响租户 B。
+     * <b>同实例的所有其他租户</b>点「爬取」都会被拒——跨租户可用性耦合。改成只按
+     * {@code TenantContext.getTenantId()} 分桶后又矫枉过正：总量变成「租户数 × 每租户
+     * 上限」，彻底失去对共享 {@code @Async} 池的保护。现在两层都判：全局兜底池，
+     * 租户桶兜底跨租户公平。下面三条测试各自扣紧其中一层。
      */
     @Test
-    @DisplayName("并发额度按租户分桶：租户 A 占满配额时租户 B 仍能开爬，互不阻塞")
-    void concurrency_quota_is_scoped_per_tenant() {
+    @DisplayName("全局并发额度打满时任何租户都被拒——即使该租户自己的桶还有空间，"
+            + "@Async 池是所有租户共享的，不能被某个租户的富余额度绕过")
+    void global_quota_rejects_any_tenant_even_with_room_in_its_own_bucket() {
         props.setMaxConcurrentJobs(1);
+        props.setMaxConcurrentJobsPerTenant(5);   // 租户桶宽松，确保命中的是全局而非租户桶
+        CrawlSite siteA = site(50, 0);   // id=9
+        siteA.setTenantId(1L);
+
+        SiteCrawlService stallingSelf = mock(SiteCrawlService.class);
+        service.setSelf(stallingSelf);
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(10L);
+        String jobIdA = service.recrawl(9L);
+        assertThat(jobIdA).isNotBlank();
+
+        service.setSelf(service);
+        CrawlSite siteB = CrawlSite.builder()
+                .id(11L).knowledgeBase(siteA.getKnowledgeBase())
+                .entryUrl("https://x.com/help/").scopePrefix("https://x.com/help/")
+                .maxPages(50).maxDepth(0)
+                .syncInterval(SyncInterval.DAILY)
+                .build();
+        siteB.setTenantId(2L);   // 与租户 A 不同的另一个租户
+        when(crawlSiteRepository.findById(11L)).thenReturn(Optional.of(siteB));
+        TenantContext.setTenantId(2L);
+        TenantContext.setAppId(20L);
+
+        assertThatThrownBy(() -> service.recrawl(11L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已有爬取");
+    }
+
+    @Test
+    @DisplayName("单租户占满自己的桶后再开一个被拒，即使全局额度还有余量——这条才是真正"
+            + "验证租户级检查本身生效的测试，删掉租户级判断只会让请求更容易通过，"
+            + "不会让上面那条「全局打满」的测试转红，必须单独守")
+    void per_tenant_quota_rejects_same_tenant_even_with_room_in_the_global_pool() {
+        props.setMaxConcurrentJobs(5);            // 全局宽松，确保命中的是租户桶而非全局
+        props.setMaxConcurrentJobsPerTenant(1);
+        CrawlSite siteA = site(50, 0);   // id=9
+        siteA.setTenantId(1L);
+
+        SiteCrawlService stallingSelf = mock(SiteCrawlService.class);
+        service.setSelf(stallingSelf);
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(10L);
+        String jobIdA = service.recrawl(9L);
+        assertThat(jobIdA).isNotBlank();
+
+        // 同一租户再开一个不同站点——应被自己的桶拦下，与全局额度无关
+        CrawlSite siteA2 = CrawlSite.builder()
+                .id(12L).knowledgeBase(siteA.getKnowledgeBase())
+                .entryUrl("https://x.com/docs/").scopePrefix("https://x.com/docs/")
+                .maxPages(50).maxDepth(0)
+                .syncInterval(SyncInterval.DAILY)
+                .build();
+        siteA2.setTenantId(1L);
+        when(crawlSiteRepository.findById(12L)).thenReturn(Optional.of(siteA2));
+        // TenantContext 仍是租户 1，无需重设
+
+        assertThatThrownBy(() -> service.recrawl(12L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已有爬取");
+    }
+
+    @Test
+    @DisplayName("并发额度按租户分桶：租户 A 占满自己的桶时租户 B 仍能开爬，互不阻塞"
+            + "（全局额度留有余量，确保挡不住 B 的不是全局那层）")
+    void concurrency_quota_is_scoped_per_tenant() {
+        props.setMaxConcurrentJobs(5);            // 全局宽松，确保不是全局额度先拦下
+        props.setMaxConcurrentJobsPerTenant(1);
         CrawlSite siteA = site(50, 0);   // id=9
         siteA.setTenantId(1L);
 

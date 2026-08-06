@@ -60,8 +60,9 @@ public class SiteCrawlService {
     public static final class Progress {
         public final String jobId;
         /**
-         * 归属租户，用于 {@link #launch} 按租户分桶全局并发额度。平台管理员为
-         * {@code null}——见 {@link #launch} 关于「null 桶」取舍的说明。
+         * 归属租户，用于 {@link #launch} 的租户级并发额度判据（全局额度不区分租户，
+         * 扫全部 RUNNING 即可，不需要这个字段）。平台管理员为 {@code null}——见
+         * {@link #launch} 关于「null 桶」取舍的说明。
          */
         public final Long tenantId;
         public final Long siteId;
@@ -282,26 +283,39 @@ public class SiteCrawlService {
      *       {@code running} 计数只增不减，最终把全局并发额度永久占满，只能重启恢复。</li>
      * </ul>
      *
-     * <p>⚠️ 并发额度<b>按租户分桶</b>而非全局共享：早期版本扫全局 {@code jobs} 计数，
-     * 一个租户起两个 500 页 × 10s/页的任务就能占死约 83 分钟的额度，期间<b>同实例其他
-     * 所有租户</b>点「爬取」都会被拒——既是跨租户可用性耦合，又把平台全局活动量回显给了
-     * 租户（旧文案里直接带 {@code running} 数字）。改成按 {@code TenantContext.getTenantId()}
-     * 分桶后各租户的额度互不干扰；桶键取自请求线程（{@code launch} 本就跑在请求线程，
-     * 与四个 {@code TenantContext} 值搬运进 {@code @Async} 线程是两回事，不冲突）。
+     * <p>⚠️ 并发额度是<b>两层上限</b>，缺一不可：
+     * <ul>
+     *   <li>{@link SiteCrawlProperties#getMaxConcurrentJobs()}——全局，保护共享的
+     *       {@code @Async} 池（详见该字段 Javadoc）；</li>
+     *   <li>{@link SiteCrawlProperties#getMaxConcurrentJobsPerTenant()}——按
+     *       {@code TenantContext.getTenantId()} 分桶，防「一个租户占满连带拒绝同实例
+     *       其他所有租户」（早期只有全局上限时的教训）；<b>只留这一层同样错</b>——总量会
+     *       变成「租户数 × 每租户上限」，彻底失去对共享线程池的保护（本条是「修 A 引入 B」
+     *       的真实教训：把全局判断整个换成按租户判断，回归为「按租户判断」，两层必须都判）。
+     * </ul>
+     * 先判全局（池保护优先级更高，池挤爆影响的是全平台，不只是爬取本身），再判租户桶；
+     * 任一超限都拒绝，文案统一不回显数字（那是平台并发活动量，租户不该看到）。
+     * 桶键取自请求线程（{@code launch} 本就跑在请求线程，与四个 {@code TenantContext}
+     * 值搬运进 {@code @Async} 线程是两回事，不冲突）。
      *
      * <p>平台管理员的 {@code tenantId} 恒为 {@code null}，本方法让所有平台管理员发起的爬取
      * 共用同一个「null 桶」而不是彻底不设限：这等价于把「平台管理员」当成单一身份对待，
-     * 与任意一个真实租户受同样的额度约束，既不会重新引入「一个身份占满全局额度」的旧问题
-     * （因为它不再挤占真实租户的桶），也不需要为平台管理员发明新的分桶维度（如按被操作的
-     * 知识库/租户二次拆分——收益不明显，且平台管理员本就是低频操作角色）。
+     * 与任意一个真实租户受同样的租户级约束（仍然共同受全局上限保护），既不会重新引入
+     * 「一个身份占满全局额度」的旧问题（因为它不再挤占真实租户的桶），也不需要为平台
+     * 管理员发明新的分桶维度（如按被操作的知识库/租户二次拆分——收益不明显，且平台
+     * 管理员本就是低频操作角色）。
      */
     private String launch(CrawlSite site) {
         Long tenantId = TenantContext.getTenantId();
-        long running = jobs.values().stream()
+        long globalRunning = jobs.values().stream().filter(p -> "RUNNING".equals(p.status)).count();
+        if (globalRunning >= props.getMaxConcurrentJobs()) {
+            // 全局池保护优先：即使该租户自己的桶还有空间，也不能绕过共享 @Async 池的上限
+            throw new BusinessException("已有爬取任务在进行，请稍后再试");
+        }
+        long tenantRunning = jobs.values().stream()
                 .filter(p -> "RUNNING".equals(p.status) && java.util.Objects.equals(p.tenantId, tenantId))
                 .count();
-        if (running >= props.getMaxConcurrentJobs()) {
-            // 不回显 running 数字：那是平台全局并发活动量，租户不该看到
+        if (tenantRunning >= props.getMaxConcurrentJobsPerTenant()) {
             throw new BusinessException("已有爬取任务在进行，请稍后再试");
         }
         if (!crawlingSites.add(site.getId())) {
@@ -547,11 +561,15 @@ public class SiteCrawlService {
      * 误判成文件形态，推导出的范围从「只爬 /help/ 下面」错误地放大成「整站」。
      * 落库与查重键用规范化后的 {@code entryUrl} 没有这个问题：规范化只是让「同一页面的
      * 不同写法」折叠成同一个字符串，不改变语义。
+     *
+     * <p>⚠️ {@code scopePrefix} 为空时的兜底值<b>建站与改配置不能共用同一条推导逻辑</b>：
+     * {@link #resolveScopePrefixWhenBlank} 有完整说明——本方法只负责按
+     * {@code site.getId() == null} 区分「建站」与「改配置」并转发。
      */
     private CrawlSite applyRequest(CrawlSite site, CrawlSiteRequest req, KnowledgeBase kb) {
         String entryUrl = normalizeEntryUrl(req.getEntryUrl());
         String scopePrefix = (req.getScopePrefix() == null || req.getScopePrefix().isBlank())
-                ? deriveScopePrefix(req.getEntryUrl())
+                ? resolveScopePrefixWhenBlank(site, req.getEntryUrl())
                 : req.getScopePrefix();
         requireSameHost(entryUrl, scopePrefix);
 
@@ -565,6 +583,30 @@ public class SiteCrawlService {
                         ? null : req.getContentSelector().trim());
         site.setSyncInterval(req.getSyncInterval() == null ? SyncInterval.MANUAL : req.getSyncInterval());
         return site;
+    }
+
+    /**
+     * {@code scopePrefix} 为空时的兜底值：<b>建站</b>按入口 URL 推导（唯一能给出合理默认值
+     * 的时机）；<b>改配置</b>保留站点已有的 {@code scopePrefix}，不重新推导。用
+     * {@code site.getId() == null} 区分两者——{@code startCrawl} 传入的是 {@code new
+     * CrawlSite()}（未落库，id 为 null），{@code updateSite} 传入的是
+     * {@link #requireOwnedSite} 查出来的已持久化行（id 非 null）。
+     *
+     * <p>⚠️ 改配置路径复用建站那套推导是一个真实缺陷：改配置时前端预填的 {@code entryUrl}
+     * 取自库里<b>已规范化</b>的值（尾斜杠已被 {@link LinkExtractor#normalize} 去掉），而
+     * {@link #deriveScopePrefix} 正是靠「路径是否以 / 结尾」区分目录/文件形态——喂规范化值
+     * 必然把 {@code https://x.com/help} 误判成文件形态，推导出 {@code https://x.com/}
+     * <b>整站</b>。用户在编辑对话框里手动清空「爬取范围」输入框保存，抓取范围就从
+     * 「只爬 /help/ 下面」静默放大成整站，灌进大量无关页面、白烧 embedding——现象与
+     * {@link #applyRequest} 类文档点名过的那个坑同源，只是触发路径从「建站」换成了「改配置」。
+     * 建站路径不受影响：那里喂的是请求体里用户刚打的原始 {@code entryUrl}（未规范化），
+     * 语义仍然正确，故建站分支的推导逻辑本身不用改。
+     */
+    private static String resolveScopePrefixWhenBlank(CrawlSite site, String rawEntryUrl) {
+        if (site.getId() != null) {
+            return site.getScopePrefix();
+        }
+        return deriveScopePrefix(rawEntryUrl);
     }
 
     /** 取站点并做归属校验——{@code findById} 不受 Hibernate {@code @Filter} 保护。 */
@@ -595,6 +637,14 @@ public class SiteCrawlService {
     /**
      * 由入口 URL 推导范围前缀：目录形态原样、文件形态取其所在目录、根路径即整站。
      * 包级 static 免容器单测。
+     *
+     * <p>⚠️ 必须用 {@link URI#getRawPath()}（已编码）而非 {@link URI#getPath()}（已解码）：
+     * 入口写 {@code https://x.com/help/getting%20started/} 这类含百分号编码目录段的地址时，
+     * {@code getPath()} 会把 {@code %20} 解码成字面空格，推导出的前缀带着字面空格重新拼回
+     * 字符串后不再是合法 URI——后续 {@link #requireSameHost} 里 {@link LinkExtractor#hostOf}
+     * 解析这个前缀会失败返回 {@code null}，报「范围前缀必须与入口 URL 同域」，而真实原因是
+     * 编码问题、跟同域完全无关，文案对用户具有误导性。用 raw 分量则原样保留编码，
+     * 与 {@link LinkExtractor#normalize} 已确立的原则一致（同一批 %20/dot-segment 修复）。
      */
     static String deriveScopePrefix(String entryUrl) {
         final URI uri;
@@ -604,7 +654,7 @@ public class SiteCrawlService {
             throw new BusinessException("入口 URL 非法: " + entryUrl);
         }
         String origin = originOf(entryUrl);
-        String path = uri.getPath() == null ? "" : uri.getPath();
+        String path = uri.getRawPath() == null ? "" : uri.getRawPath();
         if (path.isEmpty() || "/".equals(path)) {
             return origin + "/";
         }
