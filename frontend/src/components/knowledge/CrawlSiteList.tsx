@@ -70,9 +70,28 @@ export function CrawlSiteList({ knowledgeBaseId, onCrawlFinished }: Props) {
     // 依赖数组用 `[]` 的前提是父组件已给本组件传 key={knowledgeBaseId}——切知识库
     // 会让 React 真正卸载旧实例而不是仅仅更新 props，这里才会在正确的时机触发；
     // 若哪天有人删掉那个 key，这个假设就不成立了，需要跟着重新评估
-    useEffect(() => () => {
-        isMountedRef.current = false;
-        Object.values(timersRef.current).forEach((id) => window.clearTimeout(id));
+    //
+    // ⚠️ setup 阶段必须把 isMountedRef 复位成 true，不能只在 cleanup 里置 false：
+    // 本仓库 main.tsx 全局开着 <StrictMode>，dev 环境下每个 effect 都会额外跑一轮
+    // setup→cleanup→setup（官方要求 cleanup 必须让人分不清 effect 到底被调用了
+    // 一次还是三次）。如果 setup 是空的，两次 setup 都不会把标志位改回 true，
+    // cleanup 那次 false 就永久生效——组件挂载完 isMountedRef.current 直接卡死在
+    // false，poll() 第一次响应回来就被挡返回：进度不更新、定时器不续期、FAILED
+    // 不 toast、爬完也不调 onCrawlFinished。这条只在 dev（`pnpm dev`）下发作，
+    // `vite build` 的生产包不受影响（StrictMode 双调用只在开发环境生效），
+    // 但 dev 正是本项目的标准开发方式，等于把开发体验坑没了。
+    useEffect(() => {
+        isMountedRef.current = true;
+        // timersRef.current 本身是一个稳定的对象引用（只在组件生命周期内被 poll()
+        // 持续增删条目，从不被重新赋值），这里在 setup 阶段捕获一次即可安全地在
+        // cleanup 里复用同一个对象，顺带满足 exhaustive-deps 对"cleanup 里读
+        // ref.current 到时候值可能已变"的检查（虽然本例不是 DOM ref，不存在那个
+        // 场景，但按建议改成这样也不吃亏，反而更明确这个 ref 的身份）
+        const timers = timersRef.current;
+        return () => {
+            isMountedRef.current = false;
+            Object.values(timers).forEach((id) => window.clearTimeout(id));
+        };
     }, []);
 
     const poll = useCallback((jobId: string) => {
