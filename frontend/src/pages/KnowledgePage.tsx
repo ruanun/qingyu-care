@@ -339,6 +339,7 @@ const KnowledgePage: React.FC = () => {
                             <CardContent>
                                 <Separator className="mb-6" />
                                 <CrawlSiteList
+                                    key={selectedKb.id}
                                     knowledgeBaseId={selectedKb.id}
                                     onCrawlFinished={() => fetchDocuments(selectedKb.id)}
                                 />
