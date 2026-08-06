@@ -108,6 +108,27 @@ class RobotsCheckerTest {
             assertThat(rules.allows("https://x.com/admin?page=2")).isFalse();
             assertThat(rules.allows("https://x.com/help?admin=1")).isTrue();
         }
+
+        @Test
+        @DisplayName("连续 User-agent 行属于同一组，规则对组内所有 UA 生效")
+        void consecutive_user_agent_lines_share_group_rules() {
+            RobotsChecker.RobotsRules rules = RobotsChecker.parse("""
+                    User-agent: *
+                    User-agent: Googlebot
+                    Disallow: /shared
+                    """);
+
+            assertThat(rules.allows("https://x.com/shared/x")).isFalse();
+            assertThat(rules.allows("https://x.com/other")).isTrue();
+        }
+
+        @Test
+        @DisplayName("UTF-8 BOM 开头不影响首行 User-agent 识别")
+        void strips_leading_bom() {
+            RobotsChecker.RobotsRules rules = RobotsChecker.parse("﻿User-agent: *\nDisallow: /admin\n");
+
+            assertThat(rules.allows("https://x.com/admin")).isFalse();
+        }
     }
 
     @Nested

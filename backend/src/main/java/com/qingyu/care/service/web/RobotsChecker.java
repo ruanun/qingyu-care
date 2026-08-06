@@ -84,9 +84,19 @@ public final class RobotsChecker {
 
     /** 解析 robots.txt 正文。包级 static 免网络单测。 */
     static RobotsRules parse(String body) {
+        body = stripLeadingBom(body);
+
         List<String> disallowed = new ArrayList<>();
         Long crawlDelayMs = null;
-        boolean inStarSection = false;
+        // 按 robots 规范，连续的 User-agent 行属于同一组，组内规则对所有列出的 UA 生效：
+        //     User-agent: *
+        //     User-agent: Googlebot
+        //     Disallow: /shared        <- 对 * 与 Googlebot 都生效
+        // groupContainsStar：当前正在生效/累积的组是否含 "*"；groupOpen：是否仍处于
+        // 「连续 User-agent 行」的累积阶段——一旦遇到非 User-agent 的指令行，组即关闭，
+        // 之后再出现的 User-agent 行视为开启一个新组（而不是延续当前组）。
+        boolean groupContainsStar = false;
+        boolean groupOpen = false;
 
         for (String rawLine : body.split("\\R")) {
             String line = rawLine;
@@ -105,16 +115,31 @@ public final class RobotsChecker {
             String key = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
             String value = line.substring(colon + 1).trim();
 
+            if ("user-agent".equals(key)) {
+                if (!groupOpen) {
+                    // 上一组已被规则行关闭（或这是文件起始的第一行），开启新组
+                    groupContainsStar = false;
+                }
+                groupOpen = true;
+                if ("*".equals(value)) {
+                    groupContainsStar = true;
+                }
+                continue;
+            }
+
+            // 非 User-agent 的指令行关闭当前 UA 累积组：后续若再出现 User-agent 行，
+            // 视为新组的开始，不再与本组共享规则
+            groupOpen = false;
+
             switch (key) {
-                case "user-agent" -> inStarSection = "*".equals(value);
                 case "disallow" -> {
                     // Disallow 空值在 robots 规范里表示「允许全部」，不能收成前缀 "" 拦下一切
-                    if (inStarSection && !value.isEmpty()) {
+                    if (groupContainsStar && !value.isEmpty()) {
                         disallowed.add(value);
                     }
                 }
                 case "crawl-delay" -> {
-                    if (inStarSection) {
+                    if (groupContainsStar) {
                         Long parsed = parseDelayMs(value);
                         if (parsed != null) {
                             crawlDelayMs = parsed;
@@ -127,6 +152,16 @@ public final class RobotsChecker {
             }
         }
         return new RobotsRules(List.copyOf(disallowed), crawlDelayMs);
+    }
+
+    /**
+     * 剥离开头的 UTF-8 BOM（U+FEFF）。{@code String.trim()} 只处理 {@code <= 0x20} 的字符，
+     * 不含 BOM，若不剥离，被 Windows 记事本编辑过的 robots.txt（首行直接是
+     * {@code User-agent: *}、BOM 无前置注释/空行可"垫走"）会让首个 key 变成
+     * {@code "﻿user-agent"}，与字面量比对失败、整份文件的规则全部静默失效。
+     */
+    private static String stripLeadingBom(String body) {
+        return !body.isEmpty() && body.charAt(0) == '\uFEFF' ? body.substring(1) : body;
     }
 
     /** {@code Crawl-delay} 单位是秒，可为小数；非法值返回 null（当作未声明）。 */
