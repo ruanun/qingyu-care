@@ -51,13 +51,25 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 
 ⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
 
-### 改动网站知识库同步链路后必须手工验证
+### 改动网站知识库同步 / 站点爬取链路后必须手工验证
 自动化测试覆盖不到的三条（单测里 `WebPageFetcher` 与 `VectorStore` 全被 mock，调度线程的过滤器状态更是单测造不出来）：
 1. **二次同步不重嵌**：**等第一次同步跑完再点第二次**，确认 `chunk_count` 与 `vector_store` 行数**都没变**。退化成每次重嵌不会报错、只会悄悄烧 embedding 的钱。⚠️ **别连点两次**——第二次会被咨询锁挡下（日志 `网页同步跳过：同一文档已有同步在进行`），此时行数不变是「被锁挡住」而非「hash 未变跳过」，会把并发互斥的效果误当成变更检测的效果。
 2. **调度器真能查到文档**：把某文档 `last_synced_at` 改到很久以前，等 `@Scheduled` 触发（临时用 `-Dqingyu.care.web-sync.interval-ms=30000` 缩短间隔），确认日志打出「网页定时同步：N 篇到期」。原生 SQL 一旦被改回 JPQL，这里会**静默地一篇都查不到**。
 3. **人工读一遍入库正文**：`SELECT content FROM document WHERE id=?`，看有没有混进导航栏/Cookie 提示/页脚版权。这是启发式剔噪声唯一的验收方式。
 
 排查网页文档问题时，**先跟文件文档做同身份对照**再归因新代码——真机冒烟中「网页文档 `tenant_id` 落成 NULL」曾被误判为本特性缺陷，实为平台管理员建档的既有行为（文件上传路径一模一样）。
+
+**站点爬取（第二期）另有十条，每条都是自动化测试覆盖不到的：**
+4. **范围真的收窄**：给一个 `/help/` 入口，确认没有爬到 `/blog/` 或外域。
+5. **选择器真的生效**：配与不配各爬一次，`SELECT content FROM document WHERE id=?` **人工读一遍**有没有导航混进来。这是启发式与选择器唯一的验收方式。
+6. **租户字段非 NULL**：用**租户管理员**登录爬，确认 `tenant_id`/`app_id` 落库正确。⚠️ 与「平台管理员建档 `tenant_id` 落 NULL 是既有行为」区分——第一期真机冒烟已把这条既有行为误判成缺陷一次。
+7. **上下文不泄漏**：连续爬**两个不同租户**的站点，确认第二个的文档租户字段仍正确。这是第 6 条的另一半，**只有真机连做两次才暴露**，单次爬取永远是绿的。
+8. **重爬幂等**：第二次爬同一站点，`document` 行数只增新页、`vector_store` 不因重复建档暴涨。
+9. **robots 真被遵守**：找一个有 `Disallow` 的站点，确认那些路径没进库。
+10. **限速真的生效**：看日志时间戳确认相邻请求间隔 ≥ 1 秒（或站点声明的 `Crawl-delay`）。限速失效不会报错，只会让平台被目标站点封 IP。
+11. **爬取期间改配置不会被静默回滚**：开一次页数较多、耗时够长的爬取，趁它还在跑时把该站点的 `contentSelector` 改掉，等爬完确认新选择器生效、没被 `crawl()` 收尾那次 `save` 覆盖回旧值。这条已用变异测试证实**零自动化守护**（去掉「重新 `findById`」那步改回直接 `save(site)`，全部单测照样绿），只能靠这条手工验证兜底。
+12. **首次「新建并开爬」连点几次不出现幽灵失败**：确认不会出现「进度立刻显示失败：站点不存在，但列表里那条明明在」——`startCrawl` 与 `@Async` 投递之间的事务可见性窗口只在特定线程调度时序下才现形，评审把 `@Transactional` 加回 `startCrawl` 后连跑 4 次 IT 全绿，即**没有任何自动化测试能保护这条**。
+13. **中途故障不留僵尸 RUNNING**：`runCrawl` 的 `catch` 只抓 `Exception`、抓不住 `Error`（如整页 DOM 撑爆堆内存），这条纯 Mockito 测不出真实场景——临时在爬取路径插一行抛 `Error` 冒烟，确认 `finally` 仍把该 Progress 置 `FAILED`、互斥与并发额度都被正确释放，站点能立刻重新爬取；不清理的后果是并发额度永久少一个，只能重启进程恢复。
 
 ### 改动聊天附件链路后必须手工验证
 自动化测试覆盖不到的五条，每条都是真机冒烟实际抓到过东西的地方：
@@ -140,6 +152,21 @@ pnpm test    # vitest
 - ⚠️ 取知识库一律用 `knowledgeService.getKnowledgeBase(id)`（内含 `TenantOwnershipGuard`），**绝不用 `knowledgeBaseRepository.findById`**——后者不受 `@Filter` 保护，等于让任意租户往别人知识库里插文档。
 - ⚠️ **噪声剔除是启发式，只认语义标签**（`script/style/nav/header/footer/aside/noscript/iframe/form`）。真机实测：用 `<div>` 做导航的站点（如菜鸟教程）导航文字会大量入库并稀释检索相似度。这是已知局限，不是 bug；不够用时再按 URL 加自定义 CSS 选择器。
 - `processDocument`（`KnowledgeServiceImpl`）对 URL 类文档走独立分支：直接用 `doc.getContent()` 切分嵌入，**跳过 S3 下载与 Tika 解析**（网页文档 `filePath` 恒为 null）。新增非文件来源的文档类型时务必同步加分支。
+- **站点爬取（第二期）**：`CrawlSite` 表存站点配置（入口/范围前缀/页数/深度/正文选择器/同步周期），`Document.crawl_site_id` 可空外键指向它（单页手动添加的为 null）。`SiteCrawlService` 做 BFS 编排：`LinkExtractor`（纯函数，规范化 + 范围判定 + 抽链接）→ `RobotsChecker`（robots.txt，取不到按允许）→ 逐页建档摄取。新页面靠**手动重爬**发现，不做定期自动重爬（内容更新已由周期同步覆盖，页面消失沿用既有熔断）。
+- ⚠️ **`LinkExtractor.inScope` 是一个 `return` 语句里的三个 `||` 分支各挡一个边界，不是三个 `return` 分支，不能简化成裸 `startsWith`**：规范化会去掉末尾斜杠而前缀常带斜杠（裸判会把**入口页自己**排除，爬取一开始就空转）；拿去斜杠的前缀判又会把 `/helpdesk` 当成 `/help` 的子页整个爬进来；前缀是根路径时补斜杠会拼出 `//` 一条都匹配不上。
+- ⚠️ **`FetchResult.dom` 是剔噪前 `clone()` 的副本**：`extractFrom` 就地移除 `nav`/`header`/`footer`，而帮助中心的目录导航恰在 `nav` 里。交出残树的后果是链接发现几乎抓不到东西且**不报错**，表现为「爬了 1 页就结束」——与上面那三个边界的表象完全一致，排查时要分别验证。加了 `dom` 字段后 record 自动生成的 `equals`/`toString` 也不能按字面意思用：Jsoup 的 `Document` 是恒等语义（连 `a.equals(a.clone())` 都是 false，别拿 `FetchResult` 做相等比较或塞进 `Set`），`toString()` 会把整棵 DOM 序列化进去（5MB 响应体对应的树进日志就是一次事故，别把整个 `FetchResult` 记日志）。
+- ⚠️ **爬取跑在 `@Async` 线程，四个 `TenantContext` 值必须由请求线程传入、`finally` 必须 clear**：不搬运则新建文档的 `tenant_id`/`app_id` 静默落 null（那批文档从此对所有租户可见）；不清理则泄漏给下一个复用该线程的任务（默认 `applicationTaskExecutor` core 8、线程复用，流式聊天改造时实测复现过平台管理员会话落进别人租户）。**新增在 `@Async` 里建实体的代码一律照此处理。** ⚠️ 同一线程里 `CrawlSite.knowledgeBase`（LAZY）只有 `getId()` 是安全的——本项目未开字节码增强，detached 代理上调 `getId()` 走 `HibernateProxy` 缓存的 identifier，既不抛也不打 DB；但改成 `getKnowledgeBase().getName()`，或把 `CrawlSite` 塞进 `Set`/调 `equals`（`@Data` 摸全字段），就会在这条异步线程里真的抛 `LazyInitializationException`。
+- ⚠️ **`maxPages` 计「已尝试抓取」而非成功页数**，被 robots 拒绝的不计（没发请求）。计成功数的话，一个到处 404 的站点会让队列不断展开、永远碰不到上限。
+- ⚠️ **爬取新建文档同样遵守「摄取成功才落 `contentHash`」，且必须同时设 `lastSyncedAt`**——只落前者不落后者会让 `findDueWebPageIds` 因 `last_synced_at IS NULL` 立刻判为到期，爬完 50 篇后下一轮调度把它们全部重抓一遍。
+- **站点级互斥用内存 map，不能用第一期那把 `pg_try_advisory_xact_lock`**：后者是事务级的，与「几分钟长任务 + 逐页提交」直接冲突。多实例下内存互斥失效，最坏是重复文档——刻意**不加** `(kb_id, source_url)` 唯一约束兜底，因为第一期 `addWebPage` 无去重校验，存量库可能已有重复 URL，`ddl-auto: update` 建唯一索引会让应用起不来。
+- ⚠️ **内存进度表 `jobs` 里的 RUNNING 是全局并发额度的判据**：`runCrawl` 的 `finally` 必须把残留 RUNNING 兜底置终态（`catch` 只抓 `Exception`，抓不住 `Error`）；`launch` 投递 `@Async` 失败（线程池拒绝）必须同时回滚 `crawlingSites` 与 `jobs`——漏一处都会让某条 Progress 永久占额度，只能重启恢复。
+- ⚠️ **`crawl()` 收尾不能用几分钟前查出的、此刻已 detached 的 `site` 去 `save`**：`em.merge()` 会把开爬那一刻的全部陈旧字段（含运营在爬取期间边看边改的 `contentSelector`）覆盖回库，静默抹掉配置修改且无异常无日志。必须收尾时重新 `findById` 再设值——同 `WebPageSyncService` 类注释点名过的「陈旧字段 merge 回库」同一个坑，换了个位置复发。
+- ⚠️ **`startCrawl` 不能带 `@Transactional`**：带上会让 `save()` 只 flush 不 commit，紧接着在同一未提交事务内把 `runCrawl` 投给 `@Async`——异步线程走独立连接，READ COMMITTED 下看不到这次未提交的 INSERT，`findById` 直接 `orElseThrow`，首次开爬非确定性地立刻 FAILED「站点不存在」。`ReembedService.startReembed` 就是不带 `@Transactional` 的同一范式；`updateSite`/`deleteSite` 不投递异步任务，`@Transactional` 保留。
+- ⚠️ **robots.txt 解析两处易错**：连续 `User-agent` 行属同一组（规范上如此，逐行重置状态会丢掉该组的 `Disallow`）；UTF-8 BOM 附着在首行 key 上，`trim()` 不剥 U+FEFF，会让整份文件的 `Disallow` 全部静默失效。两条错误方向都是「放行站点明确禁止的路径」，遵守 robots.txt 是替租户出站的合规承诺，故这两条判定"现在修"不留技术债。
+- ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘以 500 页硬顶就是 40 多小时，占死共享的 `applicationTaskExecutor`——这个池同时被审计日志落库、webhook 直投、文档摄取用。
+- ⚠️ **删站点勾选删文档时必须逐篇走 `knowledgeService.deleteDocument`**，不能 `repository.deleteAll`——只删库行会留下再也没有库行指向、**却仍参与检索**的孤儿向量（继续被命中并拼进 Prompt，而界面上已看不到这些文档）。同附件孤儿清理必须连 S3 一起删。
+- **重爬时已存在的页会被抓两次**（一次为提链接、一次在 `syncDocument` 内部）。这是刻意的取舍：抽取 `syncDocument` 的三分支能省下这些请求，但那段代码的每条注释都是一个真实缺陷的墓碑。触发重新考虑的条件写在 `docs/superpowers/specs/2026-08-06-site-crawl-design.md` §5.2。
+- ⚠️ **前端轮询两个坑**（`CrawlSiteList.tsx`）：进度/定时器必须按 `jobId` 而非 `siteId` 索引（后端 `maxConcurrentJobs=2` 明确支持双任务并发，按 `siteId` 索引会在旧任务收尾与新任务写入之间的窗口期互相覆盖）；`isMountedRef` **必须在 effect 的 setup 阶段复位为 true**——只在 cleanup 里置 false，会被 `<StrictMode>` 的 `setup→cleanup→setup` 卡死在 false，`pnpm dev` 下轮询一次都跑不起来（进度不更新/不续期/不 toast/不刷新列表），而 `vite build` 不受影响、React 18 起也没有 console 警告，极难发现。
 
 ### 聊天附件（多媒体消息，`service/media/` + `controller/support/AttachmentResponses`）
 用户（Widget）与坐席（工作台）互发图片/文件。`ChatAttachment` 独立表（继承 `BaseTenantEntity`），**上传与发消息分两步**：先 `POST .../chat/files` 拿 id，再发消息带 `attachmentIds`。
@@ -167,6 +194,7 @@ pnpm test    # vitest
 
 ### 前端结构（frontend/src/）
 - **HTTP** `api/client.ts`：单例 axios。请求拦截器从 localStorage 注入 `satoken`（key `qingyu-auth`）与 `X-App-Id`（key `qingyu-current-app`）；响应拦截器拆 `ApiResponse.data`，401 清登录态并跳 `/login`。各领域 service（`api/*.ts`）都走这个实例。
+- ⚠️ **业务异常是「HTTP 200 + `body.code`」约定，axios 不会 reject**：响应拦截器只特殊处理 401，其余状态原样把 `{code, message, data}` resolve 给调用方——**写操作必须显式判 `if (res.code !== 200) throw new Error(res.message)`**，不判就会把后端业务错误（重复入口、资源被占用、并发上限等）静默吞掉，用户点按钮毫无反应且没有任何报错。不限于某一特性，是全局约定；参考写法见 `components/knowledge/CrawlSiteList.tsx` 的四个写操作。
 - **状态** Zustand + persist：`stores/authStore.ts`（token/user，持久化）、`stores/appStore.ts`（当前应用 `currentApp`，其 `id` 即上面注入的 `X-App-Id`）。
 - **路由/守卫** `App.tsx`：`<ProtectedRoute>` 校验登录；应用级配置页（知识库/Prompt/策略等）额外包 `<RequireApp>`——未选应用时显示空状态。`layouts/MainLayout.tsx` 按 `user.role`（PLATFORM_ADMIN/TENANT_ADMIN/TENANT_MEMBER）过滤侧边导航。
 - **UI** shadcn 风格封装在 `components/ui/`（CVA 变体 + `lib/utils.ts` 的 `cn()`），别名 `@/` → `src/`。
