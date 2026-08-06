@@ -163,6 +163,8 @@ qingyu:
       max-pages-limit: 500        # 单次爬取页数硬顶
       max-depth-limit: 5          # 链接发现深度硬顶
       default-delay-ms: 1000      # 默认抓取间隔（robots 的 Crawl-delay 优先）
+      max-delay-ms: 10000         # robots 的 Crawl-delay 上限——第三方可控值，不设上限时
+                                   # Crawl-delay:300 × 500 页能占死共享线程池一个线程 40 小时
       max-concurrent-jobs: 2      # 全局并发爬取任务上限
 
     # 结构化卡片配置

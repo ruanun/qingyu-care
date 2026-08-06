@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 爬取站点仓储。
@@ -20,4 +21,14 @@ public interface CrawlSiteRepository extends JpaRepository<CrawlSite, Long> {
 
     /** 列某知识库下的站点，最新创建的在前。 */
     List<CrawlSite> findByKnowledgeBaseIdOrderByIdDesc(Long knowledgeBaseId);
+
+    /**
+     * 按知识库 + 入口地址查是否已建过站点，供 {@code startCrawl} 拒绝重复建站——
+     * 同一入口建两个站点会各自跑一遍 BFS，互相看不见对方未提交的建档，产出重复文档与重复向量。
+     *
+     * <p>⚠️ 用 {@code findFirst} 而不是单结果查询：理由同
+     * {@code DocumentRepository#findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc}——
+     * 不能让历史脏数据（若曾经允许过重复）把整个建站入口 500。
+     */
+    Optional<CrawlSite> findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(Long knowledgeBaseId, String entryUrl);
 }

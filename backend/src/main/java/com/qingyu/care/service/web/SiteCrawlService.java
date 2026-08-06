@@ -126,10 +126,29 @@ public class SiteCrawlService {
      * {@code TenantOwnershipGuard} 归属校验；直接用 {@code knowledgeBaseRepository.findById}
      * 不受 Hibernate {@code @Filter} 保护，等于让任意租户往别人知识库里插文档
      * （第一期的 Critical 越权教训）。
+     *
+     * <p>⚠️ <b>本方法刻意不带 {@code @Transactional}</b>：带上它会让 {@code save()} 只
+     * flush 不 commit，而紧接着 {@code launch()} 就在同一未提交事务内把 {@code self.runCrawl}
+     * 投给 {@code @Async} 执行器——异步线程走独立连接，READ COMMITTED 下看不见这次未提交
+     * 的 INSERT，第一件事 {@code findById} 就 {@code orElseThrow}，进度非确定性地立刻
+     * FAILED（时序纯属运气：异步线程只需被调度 + 四次 ThreadLocal set + 一次 SELECT，
+     * 请求线程却要等 launch 返回、startCrawl 返回、再等 TransactionInterceptor 提交，
+     * 热池下异步侧完全可能先到）。{@code crawlSiteRepository.save()} 自带迷你事务立即
+     * 提交，与 {@code ReembedService.startReembed}（同样投递 {@code @Async} 前不建
+     * 需要被异步读的行）一致。{@code updateSite}/{@code deleteSite} 不投递异步任务，
+     * {@code @Transactional} 保留。
+     *
+     * <p>⚠️ 建站前查重：同一 {@code (知识库, 入口地址)} 建两个站点会各自跑一遍 BFS，
+     * 两边的 {@code findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc} 互相看不见对方
+     * 未提交的建档，产出重复文档与重复向量、互相挤占检索 top-K——而「点了没反应就再点一次」
+     * 是最常见的用户行为，站点级互斥（按站点 id）拦不住两次点击各自建出的新 id。
      */
-    @Transactional
     public CrawlStartResponse startCrawl(Long knowledgeBaseId, CrawlSiteRequest req) {
         KnowledgeBase kb = knowledgeService.getKnowledgeBase(knowledgeBaseId);
+        if (crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(
+                knowledgeBaseId, req.getEntryUrl()).isPresent()) {
+            throw new BusinessException("该入口地址已有爬取站点，请直接用「重新爬取」");
+        }
         CrawlSite site = crawlSiteRepository.save(applyRequest(new CrawlSite(), req, kb));
         return new CrawlStartResponse(site.getId(), launch(site));
     }
@@ -160,10 +179,18 @@ public class SiteCrawlService {
      * 后者只删 {@code document} 行，留下一批再也没有库行指向、<b>却仍参与检索</b>的
      * 孤儿向量——它们会继续被 {@code similaritySearch} 命中并拼进 Prompt，而运营在
      * 界面上已经看不到这些文档了。同 {@code ChatAttachment} 孤儿清理必须连 S3 一起删。
+     *
+     * <p>⚠️ 爬取中的站点禁止删除：{@code crawl()} 收尾会重新 {@code findById} 该站点行
+     * 并 {@code save()}，若这期间站点已被删，Hibernate 对"detached 实体、按 id 加载
+     * 返回 null"会回落到当作 transient 处理——IDENTITY 策略下重新生成主键，等于把刚删的
+     * 站点当新行插了回来，界面表现为「删不掉/删了又回来」。
      */
     @Transactional
     public void deleteSite(Long siteId, boolean deleteDocuments) {
         CrawlSite site = requireOwnedSite(siteId);
+        if (crawlingSites.contains(siteId)) {
+            throw new BusinessException("该站点正在爬取中，请等待完成后再删除");
+        }
         List<Document> docs = documentRepository.findByCrawlSiteId(siteId);
         if (deleteDocuments) {
             for (Document doc : docs) {
@@ -192,8 +219,13 @@ public class SiteCrawlService {
     /**
      * 建进度、抢互斥、投递异步任务。
      *
-     * <p>⚠️ {@code self.runCrawl} 投递失败（线程池拒绝）必须回滚互斥——否则该站点
-     * 会<b>永久无法再爬</b>。
+     * <p>⚠️ {@code self.runCrawl} 投递失败（线程池拒绝）必须回滚<b>两样东西</b>：
+     * <ul>
+     *   <li>站点互斥（{@code crawlingSites}）——不回滚该站点会永久无法再爬；</li>
+     *   <li>刚建的 {@code Progress}（{@code jobs}）——不回滚它会永远停在 RUNNING，
+     *       被 {@link #jobs} 从未有任何地方 remove 的 Progress 长期占着，
+     *       {@code running} 计数只增不减，最终把全局并发额度永久占满，只能重启恢复。</li>
+     * </ul>
      */
     private String launch(CrawlSite site) {
         long running = jobs.values().stream().filter(p -> "RUNNING".equals(p.status)).count();
@@ -203,9 +235,9 @@ public class SiteCrawlService {
         if (!crawlingSites.add(site.getId())) {
             throw new BusinessException("该站点已有爬取在进行，请等待完成");
         }
+        Progress p = new Progress(UUID.randomUUID().toString(), site.getId(), site.getMaxPages());
+        jobs.put(p.jobId, p);
         try {
-            Progress p = new Progress(UUID.randomUUID().toString(), site.getId(), site.getMaxPages());
-            jobs.put(p.jobId, p);
             // 必须经 self 才能命中 Spring 代理让 @Async 真正生效（同类直调会退化成同步阻塞请求线程）。
             // 四个 TenantContext 值必须在请求线程取好传进去——@Async 线程没有上下文
             self.runCrawl(p, site.getId(), TenantContext.getTenantId(), TenantContext.getAppId(),
@@ -213,6 +245,7 @@ public class SiteCrawlService {
             return p.jobId;
         } catch (RuntimeException e) {
             crawlingSites.remove(site.getId());
+            jobs.remove(p.jobId);
             throw e;
         }
     }
@@ -248,6 +281,12 @@ public class SiteCrawlService {
             p.errorMessage = e.getMessage();
             log.warn("站点爬取失败 siteId={}: {}", siteId, e.getMessage());
         } finally {
+            // 兜底：catch 只抓 Exception，抓不住 Error（如 OOM——5MB×N 页 DOM + 嵌入下
+            // 并不遥远）。Error 逃逸时 catch 不执行，若 finally 不补一道终态就会把这条
+            // Progress 永远留在 RUNNING，累加占满全局并发额度（同 launch 那两行的教训）
+            if ("RUNNING".equals(p.status)) {
+                p.status = "FAILED";
+            }
             p.finishedAt = LocalDateTime.now();
             crawlingSites.remove(siteId);
             TenantContext.clear();
@@ -269,7 +308,17 @@ public class SiteCrawlService {
         }
 
         RobotsChecker.RobotsRules robots = RobotsChecker.fetch(originOf(entry), webPageFetcher);
-        long delayMs = robots.crawlDelayMs() != null ? robots.crawlDelayMs() : props.getDefaultDelayMs();
+        if (!robots.allows(entry)) {
+            // 入口页专门检查、提前失败：BFS 循环里 robots 拒绝分支只是 continue（见下方），
+            // 若入口页恰好被拒绝，队列会直接清空、循环正常退出、任务报 COMPLETED 且 0 页——
+            // 用户拿不到任何提示、以为爬完了实际什么都没抓到
+            throw new BusinessException("入口地址被该站点 robots.txt 禁止抓取: " + entry);
+        }
+        long delayMs = resolveDelayMs(robots.crawlDelayMs(), props.getDefaultDelayMs(), props.getMaxDelayMs());
+        if (robots.crawlDelayMs() != null && robots.crawlDelayMs() > props.getMaxDelayMs()) {
+            log.warn("站点声明的 robots Crawl-delay 超过平台上限，已钳制 origin={} 声明值ms={} 采用值ms={}",
+                    originOf(entry), robots.crawlDelayMs(), delayMs);
+        }
 
         Deque<PageRef> queue = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
@@ -301,8 +350,20 @@ public class SiteCrawlService {
             isEntry = false;
         }
 
-        site.setLastCrawledAt(LocalDateTime.now());
-        crawlSiteRepository.save(site);
+        // ⚠️ 收尾必须重新 findById 取当前行再改：本方法无环绕事务，最上面 findById 出来的
+        // site 在这几分钟的 BFS 期间早已 detached，直接 save(site) 会走 em.merge()，
+        // 把开爬那一刻的全部陈旧字段（含 contentSelector/maxPages/scopePrefix 等运营
+        // 最想在爬取期间边看边调的字段）覆盖回库、静默抹掉爬取期间的任何配置修改，
+        // 且无异常无日志——同 WebPageSyncService 类注释点名过的"陈旧字段 merge 回库"
+        // 同一个坑。这里改用重新查询而不是给 crawl() 整体包一层长事务：见类文档
+        // §站点级互斥的取舍，几分钟的长任务不能用一个大事务。
+        // 顺带也是"爬取中删站点"场景的第二道防线（第一道是 deleteSite 显式拒绝正在爬取
+        // 的站点）：万一还是被删了，站点已不存在时 findById 为空，直接跳过，不会把
+        // merge 出的"新行"当成正常收尾。
+        crawlSiteRepository.findById(siteId).ifPresentOrElse(fresh -> {
+            fresh.setLastCrawledAt(LocalDateTime.now());
+            crawlSiteRepository.save(fresh);
+        }, () -> log.debug("爬取收尾时站点已不存在，跳过更新 lastCrawledAt siteId={}", siteId));
     }
 
     /** 处理一页：抓取 → 建档或同步 → 抽链接入队。 */
@@ -321,6 +382,9 @@ public class SiteCrawlService {
             // 见 spec §5.2 的取舍与重新考虑的触发条件
             webPageSyncService.syncDocument(existing.getId());
             p.updated++;
+            if (existing.getCrawlSite() == null) {
+                adoptIntoSite(existing.getId(), site);
+            }
         } else {
             createAndIngest(site, ref.url(), result);
             p.created++;
@@ -334,6 +398,30 @@ public class SiteCrawlService {
                 }
             }
         }
+    }
+
+    /**
+     * 把爬取前就已存在、尚未归属任何站点的文档收养进本站点（一期手工单页添加、
+     * 后来被本站点的 BFS 发现到的场景）。不收养的后果：定期同步永远读不到站点的
+     * {@code contentSelector}（{@code WebPageSyncService.syncDocument} 靠
+     * {@code doc.getCrawlSite()} 取选择器）、{@code deleteSite(deleteDocuments=true)}
+     * 按 {@code crawlSiteId} 查不到它而漏删、按站点统计的页数也会少算。
+     *
+     * <p>⚠️ 必须在 {@code syncDocument} 执行<b>之后</b>重新 {@code findById} 取当前行再改，
+     * 不能复用调用方传入的、{@code syncDocument} 执行前就查出来的 {@code existing} 引用：
+     * {@code syncDocument} 会更新同一行的 {@code content}/{@code lastSyncedAt}/
+     * {@code contentHash} 等字段并提交，若这里拿旧引用 {@code save()}，会把
+     * {@code syncDocument} 刚提交的新内容用旧值 merge 覆盖回去——比 {@code crawl()}
+     * 收尾那处 detached merge 更隐蔽，因为覆盖的是"几毫秒前"而非"几分钟前"的旧值，
+     * 但原理相同。
+     */
+    private void adoptIntoSite(Long documentId, CrawlSite site) {
+        documentRepository.findById(documentId).ifPresent(fresh -> {
+            if (fresh.getCrawlSite() == null) {
+                fresh.setCrawlSite(site);
+                documentRepository.save(fresh);
+            }
+        });
     }
 
     /**
@@ -362,14 +450,14 @@ public class SiteCrawlService {
 
         knowledgeService.processDocument(doc.getId());
 
-        DocumentStatus after = documentRepository.findById(doc.getId())
-                .map(Document::getStatus)
-                .orElse(null);
-        if (after != DocumentStatus.COMPLETED) {
-            throw new BusinessException("摄取未成功（status=" + after
+        // 合成一次查询：先前分两次 findById（一次取 status 判断、一次取实体改字段）在无
+        // 环绕事务下是两次真查库；合成一次同时拿到状态判据与待改实体
+        Document fresh = documentRepository.findById(doc.getId())
+                .orElseThrow(() -> new BusinessException("文档摄取后丢失: " + doc.getId()));
+        if (fresh.getStatus() != DocumentStatus.COMPLETED) {
+            throw new BusinessException("摄取未成功（status=" + fresh.getStatus()
                     + "），contentHash 不落库以便定期同步重试");
         }
-        Document fresh = documentRepository.findById(doc.getId()).orElseThrow();
         fresh.setContentHash(result.contentHash());
         fresh.setLastSyncedAt(LocalDateTime.now());
         documentRepository.save(fresh);
@@ -388,8 +476,8 @@ public class SiteCrawlService {
         site.setKnowledgeBase(kb);
         site.setEntryUrl(entryUrl);
         site.setScopePrefix(scopePrefix);
-        site.setMaxPages(clamp(req.getMaxPages(), 50, props.getMaxPagesLimit()));
-        site.setMaxDepth(clamp(req.getMaxDepth(), 3, props.getMaxDepthLimit()));
+        site.setMaxPages(clamp(req.getMaxPages(), 50, 1, props.getMaxPagesLimit()));
+        site.setMaxDepth(clamp(req.getMaxDepth(), 3, 0, props.getMaxDepthLimit()));
         site.setContentSelector(
                 req.getContentSelector() == null || req.getContentSelector().isBlank()
                         ? null : req.getContentSelector().trim());
@@ -430,13 +518,27 @@ public class SiteCrawlService {
         return origin + path.substring(0, path.lastIndexOf('/') + 1);
     }
 
-    /** {@code scheme://host[:port]}。 */
+    /**
+     * {@code scheme://host[:port]}。
+     *
+     * <p>⚠️ 缺协议或主机名必须在这里显式拒绝：{@code new URI(...)} 对无协议的相对引用
+     * （如 {@code "x.com/help"}）并不抛 {@code URISyntaxException}，{@code getScheme()}
+     * 只是静默返回 null——而 {@code new StringBuilder((String) null)} 这个构造器会抛
+     * {@code NullPointerException}（与 {@code append(null)} 不同，{@code append} 对 null
+     * 是转成字面量 "null" 不抛，构造器却会先调 {@code str.length()}），未经处理时对外
+     * 表现为一个无业务语义的 500 而非清爽的业务异常。调用方 {@link #deriveScopePrefix}
+     * 在 Task 6 的控制器接线落地前拿到的 {@code entryUrl} 还没有经过任何格式校验，
+     * 这条防线不能省。
+     */
     static String originOf(String url) {
         final URI uri;
         try {
             uri = new URI(url.trim());
         } catch (URISyntaxException e) {
             throw new BusinessException("URL 非法: " + url);
+        }
+        if (uri.getScheme() == null || uri.getHost() == null) {
+            throw new BusinessException("URL 非法（缺少协议或主机名）: " + url);
         }
         StringBuilder sb = new StringBuilder(uri.getScheme()).append("://").append(uri.getHost());
         if (uri.getPort() != -1) {
@@ -458,10 +560,28 @@ public class SiteCrawlService {
         }
     }
 
-    /** 入参为空取默认值，超硬顶钳到硬顶，低于 1（深度低于 0）抬回下界。 */
-    private static int clamp(Integer value, int defaultValue, int limit) {
+    /**
+     * 入参为空取默认值，超硬顶钳到硬顶，低于 {@code min} 抬回下界。
+     *
+     * <p>{@code min} 按字段区分（页数下界 1、深度下界 0）：早期版本两者共用固定 0 下界，
+     * 会让 {@code maxPages} 被钳成 0——{@code while} 循环一次都不进，任务照样报
+     * COMPLETED、0 页，且没有任何异常或日志提示。
+     */
+    static int clamp(Integer value, int defaultValue, int min, int limit) {
         int v = value == null ? defaultValue : value;
-        return Math.max(0, Math.min(v, limit));
+        return Math.max(min, Math.min(v, limit));
+    }
+
+    /**
+     * 解析实际采用的抓取间隔：优先站点声明的 {@code robots Crawl-delay}，否则用平台默认，
+     * 但<b>钳到平台上限</b>——{@code Crawl-delay} 是被爬站点（第三方）可控的值，不设上限
+     * 时对方声明 {@code Crawl-delay: 300} 就能让每页睡 5 分钟，乘以 500 页硬顶就是
+     * 40 多小时，全程占着共享的 {@code applicationTaskExecutor} 一个线程。
+     * 包级 static 免容器单测（同 {@link #clamp} 惯例）。
+     */
+    static long resolveDelayMs(Long robotsCrawlDelayMs, long defaultDelayMs, long maxDelayMs) {
+        long candidate = robotsCrawlDelayMs != null ? robotsCrawlDelayMs : defaultDelayMs;
+        return Math.min(candidate, maxDelayMs);
     }
 
     private static void sleepQuietly(long millis) {

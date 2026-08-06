@@ -34,6 +34,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,6 +71,18 @@ class SiteCrawlServiceTest {
         service.setSelf(service);            // 单测里 self 就是自身
         fetched.clear();
         // robots.txt 取不到 → 允许全部（RobotsChecker 的 fail-open 分支）
+        //
+        // ⚠️ 给下一个要在某条用例里让 downloadRaw 返回真实 robots.txt 内容的人：
+        // 别用 when(webPageFetcher.downloadRaw(anyString())).thenReturn(...) 重新打桩。
+        // 这个 mock 已经被本行打过 thenThrow，when() 为了记录新桩必须先真的调用一次
+        // 该方法，而这次调用会命中当前仍生效的旧桩、直接把异常抛出来，
+        // .thenReturn(...) 永远接不上去（本文件真的踩过一次）。
+        // ⚠️ 把这一行的原始桩换成 doThrow(...).when(webPageFetcher).downloadRaw(...) 对
+        // 这个坑没有帮助——已用一次性探针实测：无论原始桩用哪种语法配置，
+        // when(mock.foo()) 这种"先调用以录制"的重新打桩方式都会在录制那一步就先把
+        // mock 当前生效的异常炸出来，与原始桩的配置方式无关。
+        // 唯一安全的重新打桩方式是 doReturn(...).when(webPageFetcher).downloadRaw(...)，
+        // 用法见 robots_denied_pages_do_not_count_toward_max_pages。
         when(webPageFetcher.downloadRaw(anyString())).thenThrow(new BusinessException("404"));
     }
 
@@ -186,7 +200,9 @@ class SiteCrawlServiceTest {
     }
 
     @Test
-    @DisplayName("同一页的不同写法只抓一次（visited 去重）")
+    @DisplayName("同一页面内同一 URL 的不同写法折叠成一条链接——这条守的是 LinkExtractor 的 Set 语义，"
+            + "不是跨页 visited 去重（页内四种写法本就在 extract() 里被 Set 折叠掉了，"
+            + "跨页去重见 cross_page_revisits_are_deduplicated）")
     void visits_each_page_once() {
         CrawlSite s = site(50, 3);
         stubIngestSucceeds();
@@ -196,6 +212,19 @@ class SiteCrawlServiceTest {
         service.runCrawl(newProgress(s), 9L, 1L, 2L, 3L, null);
 
         assertThat(fetched).containsExactly("https://x.com/help", "https://x.com/help/a");
+    }
+
+    @Test
+    @DisplayName("互链两页（A→B→A）只各抓一次——跨页 visited 去重，防止无限重复访问烧光 maxPages 额度")
+    void cross_page_revisits_are_deduplicated() {
+        CrawlSite s = site(50, 3);
+        stubIngestSucceeds();
+        stubPage("https://x.com/help", "/help/b");
+        stubPage("https://x.com/help/b", "/help");
+
+        service.runCrawl(newProgress(s), 9L, 1L, 2L, 3L, null);
+
+        assertThat(fetched).containsExactly("https://x.com/help", "https://x.com/help/b");
     }
 
     // ===== 已存在 / 新建 =====
@@ -216,6 +245,29 @@ class SiteCrawlServiceTest {
         verify(documentRepository, never()).save(any(Document.class));
         assertThat(p.updated).isEqualTo(1);
         assertThat(p.created).isZero();
+    }
+
+    @Test
+    @DisplayName("重新爬到已存在但未归属任何站点的文档时补上 crawlSite——否则该页永远享受不到站点的"
+            + " contentSelector，删站点连带删文档时也会漏删它")
+    void adopts_existing_unowned_document_into_crawl_site() {
+        CrawlSite s = site(50, 0);
+        stubPage("https://x.com/help");
+        Document existing = Document.builder().id(77L).sourceUrl("https://x.com/help").build();
+        when(documentRepository.findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(existing));
+        when(documentRepository.findById(77L)).thenReturn(Optional.of(existing));
+        List<Document> saved = new ArrayList<>();
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
+            saved.add(inv.getArgument(0));
+            return inv.getArgument(0);
+        });
+
+        SiteCrawlService.Progress p = newProgress(s);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        verify(webPageSyncService).syncDocument(77L);
+        assertThat(saved).anySatisfy(d -> assertThat(d.getCrawlSite()).isSameAs(s));
     }
 
     @Test
@@ -310,6 +362,32 @@ class SiteCrawlServiceTest {
         assertThat(p.errorMessage).contains("入口页");
     }
 
+    @Test
+    @DisplayName("入口地址被 robots.txt 禁止抓取时任务必须 FAILED——不能悄悄报 COMPLETED、0 页，"
+            + "让用户以为爬完了实际什么都没抓到")
+    void entry_page_denied_by_robots_fails_the_whole_job() {
+        CrawlSite s = site(50, 1);
+        byte[] robots = "User-agent: *\nDisallow: /help\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        org.mockito.Mockito.doReturn(new WebPageFetcher.Downloaded(robots, "UTF-8", 200))
+                .when(webPageFetcher).downloadRaw(anyString());
+
+        SiteCrawlService.Progress p = newProgress(s);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        assertThat(p.status).isEqualTo("FAILED");
+        assertThat(p.errorMessage).contains("robots.txt");
+    }
+
+    // ===== robots Crawl-delay 上限（第三方可控值，不能无上界占用共享线程池）=====
+
+    @Test
+    @DisplayName("robots 声明的 Crawl-delay 超过平台上限时被钳制到上限")
+    void clamps_robots_crawl_delay_to_platform_limit() {
+        assertThat(SiteCrawlService.resolveDelayMs(300_000L, 1000L, 10_000L)).isEqualTo(10_000L);
+        assertThat(SiteCrawlService.resolveDelayMs(5000L, 1000L, 10_000L)).isEqualTo(5000L);
+        assertThat(SiteCrawlService.resolveDelayMs(null, 1000L, 10_000L)).isEqualTo(1000L);
+    }
+
     // ===== 租户上下文（陷阱 6.1）=====
 
     @Test
@@ -376,6 +454,16 @@ class SiteCrawlServiceTest {
     }
 
     @Test
+    @DisplayName("originOf 对缺协议/主机名的 URL 抛业务异常而非 NPE")
+    void origin_of_rejects_url_without_scheme_or_host() {
+        // new URI("x.com/help") 不抛 URISyntaxException（合法的无协议相对引用），
+        // getScheme() 静默返回 null；不加守卫会在 new StringBuilder((String) null) 处
+        // 抛 NPE，对外表现为无业务语义的 500
+        assertThatThrownBy(() -> SiteCrawlService.originOf("x.com/help"))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
     @DisplayName("范围前缀异域直接拒绝——这是安全边界不是配置项")
     void rejects_scope_prefix_on_another_host() {
         CrawlSiteRequest req = new CrawlSiteRequest();
@@ -391,10 +479,11 @@ class SiteCrawlServiceTest {
     }
 
     @Test
-    @DisplayName("页数与深度被钳制到平台硬顶")
+    @DisplayName("页数与深度被钳制到平台配置的硬顶——用非默认值验证，防止巧合等于硬编码默认值而测不出实现"
+            + "到底钳的是配置还是字面量")
     void clamps_max_pages_and_depth_to_platform_limits() {
-        props.setMaxPagesLimit(500);
-        props.setMaxDepthLimit(5);
+        props.setMaxPagesLimit(7);
+        props.setMaxDepthLimit(2);
         CrawlSiteRequest req = new CrawlSiteRequest();
         req.setEntryUrl("https://x.com/help/");
         req.setMaxPages(99999);
@@ -415,8 +504,36 @@ class SiteCrawlServiceTest {
 
         service.startCrawl(100L, req);
 
-        assertThat(saved.get(0).getMaxPages()).isEqualTo(500);
-        assertThat(saved.get(0).getMaxDepth()).isEqualTo(5);
+        assertThat(saved.get(0).getMaxPages()).isEqualTo(7);
+        assertThat(saved.get(0).getMaxDepth()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("clamp：未传取默认值；低于下界抬回下界而不是钳成 0——钳成 0 时 while 循环一次都不进，"
+            + "任务照样报 COMPLETED、0 页，且没有任何异常或日志")
+    void clamp_applies_defaults_and_lower_bound() {
+        assertThat(SiteCrawlService.clamp(null, 50, 1, 500)).isEqualTo(50);
+        assertThat(SiteCrawlService.clamp(null, 3, 0, 5)).isEqualTo(3);
+        assertThat(SiteCrawlService.clamp(0, 50, 1, 500)).isEqualTo(1);
+        assertThat(SiteCrawlService.clamp(-5, 3, 0, 5)).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("同一知识库下重复入口地址被拒绝——两个不同 id 的站点各自跑一遍 BFS 会互相看不见"
+            + "对方未提交的建档，产出重复文档与重复向量")
+    void rejects_duplicate_entry_url_in_same_knowledge_base() {
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help/");
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
+        CrawlSite existing = CrawlSite.builder().id(5L).knowledgeBase(kb).entryUrl("https://x.com/help/").build();
+        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/help/"))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.startCrawl(100L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重新爬取");
     }
 
     @Test
@@ -428,6 +545,44 @@ class SiteCrawlServiceTest {
         assertThatThrownBy(() -> service.recrawl(9L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("已有爬取");
+    }
+
+    @Test
+    @DisplayName("异步投递失败必须回滚站点互斥与全局配额——否则站点永久无法再爬、"
+            + "全局配额被僵尸 Progress 永久占满")
+    void releases_site_mutex_and_job_slot_when_async_dispatch_fails() {
+        CrawlSite s = site(50, 0);
+        props.setMaxConcurrentJobs(2);
+        SiteCrawlService throwingSelf = mock(SiteCrawlService.class);
+        doThrow(new RuntimeException("线程池拒绝"))
+                .when(throwingSelf).runCrawl(any(), any(), any(), any(), any(), any());
+        service.setSelf(throwingSelf);
+
+        // 连续两次投递失败：若站点互斥没回滚，第二次会被"该站点已有爬取在进行"拦下而不是
+        // 复现投递异常本身——断言两次抛出的都是同一种异常，说明互斥每次都正确释放
+        assertThatThrownBy(() -> service.recrawl(9L))
+                .isInstanceOf(RuntimeException.class).hasMessageContaining("线程池拒绝");
+        assertThatThrownBy(() -> service.recrawl(9L))
+                .isInstanceOf(RuntimeException.class).hasMessageContaining("线程池拒绝");
+
+        // 换回真实 self：若 jobs 里两条 RUNNING 的僵尸 Progress 没被回收，
+        // maxConcurrentJobs=2 会让这次直接被"已有 2 个爬取任务在进行"拒绝
+        service.setSelf(service);
+        stubIngestSucceeds();
+        stubPage("https://x.com/help");
+        String jobId = service.recrawl(9L);
+        assertThat(jobId).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("爬取中不能删站点——收尾的 merge 会把已删除的行当新行插回来，界面表现为删了又回来")
+    void rejects_deleting_a_site_that_is_currently_crawling() {
+        CrawlSite s = site(50, 0);
+        service.markCrawlingForTest(9L);
+
+        assertThatThrownBy(() -> service.deleteSite(9L, false))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("爬取中");
     }
 
     @Test
