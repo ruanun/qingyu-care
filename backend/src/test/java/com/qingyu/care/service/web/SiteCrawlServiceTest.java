@@ -22,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -558,6 +559,62 @@ class SiteCrawlServiceTest {
                 .hasMessageContaining("重新爬取");
     }
 
+    /**
+     * 变异自证：改配置这条查重此前完全不存在（{@code updateSite} 只做归属校验），
+     * 运营能把 B 站点的入口改成与 A 站点相同——两个不同 {@code siteId} 不受
+     * {@code crawlingSites} 站点级互斥约束，各点一次「重新爬取」就并发跑两遍 BFS，
+     * 产出重复文档与重复向量。
+     */
+    @Test
+    @DisplayName("改配置把入口地址改成撞上同库已有站点时被拒绝——同 startCrawl 的查重键"
+            + "（LinkExtractor.normalize 之后的值），只是从「建站」换成了「改配置」这扇门")
+    void rejects_update_that_changes_entry_url_to_collide_with_another_site() {
+        CrawlSite s = site(50, 0);   // id=9，entryUrl="https://x.com/help/"
+        KnowledgeBase kb = s.getKnowledgeBase();
+        CrawlSite other = CrawlSite.builder().id(5L).knowledgeBase(kb).entryUrl("https://x.com/docs").build();
+        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/docs"))
+                .thenReturn(Optional.of(other));
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/docs/");   // 规范化后与 other 的入口相同
+
+        assertThatThrownBy(() -> service.updateSite(9L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重新爬取");
+        verify(crawlSiteRepository, never()).save(any(CrawlSite.class));
+    }
+
+    @Test
+    @DisplayName("改配置但入口地址不变时正常保存——查重必须排除自身，否则任何一次改配置"
+            + "都会被自己的旧入口地址拦下（findFirst 按同库同入口查，唯一匹配的就是自己）")
+    void allows_update_that_keeps_its_own_entry_url() {
+        CrawlSite s = site(50, 0);   // id=9，entryUrl="https://x.com/help/"
+        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(s));
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help/");
+        req.setContentSelector("article");
+
+        CrawlSite updated = service.updateSite(9L, req);
+
+        assertThat(updated.getContentSelector()).isEqualTo("article");
+        verify(crawlSiteRepository).save(s);
+    }
+
+    @Test
+    @DisplayName("列站点：先经 getKnowledgeBase 归属校验，再按知识库过滤")
+    void lists_sites_of_a_knowledge_base_after_ownership_check() {
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
+        CrawlSite a = CrawlSite.builder().id(9L).knowledgeBase(kb).entryUrl("https://x.com/help").build();
+        when(crawlSiteRepository.findByKnowledgeBaseIdOrderByIdDesc(100L)).thenReturn(List.of(a));
+
+        List<CrawlSite> result = service.listSites(100L);
+
+        assertThat(result).containsExactly(a);
+        verify(knowledgeService).getKnowledgeBase(100L);
+    }
+
     @Test
     @DisplayName("未显式传 scopePrefix 时，范围前缀必须按入口 URL 的原始写法（含尾斜杠）推导——"
             + "不能被查重/落库用的规范化 entryUrl 污染。normalize 会把 \"https://x.com/help/\" 的"
@@ -623,6 +680,51 @@ class SiteCrawlServiceTest {
         assertThat(jobId).isNotBlank();
     }
 
+    /**
+     * 早期版本按全局扫 {@code jobs} 计数：一个租户占满 {@code maxConcurrentJobs} 后，
+     * <b>同实例的所有其他租户</b>点「爬取」都会被拒——跨租户可用性耦合，且旧文案里
+     * 直接带 {@code running} 数字，把平台全局活动量回显给了租户。改成按
+     * {@code TenantContext.getTenantId()} 分桶后，租户 A 占满自己的配额不该影响租户 B。
+     */
+    @Test
+    @DisplayName("并发额度按租户分桶：租户 A 占满配额时租户 B 仍能开爬，互不阻塞")
+    void concurrency_quota_is_scoped_per_tenant() {
+        props.setMaxConcurrentJobs(1);
+        CrawlSite siteA = site(50, 0);   // id=9
+        siteA.setTenantId(1L);
+
+        // 用一个「跑了但不完成」的 self 桩模拟租户 A 真的有一条爬取停在 RUNNING——不能像
+        // 上面那样用 doThrow：那会让 launch() 的异常处理把互斥/额度都回滚掉，本测试恰恰
+        // 需要「占着不放」这个状态。mock 的默认 void 行为就是什么都不做，Progress 永远
+        // 停在构造时的 RUNNING，crawlingSites 里的 9L 也永远不会被 finally 释放
+        SiteCrawlService stallingSelf = mock(SiteCrawlService.class);
+        service.setSelf(stallingSelf);
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(10L);
+        String jobIdA = service.recrawl(9L);
+        assertThat(jobIdA).isNotBlank();
+
+        // 换回真实 self；租户 B 用另一个站点（不同 siteId，避免撞上与本测试无关的站点级互斥）
+        service.setSelf(service);
+        stubIngestSucceeds();
+        stubPage("https://x.com/help");
+        CrawlSite siteB = CrawlSite.builder()
+                .id(11L).knowledgeBase(siteA.getKnowledgeBase())
+                .entryUrl("https://x.com/help/").scopePrefix("https://x.com/help/")
+                .maxPages(50).maxDepth(0)
+                .syncInterval(SyncInterval.DAILY)
+                .build();
+        siteB.setTenantId(2L);
+        when(crawlSiteRepository.findById(11L)).thenReturn(Optional.of(siteB));
+        TenantContext.setTenantId(2L);
+        TenantContext.setAppId(20L);
+
+        // 若配额仍是全局共享（租户 A 那条 RUNNING 计入总数），这里会被"已有爬取任务在进行"拒绝
+        String jobIdB = service.recrawl(11L);
+
+        assertThat(jobIdB).isNotBlank();
+    }
+
     @Test
     @DisplayName("爬取中不能删站点——收尾的 merge 会把已删除的行当新行插回来，界面表现为删了又回来")
     void rejects_deleting_a_site_that_is_currently_crawling() {
@@ -640,6 +742,85 @@ class SiteCrawlServiceTest {
         assertThatThrownBy(() -> service.getProgress("nope"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不存在");
+    }
+
+    // ===== Error 逃逸兜底与收尾健壮性 =====
+
+    @Test
+    @DisplayName("Error（如整页 DOM 撑爆堆的 OOM）从 catch(Exception) 逃逸时，finally 仍必须把"
+            + "残留 RUNNING 兜底置终态并释放站点互斥——否则一个 Error 会永久吃掉一格全局并发额度，"
+            + "只能重启恢复")
+    void error_escaping_catch_still_finalizes_progress_and_releases_mutex() {
+        CrawlSite s = site(50, 0);
+        when(webPageFetcher.fetch(eq("https://x.com/help"), any()))
+                .thenThrow(new OutOfMemoryError("模拟整页 DOM 撑爆堆"));
+
+        SiteCrawlService.Progress p = newProgress(s);
+        assertThatThrownBy(() -> service.runCrawl(p, 9L, 1L, 2L, 3L, null))
+                .isInstanceOf(OutOfMemoryError.class);
+
+        assertThat(p.status).isEqualTo("FAILED");
+        assertThat(p.finishedAt).isNotNull();
+        assertThat(TenantContext.getTenantId()).isNull();
+        service.deleteSite(9L, false);          // 互斥若没释放，这里会抛「爬取中」
+        verify(crawlSiteRepository).delete(s);
+    }
+
+    @Test
+    @DisplayName("收尾必须用重新 findById 拿到的当前行去改，不能拿开爬时已 detached 的旧引用"
+            + " save——否则 em.merge() 会把开爬那一刻的陈旧字段（含运营在爬取期间边看边改的"
+            + " contentSelector）覆盖回库，静默抹掉配置修改且无异常无日志")
+    void finalization_reloads_the_site_instead_of_saving_the_stale_reference() {
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        CrawlSite stale = CrawlSite.builder()
+                .id(9L).knowledgeBase(kb)
+                .entryUrl("https://x.com/help/").scopePrefix("https://x.com/help/")
+                .maxPages(50).maxDepth(0)
+                .contentSelector("旧选择器")
+                .syncInterval(SyncInterval.DAILY)
+                .build();
+        CrawlSite fresh = CrawlSite.builder()
+                .id(9L).knowledgeBase(kb)
+                .entryUrl("https://x.com/help/").scopePrefix("https://x.com/help/")
+                .maxPages(50).maxDepth(0)
+                .contentSelector("运营在爬取期间刚改的新选择器")
+                .syncInterval(SyncInterval.DAILY)
+                .build();
+        // 开爬拿旧快照，收尾拿运营已改的当前行；必须用 doReturn 覆盖 setUp 里 site() 打的旧桩，
+        // 不能用 when()——那次"先调用以录制"会命中当前生效的旧 answer（本类 setUp 注释已记录该坑）
+        org.mockito.Mockito.doReturn(Optional.of(stale), Optional.of(fresh))
+                .when(crawlSiteRepository).findById(9L);
+        List<CrawlSite> savedSites = new ArrayList<>();
+        when(crawlSiteRepository.save(any(CrawlSite.class))).thenAnswer(inv -> {
+            savedSites.add(inv.getArgument(0));
+            return inv.getArgument(0);
+        });
+        stubIngestSucceeds();
+        stubPage("https://x.com/help");
+
+        SiteCrawlService.Progress p = service.newProgressForTest("job-1", 9L, 50);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        assertThat(savedSites).hasSize(1);
+        assertThat(savedSites.get(0).getContentSelector()).isEqualTo("运营在爬取期间刚改的新选择器");
+        assertThat(stale.getLastCrawledAt()).isNull();   // 陈旧快照根本没被碰
+    }
+
+    /**
+     * 反射断言，守的是「注解被加回来」这一种回归方式——{@code startCrawl} 不带
+     * {@code @Transactional} 是刻意的（带上会让异步线程读不到未提交的站点行，见类文档
+     * §异步执行 与 {@link #startCrawl} 的 Javadoc）。这条竞态本身无法确定性复现，
+     * 单测只能守住「有人把注解加回来」这一种最现实的回归方式，守不住时序竞态本身。
+     */
+    @Test
+    @DisplayName("startCrawl 与所在类都不带 @Transactional——只守「注解被加回来」这一种回归，"
+            + "守不住时序竞态本身")
+    void start_crawl_intentionally_has_no_transactional_annotation() throws NoSuchMethodException {
+        assertThat(SiteCrawlService.class
+                .getMethod("startCrawl", Long.class, CrawlSiteRequest.class)
+                .getAnnotation(Transactional.class)).isNull();
+        assertThat(SiteCrawlService.class.getAnnotation(Transactional.class)).isNull();
     }
 
     // ===== 越权（TenantOwnershipGuard）=====
@@ -674,6 +855,30 @@ class SiteCrawlServiceTest {
                 .hasMessageContaining("不存在");
         verify(knowledgeService, never()).deleteDocument(anyLong());
         verify(crawlSiteRepository, never()).delete(any(CrawlSite.class));
+    }
+
+    /**
+     * 变异自证：把 {@code updateSite} 里的 {@code requireOwnedSite(siteId)} 换成裸
+     * {@code crawlSiteRepository.findById(siteId).orElseThrow(...)}，此测试必须转红——
+     * 终审实测过这条改动后 630 条全绿，即这条写路径此前零守护
+     * （{@code updateSite}/{@code listSites} 在整个测试树里零引用）。
+     */
+    @Test
+    @DisplayName("拿别的租户的站点 id 改配置：同样按「不存在」拒绝，不落库")
+    void rejects_update_of_another_tenants_site() {
+        CrawlSite other = CrawlSite.builder().id(9L).entryUrl("https://x.com/help").build();
+        other.setTenantId(999L);
+        other.setAppId(888L);
+        when(crawlSiteRepository.findById(9L)).thenReturn(Optional.of(other));
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help/");
+
+        assertThatThrownBy(() -> service.updateSite(9L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
+        verify(crawlSiteRepository, never()).save(any(CrawlSite.class));
     }
 
     @Test

@@ -59,6 +59,11 @@ public class SiteCrawlService {
     /** 内存进度（重启不留存；幂等重跑即续）。 */
     public static final class Progress {
         public final String jobId;
+        /**
+         * 归属租户，用于 {@link #launch} 按租户分桶全局并发额度。平台管理员为
+         * {@code null}——见 {@link #launch} 关于「null 桶」取舍的说明。
+         */
+        public final Long tenantId;
         public final Long siteId;
         public final int maxPages;
         /** 已<b>尝试抓取</b>的页数（不是成功数，见 crawl 内注释）。 */
@@ -71,8 +76,9 @@ public class SiteCrawlService {
         public final LocalDateTime startedAt = LocalDateTime.now();
         public volatile LocalDateTime finishedAt;
 
-        Progress(String jobId, Long siteId, int maxPages) {
+        Progress(String jobId, Long tenantId, Long siteId, int maxPages) {
             this.jobId = jobId;
+            this.tenantId = tenantId;
             this.siteId = siteId;
             this.maxPages = maxPages;
             this.status = "RUNNING";
@@ -153,10 +159,7 @@ public class SiteCrawlService {
     public CrawlStartResponse startCrawl(Long knowledgeBaseId, CrawlSiteRequest req) {
         KnowledgeBase kb = knowledgeService.getKnowledgeBase(knowledgeBaseId);
         String normalizedEntryUrl = normalizeEntryUrl(req.getEntryUrl());
-        if (crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(
-                knowledgeBaseId, normalizedEntryUrl).isPresent()) {
-            throw new BusinessException("该入口地址已有爬取站点，请直接用「重新爬取」");
-        }
+        requireNoDuplicateEntryUrl(knowledgeBaseId, normalizedEntryUrl, null);
         CrawlSite site = crawlSiteRepository.save(applyRequest(new CrawlSite(), req, kb));
         return new CrawlStartResponse(site.getId(), launch(site));
     }
@@ -166,11 +169,39 @@ public class SiteCrawlService {
         return launch(requireOwnedSite(siteId));
     }
 
-    /** 改站点配置。下一轮定期同步就会用上新的 {@code contentSelector}。 */
+    /**
+     * 改站点配置。下一轮定期同步就会用上新的 {@code contentSelector}。
+     *
+     * <p>⚠️ 设计文档 §7.1 里 PUT 的语义是「改配置」（前缀/深度/页数/选择器/周期），
+     * {@code entryUrl} 本不在可改字段清单里；但实现与 {@link #startCrawl} 共用
+     * {@link #applyRequest}，它会无条件套用 {@code req.getEntryUrl()}，等于顺带把入口
+     * 地址也变成了可改字段。若不在这里补查重，运营能把 B 站点的入口改成与 A 站点相同
+     * （规范化后），两个不同 {@code siteId} 互不受 {@link #crawlingSites} 站点级互斥
+     * 约束，各点一次「重新爬取」就会并发跑两遍 BFS，各自的
+     * {@code findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc} 看不见对方未提交的插入
+     * ——同 {@link #startCrawl} 类文档点名过的重复建档/重复向量后果，只是从「建站」这扇门
+     * 换成了「改配置」这扇门。
+     */
     @Transactional
     public CrawlSite updateSite(Long siteId, CrawlSiteRequest req) {
         CrawlSite site = requireOwnedSite(siteId);
+        String normalizedEntryUrl = normalizeEntryUrl(req.getEntryUrl());
+        requireNoDuplicateEntryUrl(site.getKnowledgeBase().getId(), normalizedEntryUrl, siteId);
         return crawlSiteRepository.save(applyRequest(site, req, site.getKnowledgeBase()));
+    }
+
+    /**
+     * 查重：同一知识库下不能有两个站点共用规范化后相同的入口地址。
+     *
+     * @param excludeSiteId 改配置时传本站点 id，排除自身（否则「没改入口」也会被判成
+     *                       撞了自己）；建站时传 {@code null}，不排除任何行。
+     */
+    private void requireNoDuplicateEntryUrl(Long knowledgeBaseId, String normalizedEntryUrl, Long excludeSiteId) {
+        crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(knowledgeBaseId, normalizedEntryUrl)
+                .filter(existing -> !existing.getId().equals(excludeSiteId))
+                .ifPresent(existing -> {
+                    throw new BusinessException("该入口地址已有爬取站点，请直接用「重新爬取」");
+                });
     }
 
     public List<CrawlSite> listSites(Long knowledgeBaseId) {
@@ -250,16 +281,33 @@ public class SiteCrawlService {
      *       被 {@link #jobs} 从未有任何地方 remove 的 Progress 长期占着，
      *       {@code running} 计数只增不减，最终把全局并发额度永久占满，只能重启恢复。</li>
      * </ul>
+     *
+     * <p>⚠️ 并发额度<b>按租户分桶</b>而非全局共享：早期版本扫全局 {@code jobs} 计数，
+     * 一个租户起两个 500 页 × 10s/页的任务就能占死约 83 分钟的额度，期间<b>同实例其他
+     * 所有租户</b>点「爬取」都会被拒——既是跨租户可用性耦合，又把平台全局活动量回显给了
+     * 租户（旧文案里直接带 {@code running} 数字）。改成按 {@code TenantContext.getTenantId()}
+     * 分桶后各租户的额度互不干扰；桶键取自请求线程（{@code launch} 本就跑在请求线程，
+     * 与四个 {@code TenantContext} 值搬运进 {@code @Async} 线程是两回事，不冲突）。
+     *
+     * <p>平台管理员的 {@code tenantId} 恒为 {@code null}，本方法让所有平台管理员发起的爬取
+     * 共用同一个「null 桶」而不是彻底不设限：这等价于把「平台管理员」当成单一身份对待，
+     * 与任意一个真实租户受同样的额度约束，既不会重新引入「一个身份占满全局额度」的旧问题
+     * （因为它不再挤占真实租户的桶），也不需要为平台管理员发明新的分桶维度（如按被操作的
+     * 知识库/租户二次拆分——收益不明显，且平台管理员本就是低频操作角色）。
      */
     private String launch(CrawlSite site) {
-        long running = jobs.values().stream().filter(p -> "RUNNING".equals(p.status)).count();
+        Long tenantId = TenantContext.getTenantId();
+        long running = jobs.values().stream()
+                .filter(p -> "RUNNING".equals(p.status) && java.util.Objects.equals(p.tenantId, tenantId))
+                .count();
         if (running >= props.getMaxConcurrentJobs()) {
-            throw new BusinessException("已有 " + running + " 个爬取任务在进行，请稍后再试");
+            // 不回显 running 数字：那是平台全局并发活动量，租户不该看到
+            throw new BusinessException("已有爬取任务在进行，请稍后再试");
         }
         if (!crawlingSites.add(site.getId())) {
             throw new BusinessException("该站点已有爬取在进行，请等待完成");
         }
-        Progress p = new Progress(UUID.randomUUID().toString(), site.getId(), site.getMaxPages());
+        Progress p = new Progress(UUID.randomUUID().toString(), tenantId, site.getId(), site.getMaxPages());
         jobs.put(p.jobId, p);
         try {
             // 必须经 self 才能命中 Spring 代理让 @Async 真正生效（同类直调会退化成同步阻塞请求线程）。
@@ -646,9 +694,13 @@ public class SiteCrawlService {
 
     // ===== 仅供单测的窄接口 =====
 
-    /** 单测直接构造进度，避免为了拿 Progress 去跑一遍 launch 的互斥与并发检查。 */
+    /**
+     * 单测直接构造进度，避免为了拿 Progress 去跑一遍 launch 的互斥与并发检查。
+     * {@code tenantId} 取自调用时的 {@code TenantContext}（同 {@link #launch} 的取法），
+     * 未显式设置上下文的既有用例会拿到 {@code null}，与它们历来的隐式假设一致。
+     */
     Progress newProgressForTest(String jobId, Long siteId, int maxPages) {
-        Progress p = new Progress(jobId, siteId, maxPages);
+        Progress p = new Progress(jobId, TenantContext.getTenantId(), siteId, maxPages);
         jobs.put(jobId, p);
         return p;
     }

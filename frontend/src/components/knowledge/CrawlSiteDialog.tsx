@@ -103,12 +103,21 @@ export function CrawlSiteDialog({ open, onOpenChange, initial, onSubmit }: Props
                 </DialogHeader>
                 <div className="space-y-4">
                     <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground">入口 URL</label>
+                        <label className="text-xs text-muted-foreground">
+                            入口 URL{initial ? '（创建后不可修改）' : ''}
+                        </label>
                         <Input
                             placeholder="https://example.com/help/"
                             value={entryUrl}
+                            disabled={!!initial}
                             onChange={(e) => handleEntryChange(e.target.value)}
                         />
+                        {initial && (
+                            <p className="text-xs text-muted-foreground">
+                                如需更换入口地址，请建一个新的爬取站点；这里只能改抓取范围/深度/页数/
+                                选择器/同步周期。
+                            </p>
+                        )}
                     </div>
 
                     <div className="space-y-1">
