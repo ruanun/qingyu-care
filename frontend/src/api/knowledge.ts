@@ -1,5 +1,5 @@
 import api from './client';
-import type { KnowledgeBase, Document, ApiResponse, DocumentStatusDTO } from '../types';
+import type { KnowledgeBase, Document, ApiResponse, DocumentStatusDTO, CrawlSite, CrawlProgress, CrawlSiteRequest } from '../types';
 
 export const knowledgeService = {
     // 获取知识库列表
@@ -64,4 +64,30 @@ export const knowledgeService = {
     // 手动触发网页重新抓取
     syncWebPage: (documentId: number): Promise<ApiResponse<void>> =>
         api.post(`/knowledge/documents/${documentId}/sync`),
+
+    // ===== 站点爬取 =====
+
+    // 新建爬取站点并立即开爬
+    addCrawlSite: (kbId: number, req: CrawlSiteRequest): Promise<ApiResponse<{ siteId: number; jobId: string }>> =>
+        api.post(`/knowledge/${kbId}/crawl-sites`, req),
+
+    // 站点列表
+    listCrawlSites: (kbId: number): Promise<ApiResponse<CrawlSite[]>> =>
+        api.get(`/knowledge/${kbId}/crawl-sites`),
+
+    // 查爬取进度（内存进度，应用重启后会返回业务错误）
+    getCrawlProgress: (jobId: string): Promise<ApiResponse<CrawlProgress>> =>
+        api.get(`/knowledge/crawl-jobs/${jobId}`),
+
+    // 重新爬取（复用站点配置，已存在的 URL 只做内容同步）
+    recrawlSite: (siteId: number): Promise<ApiResponse<string>> =>
+        api.post(`/knowledge/crawl-sites/${siteId}/recrawl`),
+
+    // 更新站点配置
+    updateCrawlSite: (siteId: number, req: CrawlSiteRequest): Promise<ApiResponse<CrawlSite>> =>
+        api.put(`/knowledge/crawl-sites/${siteId}`, req),
+
+    // 删除站点；deleteDocuments=true 时连带删除其文档与向量
+    deleteCrawlSite: (siteId: number, deleteDocuments: boolean): Promise<ApiResponse<void>> =>
+        api.delete(`/knowledge/crawl-sites/${siteId}?deleteDocuments=${deleteDocuments}`),
 };

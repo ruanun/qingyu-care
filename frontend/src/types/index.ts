@@ -110,6 +110,44 @@ export interface DocumentStatusDTO {
     progress: number;
 }
 
+/** 爬取站点配置 */
+export interface CrawlSite {
+    id: number;
+    entryUrl: string;
+    scopePrefix: string;
+    maxPages: number;
+    maxDepth: number;
+    contentSelector: string | null;
+    syncInterval: 'MANUAL' | 'HOURLY' | 'DAILY' | 'WEEKLY';
+    lastCrawledAt: string | null;
+    createdAt: string;
+}
+
+/** 爬取进度。刻意没有 total——BFS 边爬边发现，总数是动态的 */
+export interface CrawlProgress {
+    jobId: string;
+    siteId: number;
+    status: 'RUNNING' | 'COMPLETED' | 'FAILED';
+    crawled: number;
+    created: number;
+    updated: number;
+    failed: number;
+    maxPages: number;
+    errorMessage: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+}
+
+/** 建站 / 改配置的入参 */
+export interface CrawlSiteRequest {
+    entryUrl: string;
+    scopePrefix?: string;
+    maxPages?: number;
+    maxDepth?: number;
+    contentSelector?: string;
+    syncInterval?: string;
+}
+
 export interface KnowledgeHit {
     content: string;
     score: number;

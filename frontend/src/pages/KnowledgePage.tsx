@@ -10,6 +10,7 @@ import type { KnowledgeBase, Document } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import QaPairPanel from '@/components/QaPairPanel';
+import { CrawlSiteList } from '@/components/knowledge/CrawlSiteList';
 import {
     Dialog,
     DialogContent,
@@ -337,6 +338,11 @@ const KnowledgePage: React.FC = () => {
                             </CardHeader>
                             <CardContent>
                                 <Separator className="mb-6" />
+                                <CrawlSiteList
+                                    knowledgeBaseId={selectedKb.id}
+                                    onCrawlFinished={() => fetchDocuments(selectedKb.id)}
+                                />
+                                <Separator className="my-6" />
                                 <div className="flex gap-4 border-b mb-4">
                                     <button className={cn('pb-2 text-sm font-medium border-b-2 -mb-px', activeTab === 'docs' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')} onClick={() => setActiveTab('docs')}>文档</button>
                                     <button className={cn('pb-2 text-sm font-medium border-b-2 -mb-px', activeTab === 'qa' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')} onClick={() => setActiveTab('qa')}>问答对</button>
