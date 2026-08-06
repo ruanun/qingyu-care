@@ -1,7 +1,5 @@
 package com.qingyu.care.service.web;
 
-import lombok.extern.slf4j.Slf4j;
-
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Arrays;
@@ -19,7 +17,6 @@ import java.util.stream.Collectors;
  *
  * @author ruan
  */
-@Slf4j
 public final class LinkExtractor {
 
     private LinkExtractor() {
@@ -130,7 +127,8 @@ public final class LinkExtractor {
      *   <li>前缀本身是根路径（{@code https://x.com/}）时，简单地"补一个斜杠再比"
      *       会拼出 {@code https://x.com//}，一条都匹配不上。</li>
      * </ol>
-     * 下面三个 return 分支各对应上面一个边界，改动前先读测试里同名的三条用例。
+     * 下面这一个 return 语句用三个 {@code ||} 分支覆盖上面三个边界，顺序与之一一对应。
+     * 改动前先读测试里「边界一」「边界二」「边界三」的三条同名用例。
      */
     public static boolean inScope(String normalizedUrl, String normalizedPrefix) {
         if (normalizedUrl == null || normalizedPrefix == null) {
