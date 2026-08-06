@@ -55,7 +55,15 @@ public class WebPageFetcher {
     private static final String NOISE_SELECTOR =
             "script, style, nav, header, footer, aside, noscript, iframe, form";
 
-    public record FetchResult(String title, String content, String contentHash, int httpStatus) {}
+    /**
+     * 抓取结果。{@code dom} 是<b>剔噪之前</b>的 DOM 副本，供 {@link LinkExtractor} 抽链接。
+     *
+     * <p>⚠️ 必须是副本而不是原树引用：{@link #extractFrom} 会就地移除
+     * {@code nav}/{@code header}/{@code footer}，而帮助中心的目录导航恰恰常在这些标签里。
+     * 交出残树的后果是链接发现几乎抓不到东西，且<b>不报错</b>——表现为「爬了 1 页就结束」。
+     */
+    public record FetchResult(String title, String content, String contentHash,
+                              int httpStatus, org.jsoup.nodes.Document dom) {}
 
     /**
      * 下载结果：正文原始字节 + Content-Type 声明的编码（可为 null）+ 真实 HTTP 状态码。
@@ -63,22 +71,77 @@ public class WebPageFetcher {
      * <p>保留字节而不是就地解码成 String：响应头没带 charset 时，正确编码只写在 HTML 的
      * {@code <meta charset>} 里，必须把字节交给 Jsoup 自适应（见 {@link #parseHtml}）。
      */
-    record Downloaded(byte[] body, String charsetName, int status) {}
+    public record Downloaded(byte[] body, String charsetName, int status) {}
 
+    /** 单页抓取，走启发式噪声剔除（等价于 {@code fetch(url, null)}）。 */
     public FetchResult fetch(String url) {
-        Downloaded downloaded = download(url);
+        return fetch(url, null);
+    }
+
+    /**
+     * 单页抓取。{@code contentSelector} 非空时只取该选择器命中的容器内文本；
+     * 为空、选不中或语法非法时回退启发式剔噪（行为与不传选择器完全一致）。
+     *
+     * <p>⚠️ 三步的顺序不能变，且 {@code domForLinks} 必须在剔噪之前克隆：
+     * {@link #extractFrom} 会就地改树，标题与链接都得赶在它之前拿到。把顺序陷阱
+     * 收在本方法内部，调用方无从写错。
+     */
+    public FetchResult fetch(String url, String contentSelector) {
+        Downloaded downloaded = downloadRaw(url);
         org.jsoup.nodes.Document parsed = parseHtml(downloaded.body(), downloaded.charsetName(), url);
+
+        // 剔噪之前留一份副本给链接发现（extractFrom 会就地移除 nav/header/footer）
+        org.jsoup.nodes.Document domForLinks = parsed.clone();
         // 标题必须在剔噪声之前取：extractFrom 会就地改这棵树
         String title = extractTitle(parsed, url);
-        String content = extractFrom(parsed);
+
+        String content = null;
+        if (contentSelector != null && !contentSelector.isBlank()) {
+            content = extractBySelector(parsed, contentSelector);
+            if (content.isBlank()) {
+                log.warn("正文选择器未命中任何元素，回退启发式剔噪 selector={} url={}", contentSelector, url);
+                content = null;
+            }
+        }
+        if (content == null) {
+            content = extractFrom(parsed);
+        }
         if (content.isBlank()) {
             throw new BusinessException("网页正文为空，可能是需要 JS 渲染的页面: " + url);
         }
-        return new FetchResult(title, content, sha256(content), downloaded.status());
+        return new FetchResult(title, content, sha256(content), downloaded.status(), domForLinks);
     }
 
-    /** 安全下载：SSRF 钉 IP + 禁重定向 + 超时 + 限量 + Content-Type 白名单。 */
-    private Downloaded download(String url) {
+    /**
+     * 按 CSS 选择器取正文（白名单语义）：命中元素的文本按序拼接。
+     *
+     * <p>选不中或选择器语法非法都返回空串而<b>不抛异常</b>——运营写错一个选择器不该
+     * 让整站抓取全线失败，回退启发式并在日志留痕是更可用的行为。
+     * 包级 static 免容器单测（同本类其余提取方法的惯例）。
+     */
+    static String extractBySelector(org.jsoup.nodes.Document doc, String selector) {
+        try {
+            org.jsoup.select.Elements matched = doc.select(selector);
+            if (matched.isEmpty()) {
+                return "";
+            }
+            return matched.stream()
+                    .map(org.jsoup.nodes.Element::text)
+                    .filter(text -> !text.isBlank())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+        } catch (RuntimeException e) {
+            log.warn("正文选择器语法非法，将回退启发式剔噪 selector={}: {}", selector, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 安全下载：SSRF 钉 IP + 禁重定向 + 超时 + 限量 + Content-Type 白名单。
+     *
+     * <p>public 是为了让 {@link RobotsChecker} 复用这一整套出站防线取 robots.txt——
+     * 新开一条抓取路径就等于新开一个 SSRF 缺口，robots.txt 也必须走这里。
+     */
+    public Downloaded downloadRaw(String url) {
         final String host = URI.create(url).getHost();
         if (host == null || host.isBlank()) {
             throw new BusinessException("URL 缺少主机名: " + url);

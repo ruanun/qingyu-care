@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
@@ -106,8 +107,9 @@ class WebPageSyncTransactionIT extends AbstractPostgresIT {
     @Test
     void 重嵌成功时contentHash落库且status未被陈旧对象覆盖() throws Exception {
         Document doc = seedDoc();
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         // 模拟 processDocument 真实副作用：在它【自己的】findById 上把状态置 COMPLETED 并提交——
         // 如果 syncDocument 的事务/自调用被打破，这条更新对 syncDocument 里的旧 doc 引用不可见，
         // 之后旧引用的 save() 会把 status/chunkCount 覆盖回种子时的陈旧值
@@ -135,8 +137,9 @@ class WebPageSyncTransactionIT extends AbstractPostgresIT {
     @Test
     void 重嵌失败时contentHash不落库_失败计数递增_status未被覆盖() throws Exception {
         Document doc = seedDoc();
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         // 模拟 processDocument 内部吞异常后落 FAILED（真实实现从不重抛，只能靠状态判定成败）
         doAnswer(inv -> {
             Document d = documentRepository.findById(doc.getId()).orElseThrow();

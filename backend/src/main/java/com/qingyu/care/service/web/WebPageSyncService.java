@@ -143,7 +143,11 @@ public class WebPageSyncService {
         }
 
         try {
-            WebPageFetcher.FetchResult result = webPageFetcher.fetch(doc.getSourceUrl());
+            // 选择器取自所属爬取站点（单页手动添加的文档 crawlSite 为 null，传 null 即走启发式，
+            // 行为与第一期完全一致）。刻意读站点行而不冗余到文档上——改了站点选择器之后，
+            // 已建文档的下一轮同步立刻用新值，不需要回填 N 行
+            String selector = doc.getCrawlSite() == null ? null : doc.getCrawlSite().getContentSelector();
+            WebPageFetcher.FetchResult result = webPageFetcher.fetch(doc.getSourceUrl(), selector);
             // 注意：失败计数/errorMessage 不在这里清零——本轮是否真的"成功"要等重嵌结果出来，
             // 提前清零会让「抓取总是成功、重嵌总是失败」的场景每轮都被重置回 1，永远碰不到
             // MAX_FAILURES 熔断（见下方 recordSyncFailure 的调用点与类注释）

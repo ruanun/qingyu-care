@@ -1,13 +1,16 @@
 package com.qingyu.care.service.web;
 
+import com.qingyu.care.entity.CrawlSite;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.enums.DocumentStatus;
+import com.qingyu.care.enums.DocumentType;
 import com.qingyu.care.enums.SyncInterval;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.service.KnowledgeService;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -91,8 +94,9 @@ class WebPageSyncServiceTest {
     void 内容未变时不重嵌只更新同步时间() {
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("标题", "新抓到的正文", "HASH_A", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("标题", "新抓到的正文", "HASH_A", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
 
         service.syncDocument(1L);
 
@@ -108,8 +112,9 @@ class WebPageSyncServiceTest {
     void 内容变了才重嵌并更新正文与哈希() {
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         // knowledgeService.processDocument 是同步调用，与 syncDocument 共享同一个 doc 托管实例，
         // 真实实现会直接在这同一个对象上把状态改成 COMPLETED——用 doAnswer 模拟这一效果
         doAnswer(inv -> {
@@ -130,8 +135,9 @@ class WebPageSyncServiceTest {
     void 重嵌失败时contentHash不落库_下一轮仍判定为内容有变() {
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         // 模拟 processDocument 内部吞异常后落 FAILED + 写入真实原因（真实实现从不重抛，
         // 只能靠状态判断成败；errorMessage 是它在同一持久化上下文里留下的诊断信息）
         doAnswer(inv -> {
@@ -159,8 +165,9 @@ class WebPageSyncServiceTest {
     void 重嵌失败但processDocument未写errorMessage时回退通用文案() {
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         // 边界情况：processDocument 落 FAILED 但没写 errorMessage（如 e.getMessage() 本身为 null）
         doAnswer(inv -> {
             doc.setStatus(DocumentStatus.FAILED);
@@ -180,8 +187,9 @@ class WebPageSyncServiceTest {
         Document doc = urlDoc("HASH_A");
         doc.setSyncFailureCount(0);
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("新标题", "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         doAnswer(inv -> {
             doc.setStatus(DocumentStatus.FAILED);
             return null;
@@ -198,7 +206,7 @@ class WebPageSyncServiceTest {
     void 抓取失败时保留旧内容与旧哈希只累加失败计数() {
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("网页抓取失败: 502"));
+        when(webPageFetcher.fetch(anyString(), any())).thenThrow(new BusinessException("网页抓取失败: 502"));
 
         service.syncDocument(1L);   // 不应抛穿
 
@@ -215,7 +223,7 @@ class WebPageSyncServiceTest {
         Document doc = urlDoc("HASH_A");
         doc.setSyncFailureCount(9);
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("404"));
+        when(webPageFetcher.fetch(anyString(), any())).thenThrow(new BusinessException("404"));
 
         service.syncDocument(1L);
 
@@ -229,7 +237,7 @@ class WebPageSyncServiceTest {
         Document doc = urlDoc("HASH_A");
         doc.setSyncFailureCount(null);
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("超时"));
+        when(webPageFetcher.fetch(anyString(), any())).thenThrow(new BusinessException("超时"));
 
         service.syncDocument(1L);
 
@@ -246,7 +254,7 @@ class WebPageSyncServiceTest {
 
         // 注意：sourceUrl 是 null，anyString() 不匹配 null 调用，必须用 any()，
         // 否则删掉守卫后 fetch(null) 照样能通过 never() 断言，测试形同虚设
-        verify(webPageFetcher, never()).fetch(any());
+        verify(webPageFetcher, never()).fetch(any(), any());
         verify(knowledgeService, never()).processDocument(anyLong());
     }
 
@@ -264,7 +272,7 @@ class WebPageSyncServiceTest {
         service.syncDocument(1L);
 
         verify(documentRepository, never()).findById(anyLong());
-        verify(webPageFetcher, never()).fetch(any());
+        verify(webPageFetcher, never()).fetch(any(), any());
         verify(knowledgeService, never()).processDocument(anyLong());
         verify(documentRepository, never()).save(any());
     }
@@ -279,8 +287,9 @@ class WebPageSyncServiceTest {
         Document doc = urlDoc("HASH_A");
         doc.setStatus(DocumentStatus.FAILED);
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult("标题", "正文", "HASH_A", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("标题", "正文", "HASH_A", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         doAnswer(inv -> {
             doc.setStatus(DocumentStatus.COMPLETED);
             return null;
@@ -304,7 +313,7 @@ class WebPageSyncServiceTest {
         doc.setStatus(DocumentStatus.PENDING);
         doc.setContent(null);
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("网页返回 HTTP 404"));
+        when(webPageFetcher.fetch(anyString(), any())).thenThrow(new BusinessException("网页返回 HTTP 404"));
 
         service.syncDocument(1L);
 
@@ -318,7 +327,7 @@ class WebPageSyncServiceTest {
         // 在界面上"消失"）。这条路径靠 errorMessage + syncFailureCount 在界面上提示
         Document doc = urlDoc("HASH_A");
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString())).thenThrow(new BusinessException("网页抓取失败: 502"));
+        when(webPageFetcher.fetch(anyString(), any())).thenThrow(new BusinessException("网页抓取失败: 502"));
 
         service.syncDocument(1L);
 
@@ -358,8 +367,9 @@ class WebPageSyncServiceTest {
         Document doc = urlDoc("HASH_A");
         String longTitle = "退货政策".repeat(100);   // 400 字
         when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
-        when(webPageFetcher.fetch(anyString()))
-                .thenReturn(new WebPageFetcher.FetchResult(longTitle, "改版后的正文", "HASH_B", 200));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult(longTitle, "改版后的正文", "HASH_B", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
         doAnswer(inv -> {
             doc.setStatus(DocumentStatus.COMPLETED);
             return null;
@@ -388,5 +398,27 @@ class WebPageSyncServiceTest {
     void 未超长时原样返回() {
         assertThat(WebPageSyncService.truncate("短标题", 255)).isEqualTo("短标题");
         assertThat(WebPageSyncService.truncate(null, 255)).isNull();
+    }
+
+    // ===== 站点选择器透传（站点爬取特性）=====
+
+    @Test
+    @DisplayName("同步时把所属站点的正文选择器传给抓取器；无站点则传 null")
+    void passes_content_selector_from_crawl_site() {
+        CrawlSite site = CrawlSite.builder().id(9L).contentSelector(".doc-content").build();
+        Document doc = Document.builder()
+                .id(1L).sourceUrl("https://x.com/help/faq")
+                .documentType(DocumentType.URL).status(DocumentStatus.PENDING)
+                .build();
+        doc.setCrawlSite(site);
+        when(documentRepository.tryLockDocumentProcessing(1L)).thenReturn(true);
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(webPageFetcher.fetch(anyString(), any()))
+                .thenReturn(new WebPageFetcher.FetchResult("标题", "正文", "hash", 200,
+                        org.jsoup.Jsoup.parse("<html></html>")));
+
+        service.syncDocument(1L);
+
+        verify(webPageFetcher).fetch("https://x.com/help/faq", ".doc-content");
     }
 }
