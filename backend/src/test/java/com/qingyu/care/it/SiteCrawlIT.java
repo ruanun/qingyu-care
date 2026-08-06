@@ -37,10 +37,17 @@ import static org.mockito.Mockito.when;
 /**
  * 集成测试：站点爬取产出的文档，租户字段必须正确落库。
  *
- * <p>这条只能在 IT 里守护——{@code TenantEntityListener} 是 Hibernate 生命周期回调，
- * 纯 Mockito 根本触发不到。而爬取跑在 {@code @Async} 线程、天然没有 {@code TenantContext}：
- * 若 {@code runCrawl} 开头漏了搬运，{@code document.tenant_id}/{@code app_id} 会静默落 null，
- * 那批文档从此对所有租户可见（配置类实体的 NULL 租户是"有意共享"，文档的 NULL 不是）。
+ * <p>本 IT 独有的价值在 <b>Hibernate 持久化那一层</b>：{@code TenantEntityListener} 是
+ * Hibernate 生命周期回调（{@code @PrePersist}），纯 Mockito 环境里这个回调根本不会被触发，
+ * 所以"{@code runCrawl} 里 {@code TenantContext} 搬没搬"这件事就算搬对了，纯 Mockito
+ * 单测也验证不到它真的被 Hibernate 写进了 {@code tenant_id}/{@code app_id} 这两列——
+ * 必须有真实的 Hibernate 会话才能验证"ThreadLocal 里的值 → 数据库列"这一跳。
+ * ⚠️ 反过来，"{@code runCrawl} 开头有没有正确 {@code set} 上下文"这件事<b>不是</b>本 IT
+ * 独有的覆盖——Task 5 的纯 Mockito 单测 {@code SiteCrawlServiceTest#carries_tenant_context_into_the_async_thread}
+ * 已经覆盖了这一层（直接同步调用 {@code runCrawl} 断言线程内可见的 {@code TenantContext}
+ * 值），若把 {@code runCrawl} 开头四行搬运删掉，那条单测会先于本 IT 报红
+ * （已实测：{@code mvn verify -Dit.test=SiteCrawlIT} 在这种 mutation 下，Surefire 阶段
+ * 就会被那条单测拦下、Maven 直接中止，根本轮不到 Failsafe 跑到本类）。
  *
  * <p>⚠️ <b>全程走公开入口</b>（{@code startCrawl}/{@code getProgress}/{@code deleteSite}），
  * 不用 {@code newProgressForTest}/{@code markCrawlingForTest}——那两个方法是包级可见（在
@@ -48,13 +55,19 @@ import static org.mockito.Mockito.when;
  * 这个选择顺带换来更高的真实度：{@code startCrawl} 真的经 {@code self} 代理触发
  * {@code @Async}，走的是生产代码实际会走的完整路径（含 {@code launch()} 里"四个
  * {@code TenantContext} 值必须在请求线程取好传进去"那一步），而不是绕开它直接摆一个
- * {@code Progress} 出来。順帶也是本 IT 唯一能守住上一轮遗留问题 C-1 的方式：
- * {@code startCrawl} 已去掉 {@code @Transactional}（原因见其类注释——同一事务内投递
- * {@code @Async} 会让异步线程的 {@code findById} 读不到未提交的站点行，首次开爬非确定性
- * FAILED「站点不存在」）；只有真的经 {@code startCrawl} 才会触发这条时序竞争，
- * 纯 Mockito 单测里 {@code self == service}、同步直调，这条竞争在单测里根本不存在。
- * 本类每条用例轮到终态后都会顺带断言 {@code status != "FAILED"}（多数直接断言
- * {@code COMPLETED}），即是对 C-1 的回归覆盖。
+ * {@code Progress} 出来。
+ *
+ * <p>⚠️ <b>本 IT 不能证明覆盖了上一轮遗留问题 C-1</b>（{@code startCrawl} 已去掉
+ * {@code @Transactional}——同一事务内投递 {@code @Async} 会让异步线程的 {@code findById}
+ * 读不到未提交的站点行，首次开爬非确定性 FAILED「站点不存在」）。原以为"全程走
+ * {@code startCrawl}"能顺带触发这条时序竞争，但<b>已实测证伪</b>：把 {@code @Transactional}
+ * 临时加回 {@code startCrawl} 后重新编译，连跑 4 次本 IT，<b>4 次全绿，一次都没红</b>。
+ * 说明当前写法（轮到终态后断言 {@code status != "FAILED"}）在本机环境下从未观测到那条
+ * 竞争真正发生——异步线程被调度的时机稳定地晚于 {@code save()} 提交，这是常态而非巧合，
+ * 靠"轮询到终态再断言"这种写法基本等于没测这条竞争。C-1 目前<b>只能靠真机验证</b>
+ * （手工把 {@code @Transactional} 加回去再点一次"新建站点并开爬"复现非确定性 FAILED），
+ * 没有可靠的自动化手段能确定性触发它——造确定性复现需要往生产代码注入测试专用钩子，
+ * 代价大于收益，本次未做。
  *
  * <p>{@code webPageFetcher} 与 {@code knowledgeService} 用 {@code @MockitoBean} 换掉：
  * 本 IT 只关心租户字段与外键落库，不关心真实抓取与嵌入（S3+embedding 全链路本仓库已明确
@@ -164,8 +177,9 @@ class SiteCrawlIT extends AbstractPostgresIT {
     }
 
     @Test
-    @DisplayName("爬取产出的文档带正确的 tenant_id / app_id / crawl_site_id；"
-            + "且首次开爬不会非确定性 FAILED（C-1：startCrawl 去 @Transactional 后的验证缺口）")
+    @DisplayName("爬取产出的文档带正确的 tenant_id / app_id / crawl_site_id"
+            + "（不是对 C-1 的可靠回归覆盖——本条只是走了 startCrawl 这条真实路径，"
+            + "并未实测确认能稳定触发那条时序竞争，详见类注释）")
     void crawled_documents_carry_tenant_and_site_fields() {
         KnowledgeBase kb = seedKnowledgeBase("a");
         Long tenantId = kb.getTenantId();

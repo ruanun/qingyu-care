@@ -214,11 +214,27 @@ public class SiteCrawlService {
         log.info("爬取站点已删除 siteId={} 连带删文档={} 文档数={}", siteId, deleteDocuments, docs.size());
     }
 
+    /**
+     * 查进度。{@code jobId} 是 UUID 不可枚举，但仍要挡跨租户查询——一旦 jobId 经日志/工单/
+     * 截图等旁路泄漏给别的租户，对方就能借它看到别人站点的爬取详情（{@code siteId}/
+     * 已爬页数/失败原因等）。
+     *
+     * <p>⚠️ 站点<b>已被删除</b>时不校验、直接放行：进度是内存态，站点都没了说明这轮爬取早已
+     * 结束，此时仍把最后一次的进度给回调用方是合理的，且这条路径不会泄漏任何还"活着"的
+     * 站点信息（没有活的站点可泄漏）。不能用 {@link #requireOwnedSite}——它对"站点不存在"
+     * 会直接抛 404，语义与这里要的"不存在则放行"相反，必须单独处理。
+     */
     public Progress getProgress(String jobId) {
         Progress p = jobs.get(jobId);
         if (p == null) {
             throw new BusinessException(404, "爬取任务不存在: " + jobId);
         }
+        crawlSiteRepository.findById(p.siteId).ifPresent(site -> {
+            if (!TenantOwnershipGuard.mutableInCurrentContext(site.getTenantId(), site.getAppId())) {
+                // 按「不存在」同语义处理，防枚举探测——同 requireOwnedSite 的约定
+                throw new BusinessException(404, "爬取任务不存在: " + jobId);
+            }
+        });
         return p;
     }
 

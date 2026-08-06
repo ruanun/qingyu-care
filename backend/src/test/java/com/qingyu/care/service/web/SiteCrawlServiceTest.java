@@ -675,4 +675,35 @@ class SiteCrawlServiceTest {
         verify(knowledgeService, never()).deleteDocument(anyLong());
         verify(crawlSiteRepository, never()).delete(any(CrawlSite.class));
     }
+
+    @Test
+    @DisplayName("拿别的租户的 jobId 查进度：按「任务不存在」拒绝，防跨租户窥探爬取详情——"
+            + "jobId 是 UUID 不可枚举，但一旦经日志/工单/截图等旁路泄漏给别的租户，"
+            + "对方就能借它看到别人站点的 siteId/已爬页数/失败原因")
+    void rejects_progress_query_for_another_tenants_site() {
+        CrawlSite other = CrawlSite.builder().id(9L).build();
+        other.setTenantId(999L);
+        other.setAppId(888L);
+        when(crawlSiteRepository.findById(9L)).thenReturn(Optional.of(other));
+        SiteCrawlService.Progress p = service.newProgressForTest("job-x", 9L, 50);
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+
+        assertThatThrownBy(() -> service.getProgress(p.jobId))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
+    }
+
+    @Test
+    @DisplayName("站点已被删除时进度仍可查询——进度是内存态，站点没了说明爬取早已结束，"
+            + "此时没有任何还「活着」的站点信息可泄漏，不能按 requireOwnedSite 那套"
+            + "「不存在即拒绝」的语义处理（那是给站点本身用的，这里要反过来放行）")
+    void allows_progress_query_when_site_has_been_deleted() {
+        when(crawlSiteRepository.findById(9L)).thenReturn(Optional.empty());
+        SiteCrawlService.Progress p = service.newProgressForTest("job-y", 9L, 50);
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+
+        assertThat(service.getProgress(p.jobId)).isSameAs(p);
+    }
 }
