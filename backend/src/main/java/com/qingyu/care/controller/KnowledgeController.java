@@ -3,13 +3,18 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AddWebPageRequest;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.CrawlProgressDTO;
+import com.qingyu.care.dto.CrawlSiteRequest;
+import com.qingyu.care.dto.CrawlStartResponse;
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
+import com.qingyu.care.entity.CrawlSite;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.service.KnowledgeService;
 import com.qingyu.care.service.ReembedService;
+import com.qingyu.care.service.web.SiteCrawlService;
 import com.qingyu.care.service.web.WebPageSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +38,7 @@ public class KnowledgeController {
     private final KnowledgeService knowledgeService;
     private final ReembedService reembedService;
     private final WebPageSyncService webPageSyncService;
+    private final SiteCrawlService siteCrawlService;
 
     @PostMapping
     @Operation(summary = "创建知识库", description = "创建新的知识库")
@@ -147,6 +153,57 @@ public class KnowledgeController {
         knowledgeService.getDocument(documentId);   // 归属校验：越权直接抛，避免跨租户触发同步
         webPageSyncService.syncDocumentAsync(documentId);
         return ApiResponse.success("已触发同步", null);
+    }
+
+    // ===== 站点爬取（网站知识库第二期）=====
+
+    @PostMapping("/{knowledgeBaseId}/crawl-sites")
+    @Operation(summary = "新建爬取站点并立即开爬",
+               description = "按入口 URL 发现并抓取范围内的多个页面，每页一篇文档；返回 siteId 与用于轮询进度的 jobId")
+    @AuditLog(action = "ADD_CRAWL_SITE", targetType = "CrawlSite")
+    public ApiResponse<CrawlStartResponse> addCrawlSite(@PathVariable Long knowledgeBaseId,
+                                                        @Valid @RequestBody CrawlSiteRequest request) {
+        return ApiResponse.success("已开始爬取", siteCrawlService.startCrawl(knowledgeBaseId, request));
+    }
+
+    @GetMapping("/{knowledgeBaseId}/crawl-sites")
+    @Operation(summary = "获取爬取站点列表")
+    public ApiResponse<List<CrawlSite>> listCrawlSites(@PathVariable Long knowledgeBaseId) {
+        return ApiResponse.success(siteCrawlService.listSites(knowledgeBaseId));
+    }
+
+    @GetMapping("/crawl-jobs/{jobId}")
+    @Operation(summary = "查询爬取进度",
+               description = "内存进度，应用重启后丢失；重启后重新发起爬取即可（已存在的 URL 会被跳过）")
+    public ApiResponse<CrawlProgressDTO> getCrawlProgress(@PathVariable String jobId) {
+        return ApiResponse.success(CrawlProgressDTO.from(siteCrawlService.getProgress(jobId)));
+    }
+
+    @PostMapping("/crawl-sites/{siteId}/recrawl")
+    @Operation(summary = "重新爬取站点",
+               description = "复用站点已保存的配置；已存在的 URL 只做内容同步、不重复建档")
+    @AuditLog(action = "RECRAWL_SITE", targetType = "CrawlSite")
+    public ApiResponse<String> recrawlSite(@PathVariable Long siteId) {
+        return ApiResponse.success("已开始爬取", siteCrawlService.recrawl(siteId));
+    }
+
+    @PutMapping("/crawl-sites/{siteId}")
+    @Operation(summary = "更新爬取站点配置",
+               description = "改 contentSelector 后，该站点已建文档的下一轮定期同步就会用上新选择器")
+    @AuditLog(action = "UPDATE_CRAWL_SITE", targetType = "CrawlSite")
+    public ApiResponse<CrawlSite> updateCrawlSite(@PathVariable Long siteId,
+                                                  @Valid @RequestBody CrawlSiteRequest request) {
+        return ApiResponse.success("站点配置已更新", siteCrawlService.updateSite(siteId, request));
+    }
+
+    @DeleteMapping("/crawl-sites/{siteId}")
+    @Operation(summary = "删除爬取站点",
+               description = "deleteDocuments=false（默认）时文档保留并退化成普通网页文档；为 true 时连带删除文档与其向量")
+    @AuditLog(action = "DELETE_CRAWL_SITE", targetType = "CrawlSite")
+    public ApiResponse<Void> deleteCrawlSite(@PathVariable Long siteId,
+                                             @RequestParam(defaultValue = "false") boolean deleteDocuments) {
+        siteCrawlService.deleteSite(siteId, deleteDocuments);
+        return ApiResponse.success(deleteDocuments ? "站点与其文档已删除" : "站点已删除，文档已保留", null);
     }
 
     @GetMapping("/documents/{documentId}/status")

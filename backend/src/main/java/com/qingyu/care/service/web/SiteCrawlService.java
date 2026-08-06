@@ -142,11 +142,19 @@ public class SiteCrawlService {
      * 两边的 {@code findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc} 互相看不见对方
      * 未提交的建档，产出重复文档与重复向量、互相挤占检索 top-K——而「点了没反应就再点一次」
      * 是最常见的用户行为，站点级互斥（按站点 id）拦不住两次点击各自建出的新 id。
+     *
+     * <p>⚠️ 查重键必须是 {@link LinkExtractor#normalize} 之后的值，不能是原始
+     * {@code req.getEntryUrl()}：{@code https://x.com/help}、{@code https://x.com/help/}、
+     * {@code https://x.com/help#top} 是同一页面的不同写法，裸字符串比对会把它们各自建成
+     * 一个站点、绕过查重；若两个站点恰好并发跑（{@code maxConcurrentJobs} 默认 2 刚好够），
+     * 同一网页会被建两篇文档、两份向量。{@link #applyRequest} 内部也会同样规范化后再落库，
+     * 两处用同一个规范化结果，保证「查的键」与「存的键」一致。
      */
     public CrawlStartResponse startCrawl(Long knowledgeBaseId, CrawlSiteRequest req) {
         KnowledgeBase kb = knowledgeService.getKnowledgeBase(knowledgeBaseId);
+        String normalizedEntryUrl = normalizeEntryUrl(req.getEntryUrl());
         if (crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(
-                knowledgeBaseId, req.getEntryUrl()).isPresent()) {
+                knowledgeBaseId, normalizedEntryUrl).isPresent()) {
             throw new BusinessException("该入口地址已有爬取站点，请直接用「重新爬取」");
         }
         CrawlSite site = crawlSiteRepository.save(applyRequest(new CrawlSite(), req, kb));
@@ -465,11 +473,21 @@ public class SiteCrawlService {
 
     // ===== 参数处理与归属校验 =====
 
-    /** 把请求里的字段套到站点上（建与改共用），含钳制与同域校验。 */
+    /**
+     * 把请求里的字段套到站点上（建与改共用），含规范化、钳制与同域校验。
+     *
+     * <p>⚠️ {@link #deriveScopePrefix} 必须喂<b>原始</b> {@code req.getEntryUrl()}，
+     * 不能喂规范化后的 {@code entryUrl}：{@link LinkExtractor#normalize} 会把
+     * {@code https://x.com/help/} 的尾斜杠去掉，而 {@code deriveScopePrefix} 正是靠
+     * 「路径是否以 / 结尾」区分目录形态与文件形态——喂规范化后的值会把用户明明写的目录形态
+     * 误判成文件形态，推导出的范围从「只爬 /help/ 下面」错误地放大成「整站」。
+     * 落库与查重键用规范化后的 {@code entryUrl} 没有这个问题：规范化只是让「同一页面的
+     * 不同写法」折叠成同一个字符串，不改变语义。
+     */
     private CrawlSite applyRequest(CrawlSite site, CrawlSiteRequest req, KnowledgeBase kb) {
-        String entryUrl = req.getEntryUrl();
+        String entryUrl = normalizeEntryUrl(req.getEntryUrl());
         String scopePrefix = (req.getScopePrefix() == null || req.getScopePrefix().isBlank())
-                ? deriveScopePrefix(entryUrl)
+                ? deriveScopePrefix(req.getEntryUrl())
                 : req.getScopePrefix();
         requireSameHost(entryUrl, scopePrefix);
 
@@ -494,6 +512,20 @@ public class SiteCrawlService {
             throw new BusinessException(404, "爬取站点不存在: " + siteId);
         }
         return site;
+    }
+
+    /**
+     * 规范化入口 URL，非法输入抛业务异常。{@link LinkExtractor#normalize} 对非法/非
+     * http(s)/无主机名一律返回 {@code null}——本方法把这个 {@code null} 收口成清爽的
+     * 业务异常，调用方（{@link #startCrawl} 的查重、{@link #applyRequest} 的落库）不用
+     * 各自重复判空。
+     */
+    private static String normalizeEntryUrl(String rawEntryUrl) {
+        String normalized = LinkExtractor.normalize(rawEntryUrl);
+        if (normalized == null) {
+            throw new BusinessException("入口 URL 非法: " + rawEntryUrl);
+        }
+        return normalized;
     }
 
     /**

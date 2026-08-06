@@ -527,13 +527,62 @@ class SiteCrawlServiceTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(100L);
         when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
-        CrawlSite existing = CrawlSite.builder().id(5L).knowledgeBase(kb).entryUrl("https://x.com/help/").build();
-        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/help/"))
+        CrawlSite existing = CrawlSite.builder().id(5L).knowledgeBase(kb).entryUrl("https://x.com/help").build();
+        // 查重键必须是 LinkExtractor.normalize 之后的值（本例即去掉尾斜杠）——若实现漏了
+        // normalize、直接拿 req.getEntryUrl()（带尾斜杠的 "https://x.com/help/"）去查，
+        // 这里打的桩不会命中，assertThatThrownBy 会因为没抛异常而失败，现场验证 N-1 未回退
+        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/help"))
                 .thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.startCrawl(100L, req))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("重新爬取");
+    }
+
+    @Test
+    @DisplayName("同一入口地址的不同写法（尾斜杠/片段/无意义查询参数）被认作同一站点——查重必须走"
+            + " LinkExtractor.normalize 而非原始字符串比对，否则 /help、/help/、/help#top 各建一个"
+            + "站点各跑一遍 BFS，绕开上面那条查重")
+    void treats_different_spellings_of_the_same_entry_url_as_duplicates() {
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help#top");   // 规范化后与已存在站点同为 "https://x.com/help"
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
+        CrawlSite existing = CrawlSite.builder().id(5L).knowledgeBase(kb).entryUrl("https://x.com/help").build();
+        when(crawlSiteRepository.findFirstByKnowledgeBaseIdAndEntryUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.startCrawl(100L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重新爬取");
+    }
+
+    @Test
+    @DisplayName("未显式传 scopePrefix 时，范围前缀必须按入口 URL 的原始写法（含尾斜杠）推导——"
+            + "不能被查重/落库用的规范化 entryUrl 污染。normalize 会把 \"https://x.com/help/\" 的"
+            + "尾斜杠去掉，deriveScopePrefix 正是靠尾斜杠区分目录/文件形态，喂规范化后的值会把明明"
+            + "写的目录形态误判成文件形态，把范围从「只爬 /help/ 下面」错误放大成整站")
+    void derives_scope_prefix_from_original_entry_url_not_the_normalized_one() {
+        CrawlSiteRequest req = new CrawlSiteRequest();
+        req.setEntryUrl("https://x.com/help/");
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setId(100L);
+        when(knowledgeService.getKnowledgeBase(100L)).thenReturn(kb);
+        List<CrawlSite> saved = new ArrayList<>();
+        when(crawlSiteRepository.save(any(CrawlSite.class))).thenAnswer(inv -> {
+            CrawlSite cs = inv.getArgument(0);
+            cs.setId(9L);
+            saved.add(cs);
+            return cs;
+        });
+        when(crawlSiteRepository.findById(9L)).thenAnswer(inv -> Optional.of(saved.get(0)));
+        stubIngestSucceeds();
+        stubPage("https://x.com/help");
+
+        service.startCrawl(100L, req);
+
+        assertThat(saved.get(0).getScopePrefix()).isEqualTo("https://x.com/help/");
     }
 
     @Test
@@ -591,5 +640,39 @@ class SiteCrawlServiceTest {
         assertThatThrownBy(() -> service.getProgress("nope"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不存在");
+    }
+
+    // ===== 越权（TenantOwnershipGuard）=====
+
+    @Test
+    @DisplayName("拿别的租户的站点 id 重爬：按「不存在」拒绝，防枚举探测")
+    void rejects_recrawl_of_another_tenants_site() {
+        CrawlSite other = CrawlSite.builder().id(9L).build();
+        other.setTenantId(999L);
+        other.setAppId(888L);
+        when(crawlSiteRepository.findById(9L)).thenReturn(Optional.of(other));
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+
+        assertThatThrownBy(() -> service.recrawl(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
+    }
+
+    @Test
+    @DisplayName("拿别的租户的站点 id 删除：同样按「不存在」拒绝，且一篇文档都不动")
+    void rejects_delete_of_another_tenants_site() {
+        CrawlSite other = CrawlSite.builder().id(9L).build();
+        other.setTenantId(999L);
+        other.setAppId(888L);
+        when(crawlSiteRepository.findById(9L)).thenReturn(Optional.of(other));
+        TenantContext.setTenantId(1L);
+        TenantContext.setAppId(2L);
+
+        assertThatThrownBy(() -> service.deleteSite(9L, true))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
+        verify(knowledgeService, never()).deleteDocument(anyLong());
+        verify(crawlSiteRepository, never()).delete(any(CrawlSite.class));
     }
 }
