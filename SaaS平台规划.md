@@ -234,29 +234,35 @@
 
 > 与上面各 Phase 的「未做功能」区分开：这里记的是**已交付代码里欠的账**，都有明确位置与后果。
 > 设计上有意接受的已知局限（`<div>` 导航噪声、webp 尺寸恒 null、重爬抓两次等）不在此列，见 `CLAUDE.md` 各链路的架构要点。
-> 末次盘点：2026-08-07（站点爬取合入后）。
+> 末次盘点：2026-08-07。第 1 / 3 / 5 项已于同日清理（见 `tech-debt/async-pool-isolation` 分支的三个提交）。
 
 ### 会咬人的代码债
 
-1. **`@Async` 池是空壳默认池，长任务与关键短任务共享**（建议优先）
+1. ~~**`@Async` 池是空壳默认池，长任务与关键短任务共享**~~ ✅ **已清理（2026-08-07）**
+   现已分两池：短任务（用量计量/审计日志/webhook）留在 Boot 默认池，长任务（文档摄取/QA 生成/批量重嵌/网页同步/站点爬取）走 `AsyncConfig.LONG_TASK_EXECUTOR`（固定 6 线程 + 500 有界队列 + `AbortPolicy`）。`AsyncExecutorRoutingTest` 扫描全部 `@Async` 方法强制归类，新增长任务忘加 qualifier 会红。
+   <details><summary>原问题</summary>
    `config/AsyncConfig` 只有 `@EnableAsync`，用的是 Spring Boot 默认 `applicationTaskExecutor`——**core 8、队列无界**。共享方：审计日志 `saveAsync`、webhook `deliverAsync`、文档摄取、网页同步、重嵌批任务，以及**几十分钟级的站点爬取**。队列无界意味着 core 满后 maxPoolSize 永不扩容、后来者排进一条无界 FIFO。
    站点爬取现用两层并发上限（全局 + 租户，见 `SiteCrawlProperties`）挡住最坏情况，但那是**用业务层配额补偿基础设施缺陷**。
-   修法：给长任务单独一个有界 `ThreadPoolTaskExecutor`（`@Async("crawlExecutor")`），与短任务彻底隔离。
+   </details>
 
 2. **token 多轮聚合计量少计**（涉及计费准确性）
    `ChatServiceImpl` 里是 `tokens.set(...)` 覆盖而非累加，非流式同样只取单个 response 的 usage。带工具时 Spring AI 内部跑多轮，只记末轮。详见 §5.4 第 8 项。
    ⚠️ 未上线前实际损失为零，而修法可能要接管 Spring AI 的工具循环（关 `internalToolExecutionEnabled` 自驱多轮，或走 observation 拦截累加）——属「看着小其实不小」，别低估。
 
-3. **`deleteKnowledgeBase` 无级联清理**（既有缺陷，站点爬取多加了一个触发理由）
+3. ~~**`deleteKnowledgeBase` 无级联清理**~~ ✅ **已清理（2026-08-07）**
+   改为删除前先数 `document`/`qa_pair`/`crawl_site` 三类内容，有内容则拒绝并在文案里说清各有多少。刻意不做级联删除——`Document.knowledgeBase` 是 `nullable = false`，文档没法「置 null 退化」，级联即意味着连文档与向量一起不可恢复地删掉；真需要时再加显式 force 参数。
+   <details><summary>原问题</summary>
    `KnowledgeServiceImpl.deleteKnowledgeBase` 只做 `knowledgeBaseRepository.delete(kb)`。库下有文档 / QA / 爬取站点时直接 FK 违约 → 500，且没有可读文案。
    暴露面小：`DELETE /knowledge/{id}` 前端未接线，只能从 Swagger 或直连 API 触发。
-   修法：先行清理子实体，或至少把 `DataIntegrityViolationException` 转成「该知识库下仍有文档/爬取站点，请先清空」。
+   </details>
 
 4. **`ChatMessage.isRead` 是死字段** —— 字段已建、全库无人读写。要么实现已读/送达（见 §5.2 第四项），要么删掉它。
 
-5. **站点爬取 `existing` 分支的失败永不计入 `p.failed`**
+5. ~~**站点爬取 `existing` 分支的失败永不计入 `p.failed`**~~ ✅ **已清理（2026-08-07）**
+   改为同步后回读 `syncFailureCount` 判成败（不用 `status`——「抓取失败保留旧内容」分支刻意不动它，只看 status 会漏掉最常见的那种失败）。
+   <details><summary>原问题</summary>
    `SiteCrawlService.processPage` 走 `existing != null` 分支时直接 `p.updated++`，而 `webPageSyncService.syncDocument` 自身 fail-soft 永不抛——于是重爬时 50 页全部同步失败也会显示「更新 50 · 失败 0」。
-   修法先例就在同一个类的 `createAndIngest` 里（回读 status 判成败），代价约 3 行。
+   </details>
 
 ### 测试覆盖缺口
 
