@@ -10,6 +10,7 @@ import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.repository.QaPairRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +35,7 @@ public class QaGenerationService {
     private final ObjectMapper objectMapper;
 
     /** 从文档内容异步生成 QA 草稿。调用方（控制器）须先在请求线程校验文档归属。 */
-    @Async
+    @Async(AsyncConfig.LONG_TASK_EXECUTOR)
     @Transactional
     public void generateFromDocument(Long documentId) {
         try {

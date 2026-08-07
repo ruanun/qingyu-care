@@ -135,6 +135,15 @@ pnpm test    # vitest
 4. 兜底静态对象（`ChatStrategy` 语义允许无配置安全默认，故不抛异常；`PromptTemplate` 缺失则抛异常）。
 `enums/OwnerScope`（`PLATFORM` vs `TENANT`）标记归属。新增「平台可共享 + 租户可覆盖」的配置实体时必须复刻这套回退，否则平台默认对租户不可见。
 
+### 异步执行器分两个池（`config/AsyncConfig`）
+`@Async` 任务按时长分池，**新增 `@Async` 方法必须显式归类**：
+- **短任务 → Boot 默认 `applicationTaskExecutor`**（不写 qualifier）：用量计量、审计日志落库、webhook 入队与直投。毫秒到秒级、要求低延迟。
+- **长任务 → `@Async(AsyncConfig.LONG_TASK_EXECUTOR)`**（固定 6 线程 + 500 有界队列 + `AbortPolicy`）：文档摄取、QA 生成、批量重嵌、网页同步、站点爬取。分钟到小时级。
+
+⚠️ **为什么必须分**：Boot 默认池是 core 8 + **无界队列**，而无界队列下 core 占满后 `maxPoolSize` 永不扩容（它只在队列也满时才生效）。所以只要 8 个长任务同时在跑，之后**每一次**审计日志落库与 webhook 投递都排在它们后面，等待时长等于最慢那个长任务的剩余时间。漏加 qualifier 的长任务会掉回默认池把这个问题带回来，**且没有任何报错**——只在生产上表现为审计与 webhook 莫名延迟。`AsyncExecutorRoutingTest` 扫描全部 `@Async` 方法强制这条约定：不在短任务白名单里的一律必须带长任务 qualifier，新增时忘了归类就红。
+
+⚠️ 分池**没有**改变「线程会复用」这个前提——`@Async` 里写 `TenantContext` 的地方，`finally` 该 clear 照样要 clear。
+
 ### AOP 横切
 - `@AuditLog(action=, targetType=)`（`annotation/`）+ `AuditLogAspect`（`config/`）：`@Around` 业务方法成功后 `AuditLogService.saveAsync()` 异步落库，含正则脱敏（apiKey/password/secret → `***`）。给写操作打审计日志时加此注解即可。
 - 限流：`RateLimitConfig` + `RateLimitService`（Bucket4j + Lettuce Redis），`tryConsume(appKey, limitPerMinute)`，Redis 异常时 **fail-open**（放行）。
@@ -155,7 +164,7 @@ pnpm test    # vitest
 - **站点爬取（第二期）**：`CrawlSite` 表存站点配置（入口/范围前缀/页数/深度/正文选择器/同步周期），`Document.crawl_site_id` 可空外键指向它（单页手动添加的为 null）。`SiteCrawlService` 做 BFS 编排：`LinkExtractor`（纯函数，规范化 + 范围判定 + 抽链接）→ `RobotsChecker`（robots.txt，取不到按允许）→ 逐页建档摄取。新页面靠**手动重爬**发现，不做定期自动重爬（内容更新已由周期同步覆盖，页面消失沿用既有熔断）。
 - ⚠️ **`LinkExtractor.inScope` 是一个 `return` 语句里的三个 `||` 分支各挡一个边界，不是三个 `return` 分支，不能简化成裸 `startsWith`**：规范化会去掉末尾斜杠而前缀常带斜杠（裸判会把**入口页自己**排除，爬取一开始就空转）；拿去斜杠的前缀判又会把 `/helpdesk` 当成 `/help` 的子页整个爬进来；前缀是根路径时补斜杠会拼出 `//` 一条都匹配不上。
 - ⚠️ **`FetchResult.dom` 是剔噪前 `clone()` 的副本**：`extractFrom` 就地移除 `nav`/`header`/`footer`，而帮助中心的目录导航恰在 `nav` 里。交出残树的后果是链接发现几乎抓不到东西且**不报错**，表现为「爬了 1 页就结束」——与上面那三个边界的表象完全一致，排查时要分别验证。加了 `dom` 字段后 record 自动生成的 `equals`/`toString` 也不能按字面意思用：Jsoup 的 `Document` 是恒等语义（连 `a.equals(a.clone())` 都是 false，别拿 `FetchResult` 做相等比较或塞进 `Set`），`toString()` 会把整棵 DOM 序列化进去（5MB 响应体对应的树进日志就是一次事故，别把整个 `FetchResult` 记日志）。
-- ⚠️ **爬取跑在 `@Async` 线程，四个 `TenantContext` 值必须由请求线程传入、`finally` 必须 clear**：不搬运则新建文档的 `tenant_id`/`app_id` 静默落 null——**不是「对所有租户可见」，而是反过来「对任何租户都检索不到」**：`KnowledgeServiceImpl.processDocument` 在 tenantId 为 null 时把向量 metadata 写成 `"tenantId": ""`，而 `RetrievalScope.toFilterExpression` 对非 null 租户拼的是 `tenantId == '<真实租户id>'` 等值条件，`""` 永远匹配不上任何真实租户 id。后果是成本/效果事故（embedding 钱照花、0 命中、全程无异常无日志）而非安全问题；不清理则泄漏给下一个复用该线程的任务（默认 `applicationTaskExecutor` core 8、线程复用，流式聊天改造时实测复现过平台管理员会话落进别人租户）。**新增在 `@Async` 里建实体的代码一律照此处理。** ⚠️ 同一线程里 `CrawlSite.knowledgeBase`（LAZY）只有 `getId()` 是安全的——本项目未开字节码增强，detached 代理上调 `getId()` 走 `HibernateProxy` 缓存的 identifier，既不抛也不打 DB；但改成 `getKnowledgeBase().getName()`，或把 `getKnowledgeBase()` 拿到的代理塞进 `Set`/调它的 `equals`（`KnowledgeBase` 是类级 `@Data`，equals 摸全字段；`CrawlSite` 自己倒是安全的——它显式声明按 `id` 判等，不会碰到这个代理），就会在这条异步线程里真的抛 `LazyInitializationException`。
+- ⚠️ **爬取跑在 `@Async` 线程，四个 `TenantContext` 值必须由请求线程传入、`finally` 必须 clear**：不搬运则新建文档的 `tenant_id`/`app_id` 静默落 null——**不是「对所有租户可见」，而是反过来「对任何租户都检索不到」**：`KnowledgeServiceImpl.processDocument` 在 tenantId 为 null 时把向量 metadata 写成 `"tenantId": ""`，而 `RetrievalScope.toFilterExpression` 对非 null 租户拼的是 `tenantId == '<真实租户id>'` 等值条件，`""` 永远匹配不上任何真实租户 id。后果是成本/效果事故（embedding 钱照花、0 命中、全程无异常无日志）而非安全问题；不清理则泄漏给下一个复用该线程的任务（长任务池同样复用线程，流式聊天改造时实测复现过平台管理员会话落进别人租户）。**新增在 `@Async` 里建实体的代码一律照此处理。** ⚠️ 同一线程里 `CrawlSite.knowledgeBase`（LAZY）只有 `getId()` 是安全的——本项目未开字节码增强，detached 代理上调 `getId()` 走 `HibernateProxy` 缓存的 identifier，既不抛也不打 DB；但改成 `getKnowledgeBase().getName()`，或把 `getKnowledgeBase()` 拿到的代理塞进 `Set`/调它的 `equals`（`KnowledgeBase` 是类级 `@Data`，equals 摸全字段；`CrawlSite` 自己倒是安全的——它显式声明按 `id` 判等，不会碰到这个代理），就会在这条异步线程里真的抛 `LazyInitializationException`。
 - ⚠️ **`maxPages` 计「已尝试抓取」而非成功页数**，被 robots 拒绝的不计（没发请求）。计成功数的话，一个到处 404 的站点会让队列不断展开、永远碰不到上限。
 - ⚠️ **爬取新建文档同样遵守「摄取成功才落 `contentHash`」，且必须同时设 `lastSyncedAt`**——只落前者不落后者会让 `findDueWebPageIds` 因 `last_synced_at IS NULL` 立刻判为到期，爬完 50 篇后下一轮调度把它们全部重抓一遍。
 - **站点级互斥用内存 map，不能用第一期那把 `pg_try_advisory_xact_lock`**：后者是事务级的，与「几分钟长任务 + 逐页提交」直接冲突。多实例下内存互斥失效，最坏是重复文档——刻意**不加** `(kb_id, source_url)` 唯一约束兜底，因为第一期 `addWebPage` 无去重校验，存量库可能已有重复 URL，`ddl-auto: update` 建唯一索引会让应用起不来。
@@ -163,7 +172,7 @@ pnpm test    # vitest
 - ⚠️ **`crawl()` 收尾不能用几分钟前查出的、此刻已 detached 的 `site` 去 `save`**：`em.merge()` 会把开爬那一刻的全部陈旧字段（含运营在爬取期间边看边改的 `contentSelector`）覆盖回库，静默抹掉配置修改且无异常无日志。必须收尾时重新 `findById` 再设值——同 `WebPageSyncService` 类注释点名过的「陈旧字段 merge 回库」同一个坑，换了个位置复发。
 - ⚠️ **`startCrawl` 不能带 `@Transactional`**：带上会让 `save()` 只 flush 不 commit，紧接着在同一未提交事务内把 `runCrawl` 投给 `@Async`——异步线程走独立连接，READ COMMITTED 下看不到这次未提交的 INSERT，`findById` 直接 `orElseThrow`，首次开爬非确定性地立刻 FAILED「站点不存在」。`ReembedService.startReembed` 就是不带 `@Transactional` 的同一范式；`updateSite`/`deleteSite` 不投递异步任务，`@Transactional` 保留。
 - ⚠️ **robots.txt 解析两处易错**：连续 `User-agent` 行属同一组（规范上如此，逐行重置状态会丢掉该组的 `Disallow`）；UTF-8 BOM 附着在首行 key 上，`trim()` 不剥 U+FEFF，会让整份文件的 `Disallow` 全部静默失效。两条错误方向都是「放行站点明确禁止的路径」，遵守 robots.txt 是替租户出站的合规承诺，故这两条判定"现在修"不留技术债。
-- ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘以 500 页硬顶就是 40 多小时，占死共享的 `applicationTaskExecutor`——这个池同时被审计日志落库、webhook 直投、文档摄取用。
+- ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘以 500 页硬顶就是 40 多小时，全程占着长任务池（`AsyncConfig.LONG_TASK_EXECUTOR`，固定 6 线程）的一个线程。
 - ⚠️ **删站点勾选删文档时必须逐篇走 `knowledgeService.deleteDocument`**，不能 `repository.deleteAll`——只删库行会留下再也没有库行指向、**却仍参与检索**的孤儿向量（继续被命中并拼进 Prompt，而界面上已看不到这些文档）。同附件孤儿清理必须连 S3 一起删。
 - **重爬时已存在的页会被抓两次**（一次为提链接、一次在 `syncDocument` 内部）。这是刻意的取舍：抽取 `syncDocument` 的三分支能省下这些请求，但那段代码的每条注释都是一个真实缺陷的墓碑。触发重新考虑的条件写在 `docs/superpowers/specs/2026-08-06-site-crawl-design.md` §5.2。
 - ⚠️ **前端轮询两个坑**（`CrawlSiteList.tsx`）：进度/定时器必须按 `jobId` 而非 `siteId` 索引（后端 `maxConcurrentJobs=2` 明确支持双任务并发，按 `siteId` 索引会在旧任务收尾与新任务写入之间的窗口期互相覆盖）；`isMountedRef` **必须在 effect 的 setup 阶段复位为 true**——只在 cleanup 里置 false，会被 `<StrictMode>` 的 `setup→cleanup→setup` 卡死在 false，`pnpm dev` 下轮询一次都跑不起来（进度不更新/不续期/不 toast/不刷新列表），而 `vite build` 不受影响、React 18 起也没有 console 警告，极难发现。

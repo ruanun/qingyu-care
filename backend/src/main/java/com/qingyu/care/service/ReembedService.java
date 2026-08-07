@@ -14,6 +14,7 @@ import com.qingyu.care.util.SecurityUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -127,7 +128,7 @@ public class ReembedService {
     }
 
     /** 异步执行：遍历 KB → COMPLETED 文档重嵌 + ACTIVE QA 重嵌；单条 fail-soft，不中断整批。 */
-    @Async
+    @Async(AsyncConfig.LONG_TASK_EXECUTOR)
     public void runReembed(Progress p, List<Long> kbIds) {
         try {
             List<Document> docs = kbIds.stream()

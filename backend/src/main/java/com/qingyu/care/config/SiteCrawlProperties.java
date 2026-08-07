@@ -26,24 +26,25 @@ public class SiteCrawlProperties {
     /**
      * robots.txt {@code Crawl-delay} 的上限（毫秒）。这是第三方（被爬站点）可控的值，
      * 不设上限时对方写一句 {@code Crawl-delay: 300} 就能让每页睡 5 分钟——乘以 500 页
-     * 硬顶就是 40 多小时，全程占着共享的 {@code applicationTaskExecutor} 一个线程
-     * （与审计日志落库、webhook 直投、文档摄取共享）和全局并发额度的一格。
+     * 硬顶就是 40 多小时，全程占着 {@code AsyncConfig.LONG_TASK_EXECUTOR} 的一个线程
+     * （固定 6 个，与文档摄取、QA 生成、批量重嵌、网页同步共用）和全局并发额度的一格。
      */
     private long maxDelayMs = 10_000;
 
     /**
-     * 全局并发爬取任务上限，<b>不区分租户</b>。不只是对目标站点礼貌的问题：{@code @Async}
-     * 池（{@code AsyncConfig} 是空壳，用的是 Spring Boot 默认 {@code applicationTaskExecutor}，
-     * core 8、<b>队列无界</b>）是和审计日志异步落库、webhook 直投、文档摄取共享的——
-     * 核心线程占满后，无界队列意味着永不扩容（{@code maxPoolSize} 只在队列也满时才生效，
-     * 无界队列下这个条件永远不成立），几分钟的长任务无上界并发会把后续所有短任务全部
-     * 排在一条 FIFO 后面等，等待时长最坏可达 {@code maxPagesLimit} × {@code maxDelayMs}
-     * （500 页 × 10s ≈ 83 分钟）。
+     * 全局并发爬取任务上限，<b>不区分租户</b>。既是对目标站点礼貌，也是对执行器的保护：
+     * 爬取跑在 {@code AsyncConfig.LONG_TASK_EXECUTOR} 这个<b>固定 6 线程</b>的长任务池上，
+     * 与文档摄取、QA 生成、批量重嵌、网页同步共用它。不设上限时几个爬取就能把 6 个线程
+     * 全占满，同池的摄取与重嵌只能排队，等待时长最坏可达 {@code maxPagesLimit} ×
+     * {@code maxDelayMs}（500 页 × 10s ≈ 83 分钟）。
+     *
+     * <p>审计日志落库、webhook 直投等短任务<b>不在这个池里</b>（走 Boot 默认的
+     * {@code applicationTaskExecutor}），所以爬取占满长任务池不会拖慢它们——这是
+     * {@code AsyncConfig} 分池之前没有的保证，当时全靠这条配额硬撑。
      *
      * <p>⚠️ 这条上限必须与 {@link #maxConcurrentJobsPerTenant} 一起判——只留后者会让
-     * 总量变成「租户数 × 每租户上限」、彻底失去对共享线程池的保护（真实教训：曾经改成
-     * 纯按租户分桶，总量随租户数线性增长，4 个租户各起 2 个爬取就能占满 core 8，
-     * 审计日志落库/webhook 直投/文档摄取全部卡在爬取剩余时长后面）。
+     * 总量变成「租户数 × 每租户上限」、彻底失去对长任务池的保护（真实教训：曾经改成
+     * 纯按租户分桶，总量随租户数线性增长，几个租户各起 2 个爬取就能占满整池）。
      */
     private int maxConcurrentJobs = 2;
 

@@ -18,6 +18,7 @@ import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
+import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -212,7 +213,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         self.processDocumentAsync(documentId);
     }
 
-    @Async
+    @Async(AsyncConfig.LONG_TASK_EXECUTOR)
     public void processDocumentAsync(Long documentId) {
         // 必须走 self：同类直调不经代理，processDocument 的 @Transactional 会失效，
         // 其首行 deleteByDocumentId 是 @Modifying 原生删除，无环绕事务直接抛

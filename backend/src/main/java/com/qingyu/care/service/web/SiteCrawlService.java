@@ -19,6 +19,7 @@ import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -345,12 +346,13 @@ public class SiteCrawlService {
      * {@code @Async} 线程，没有上下文时 {@code TenantEntityListener} 回填出来的
      * {@code tenant_id}/{@code app_id} 全是 null。
      *
-     * <p>⚠️ {@code finally} 必须 {@code TenantContext.clear()}：{@code AsyncConfig} 用的是
-     * Spring Boot 默认 {@code applicationTaskExecutor}（core 8、<b>线程复用</b>），
+     * <p>⚠️ {@code finally} 必须 {@code TenantContext.clear()}：本方法跑在
+     * {@code AsyncConfig.LONG_TASK_EXECUTOR} 上，那是个<b>会复用线程</b>的池，
      * 不清理就是把上下文泄漏给下一个复用该线程的任务（流式聊天改造时实测复现过
-     * 平台管理员会话落进别人租户）。
+     * 平台管理员会话落进别人租户）。分池只改变了「和谁抢线程」，<b>没有</b>改变
+     * 线程复用这个前提，这条清理照旧不能省。
      */
-    @Async
+    @Async(AsyncConfig.LONG_TASK_EXECUTOR)
     public void runCrawl(Progress p, Long siteId, Long tenantId, Long appId,
                          Long userId, DocumentVisibility accessLevel) {
         TenantContext.setTenantId(tenantId);
@@ -722,7 +724,7 @@ public class SiteCrawlService {
      * 解析实际采用的抓取间隔：优先站点声明的 {@code robots Crawl-delay}，否则用平台默认，
      * 但<b>钳到平台上限</b>——{@code Crawl-delay} 是被爬站点（第三方）可控的值，不设上限
      * 时对方声明 {@code Crawl-delay: 300} 就能让每页睡 5 分钟，乘以 500 页硬顶就是
-     * 40 多小时，全程占着共享的 {@code applicationTaskExecutor} 一个线程。
+     * 40 多小时，全程占着 {@code AsyncConfig.LONG_TASK_EXECUTOR} 的一个线程。
      * 包级 static 免容器单测（同 {@link #clamp} 惯例）。
      */
     static long resolveDelayMs(Long robotsCrawlDelayMs, long defaultDelayMs, long maxDelayMs) {

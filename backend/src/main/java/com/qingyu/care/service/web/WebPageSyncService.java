@@ -10,6 +10,7 @@ import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,7 +107,7 @@ public class WebPageSyncService {
     }
 
     /** 异步入口：手动「立即同步」用它，立刻返回、前端轮询文档状态看结果。 */
-    @Async
+    @Async(AsyncConfig.LONG_TASK_EXECUTOR)
     public void syncDocumentAsync(Long documentId) {
         // 必须走 self：同类直调不经代理，syncDocument 的 @Transactional 会失效——
         // findById/save 各自落进自己的迷你事务，doc 在方法体内途中就已 detached，
