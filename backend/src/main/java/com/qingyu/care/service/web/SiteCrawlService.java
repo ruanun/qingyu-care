@@ -469,7 +469,24 @@ public class SiteCrawlService {
             // 代价是这一页在本轮被抓两次（一次为提链接、一次在 syncDocument 内部）——
             // 见 spec §5.2 的取舍与重新考虑的触发条件
             webPageSyncService.syncDocument(existing.getId());
-            p.updated++;
+            // ⚠️ syncDocument 自身 fail-soft、<b>永不抛</b>，失败只记在文档行上。不回读就分不清
+            // 「更新成功」与「抓取/重嵌失败、旧内容原样留着」——一次 50 页全部同步失败的重爬
+            // 会显示「更新 50 · 失败 0」。同 createAndIngest 回读判成败的先例。
+            //
+            // 判据用 syncFailureCount 而非 status：syncDocument 的「抓取失败保留旧内容」分支
+            // 刻意不动 status（旧内容与旧向量还在正常服务，标 FAILED 是撒谎），所以只看 status
+            // 漏掉的正是最常见的那种失败。而任何一次成功都会把该计数清零，故「回读后仍 > 0」
+            // 就等价于「本轮没成功」。
+            Integer failures = documentRepository.findById(existing.getId())
+                    .map(Document::getSyncFailureCount)
+                    .orElse(null);
+            if (failures != null && failures > 0) {
+                p.failed++;
+                log.warn("重爬时同步既有文档失败 docId={} url={} 连续失败次数={}",
+                        existing.getId(), ref.url(), failures);
+            } else {
+                p.updated++;
+            }
             if (existing.getCrawlSite() == null) {
                 adoptIntoSite(existing.getId(), site);
             }

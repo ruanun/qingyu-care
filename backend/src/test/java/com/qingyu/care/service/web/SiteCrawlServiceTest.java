@@ -238,14 +238,80 @@ class SiteCrawlServiceTest {
         Document existing = Document.builder().id(77L).sourceUrl("https://x.com/help").build();
         when(documentRepository.findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(100L, "https://x.com/help"))
                 .thenReturn(Optional.of(existing));
+        // 显式打桩而非依赖「未打桩返回 empty」：同步后的回读是判成败的必经一步，
+        // 让它明确返回一个「失败计数为 0」的文档，本用例才是在断言「成功路径计 updated」
+        Document synced = Document.builder().id(77L).syncFailureCount(0).build();
+        when(documentRepository.findById(77L)).thenReturn(Optional.of(synced));
 
         SiteCrawlService.Progress p = newProgress(s);
         service.runCrawl(p, 9L, 1L, 2L, 3L, null);
 
         verify(webPageSyncService).syncDocument(77L);
-        verify(documentRepository, never()).save(any(Document.class));
+        // 判据用「没有走摄取」而不是「没有 save」：existing 分支现在会合法地 save 一次
+        // （adoptIntoSite 把这篇未归属的文档收养进站点）。而重复建档必然要调 processDocument，
+        // 所以 never().processDocument 才是「没有重复建档」的精确判据
+        verify(knowledgeService, never()).processDocument(any());
         assertThat(p.updated).isEqualTo(1);
         assertThat(p.created).isZero();
+    }
+
+    @Test
+    @DisplayName("重爬时既有文档同步失败要计 failed 而不是 updated——syncDocument 永不抛，"
+            + "不回读的话一次 50 页全失败也显示「更新 50 · 失败 0」")
+    void existing_document_that_fails_to_sync_counts_as_failed() {
+        CrawlSite s = site(50, 0);
+        stubPage("https://x.com/help");
+        Document existing = Document.builder().id(77L).sourceUrl("https://x.com/help").build();
+        when(documentRepository.findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(existing));
+        // syncDocument 的「抓取失败保留旧内容」分支刻意不动 status（旧内容还在正常服务），
+        // 只累加失败计数——所以这里 status 仍是 COMPLETED，只有 syncFailureCount 能反映失败
+        Document afterFailedSync = Document.builder().id(77L)
+                .status(DocumentStatus.COMPLETED).syncFailureCount(3).build();
+        when(documentRepository.findById(77L)).thenReturn(Optional.of(afterFailedSync));
+
+        SiteCrawlService.Progress p = newProgress(s);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        assertThat(p.failed).isEqualTo(1);
+        assertThat(p.updated).isZero();
+    }
+
+    @Test
+    @DisplayName("同步成功（失败计数被清零）计 updated")
+    void existing_document_that_syncs_successfully_counts_as_updated() {
+        CrawlSite s = site(50, 0);
+        stubPage("https://x.com/help");
+        Document existing = Document.builder().id(77L).sourceUrl("https://x.com/help").build();
+        when(documentRepository.findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(existing));
+        when(documentRepository.findById(77L)).thenReturn(Optional.of(
+                Document.builder().id(77L).syncFailureCount(0).build()));
+
+        SiteCrawlService.Progress p = newProgress(s);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        assertThat(p.updated).isEqualTo(1);
+        assertThat(p.failed).isZero();
+    }
+
+    @Test
+    @DisplayName("失败计数为 null 时既不算失败也不 NPE——该列可空（ddl-auto 对存量行加 NOT NULL 会启动失败）")
+    void null_sync_failure_count_is_tolerated() {
+        CrawlSite s = site(50, 0);
+        stubPage("https://x.com/help");
+        Document existing = Document.builder().id(77L).sourceUrl("https://x.com/help").build();
+        when(documentRepository.findFirstByKnowledgeBaseIdAndSourceUrlOrderByIdAsc(100L, "https://x.com/help"))
+                .thenReturn(Optional.of(existing));
+        Document nullCount = Document.builder().id(77L).build();
+        nullCount.setSyncFailureCount(null);
+        when(documentRepository.findById(77L)).thenReturn(Optional.of(nullCount));
+
+        SiteCrawlService.Progress p = newProgress(s);
+        service.runCrawl(p, 9L, 1L, 2L, 3L, null);
+
+        assertThat(p.updated).isEqualTo(1);
+        assertThat(p.failed).isZero();
     }
 
     @Test
