@@ -230,6 +230,50 @@
 
 ---
 
+## 技术债清单
+
+> 与上面各 Phase 的「未做功能」区分开：这里记的是**已交付代码里欠的账**，都有明确位置与后果。
+> 设计上有意接受的已知局限（`<div>` 导航噪声、webp 尺寸恒 null、重爬抓两次等）不在此列，见 `CLAUDE.md` 各链路的架构要点。
+> 末次盘点：2026-08-07（站点爬取合入后）。
+
+### 会咬人的代码债
+
+1. **`@Async` 池是空壳默认池，长任务与关键短任务共享**（建议优先）
+   `config/AsyncConfig` 只有 `@EnableAsync`，用的是 Spring Boot 默认 `applicationTaskExecutor`——**core 8、队列无界**。共享方：审计日志 `saveAsync`、webhook `deliverAsync`、文档摄取、网页同步、重嵌批任务，以及**几十分钟级的站点爬取**。队列无界意味着 core 满后 maxPoolSize 永不扩容、后来者排进一条无界 FIFO。
+   站点爬取现用两层并发上限（全局 + 租户，见 `SiteCrawlProperties`）挡住最坏情况，但那是**用业务层配额补偿基础设施缺陷**。
+   修法：给长任务单独一个有界 `ThreadPoolTaskExecutor`（`@Async("crawlExecutor")`），与短任务彻底隔离。
+
+2. **token 多轮聚合计量少计**（涉及计费准确性）
+   `ChatServiceImpl` 里是 `tokens.set(...)` 覆盖而非累加，非流式同样只取单个 response 的 usage。带工具时 Spring AI 内部跑多轮，只记末轮。详见 §5.4 第 8 项。
+   ⚠️ 未上线前实际损失为零，而修法可能要接管 Spring AI 的工具循环（关 `internalToolExecutionEnabled` 自驱多轮，或走 observation 拦截累加）——属「看着小其实不小」，别低估。
+
+3. **`deleteKnowledgeBase` 无级联清理**（既有缺陷，站点爬取多加了一个触发理由）
+   `KnowledgeServiceImpl.deleteKnowledgeBase` 只做 `knowledgeBaseRepository.delete(kb)`。库下有文档 / QA / 爬取站点时直接 FK 违约 → 500，且没有可读文案。
+   暴露面小：`DELETE /knowledge/{id}` 前端未接线，只能从 Swagger 或直连 API 触发。
+   修法：先行清理子实体，或至少把 `DataIntegrityViolationException` 转成「该知识库下仍有文档/爬取站点，请先清空」。
+
+4. **`ChatMessage.isRead` 是死字段** —— 字段已建、全库无人读写。要么实现已读/送达（见 §5.2 第四项），要么删掉它。
+
+5. **站点爬取 `existing` 分支的失败永不计入 `p.failed`**
+   `SiteCrawlService.processPage` 走 `existing != null` 分支时直接 `p.updated++`，而 `webPageSyncService.syncDocument` 自身 fail-soft 永不抛——于是重爬时 50 页全部同步失败也会显示「更新 50 · 失败 0」。
+   修法先例就在同一个类的 `createAndIngest` 里（回读 status 判成败），代价约 3 行。
+
+### 测试覆盖缺口
+
+6. **管理后台前端零测试**（`frontend/` 无 vitest）
+   唯一验收是 `pnpm build` + lint；反倒是 `widget/` 有 vitest 与 10 个测试文件。
+   代价已经实际发生过：站点爬取的前端三轮返工（轮询生命周期、双并发任务互踩、StrictMode 下 `isMountedRef` 永久卡死）全靠人工代码走查发现，**有测试的话第一轮就该红**。
+
+7. **前端 lint 有 69 个既有 error 基线**
+   构成：`@typescript-eslint/no-explicit-any` 50（多为 `catch (error: any)`）、`react-hooks/set-state-in-effect` 15、`react-hooks/exhaustive-deps` 9、`no-unused-vars` 2。
+   当前只能保证「每次改动不新增」，无法把 lint 当红绿灯用。
+
+8. **站点爬取 C-1 只有结构性哨兵**
+   「`startCrawl` 在事务内投递 `@Async`」这条竞态无法确定性复现（实测把 `@Transactional` 加回后 IT 连跑 4 次全绿），现在只有一条反射断言守住「注解被加回来」这一种回归方式，竞态本身靠手工验证项兜底。
+   同批的另两处（`Error` 逃逸留僵尸 RUNNING、收尾 detached merge 静默回滚配置）终审已证明纯 Mockito 可测并补了真守护。
+
+---
+
 ## 技术栈补充
 
 | 模块 | 技术选型 |
