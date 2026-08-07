@@ -43,6 +43,8 @@ class KnowledgeOwnershipTest {
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock com.qingyu.care.repository.QaPairRepository qaPairRepository;
+    @Mock com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
     @AfterEach
     void clear() {
@@ -51,7 +53,8 @@ class KnowledgeOwnershipTest {
 
     private KnowledgeServiceImpl service() {
         return new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider);
+                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                qaPairRepository, crawlSiteRepository);
     }
 
     private KnowledgeBase kbOwnedBy(Long tenantId) {

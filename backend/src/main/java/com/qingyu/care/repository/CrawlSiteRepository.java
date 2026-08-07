@@ -22,6 +22,9 @@ public interface CrawlSiteRepository extends JpaRepository<CrawlSite, Long> {
     /** 列某知识库下的站点，最新创建的在前。 */
     List<CrawlSite> findByKnowledgeBaseIdOrderByIdDesc(Long knowledgeBaseId);
 
+    /** 删除知识库前的占用检查（见 {@code KnowledgeServiceImpl#deleteKnowledgeBase}）。 */
+    long countByKnowledgeBaseId(Long knowledgeBaseId);
+
     /**
      * 按知识库 + 入口地址查是否已建过站点，供 {@code startCrawl} 拒绝重复建站——
      * 同一入口建两个站点会各自跑一遍 BFS，互相看不见对方未提交的建档，产出重复文档与重复向量。

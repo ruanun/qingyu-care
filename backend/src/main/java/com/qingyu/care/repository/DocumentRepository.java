@@ -18,6 +18,9 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     List<Document> findByKnowledgeBaseId(Long knowledgeBaseId);
 
+    /** 删除知识库前的占用检查（见 {@code KnowledgeServiceImpl#deleteKnowledgeBase}）。 */
+    long countByKnowledgeBaseId(Long knowledgeBaseId);
+
     List<Document> findByStatus(DocumentStatus status);
 
     List<Document> findByKnowledgeBaseIdAndStatus(Long knowledgeBaseId, DocumentStatus status);

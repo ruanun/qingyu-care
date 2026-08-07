@@ -1,6 +1,7 @@
 package com.qingyu.care.service.impl;
 
 import com.qingyu.care.config.TenantOwnershipGuard;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
@@ -37,6 +38,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final FileService fileService;
     private final com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository;
     private final com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider;
+    private final com.qingyu.care.repository.QaPairRepository qaPairRepository;
+    private final com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
     // 自注入解决 @Async 同类调用不生效问题
     private KnowledgeServiceImpl self;
@@ -47,13 +50,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             VectorStore vectorStore,
             FileService fileService,
             com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository,
-            com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider) {
+            com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider,
+            com.qingyu.care.repository.QaPairRepository qaPairRepository,
+            com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
         this.vectorStore = vectorStore;
         this.fileService = fileService;
         this.vectorStoreRepository = vectorStoreRepository;
         this.embeddingModelProvider = embeddingModelProvider;
+        this.qaPairRepository = qaPairRepository;
+        this.crawlSiteRepository = crawlSiteRepository;
     }
     
     @org.springframework.beans.factory.annotation.Autowired
@@ -115,11 +122,44 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return knowledgeBaseRepository.save(kb);
     }
 
+    /**
+     * 删除知识库。<b>库里还有内容时拒绝删除</b>，并在文案里说清各类内容各有多少。
+     *
+     * <p>此前这里只做 {@code delete(kb)}：{@code document}/{@code qa_pair}/{@code crawl_site}
+     * 三张表都有指向 {@code knowledge_base} 的外键，有内容时数据库直接抛
+     * {@code DataIntegrityViolationException}，用户拿到的是一个不可读的 500。
+     *
+     * <p>⚠️ 这里刻意<b>不做级联删除</b>：{@code Document.knowledgeBase} 是
+     * {@code nullable = false}，文档没法像 {@code CrawlSite} 被删时那样「置 null 退化成
+     * 普通文档」，所以级联就意味着连文档、向量、QA 一起不可恢复地删掉。删知识库本就是
+     * 低频且破坏性的操作（该端点前端未接线，只能从 Swagger 或直连 API 触发），
+     * 让它在有内容时明确拒绝、把清空的决定留给用户，比替用户做主安全。
+     * 真需要「一键连内容删光」时再加显式的 force 参数，仿 {@code deleteSite(deleteDocuments)}。
+     */
     @Override
     @Transactional
     public void deleteKnowledgeBase(Long id) {
         // 经 getKnowledgeBase 显式归属校验后再删——deleteById 直连主键同样绕 @Filter
         KnowledgeBase kb = getKnowledgeBase(id);
+
+        long documents = documentRepository.countByKnowledgeBaseId(id);
+        long qaPairs = qaPairRepository.countByKnowledgeBaseId(id);
+        long crawlSites = crawlSiteRepository.countByKnowledgeBaseId(id);
+        if (documents + qaPairs + crawlSites > 0) {
+            StringBuilder detail = new StringBuilder();
+            if (documents > 0) {
+                detail.append(documents).append(" 篇文档");
+            }
+            if (qaPairs > 0) {
+                detail.append(detail.isEmpty() ? "" : "、").append(qaPairs).append(" 条问答对");
+            }
+            if (crawlSites > 0) {
+                detail.append(detail.isEmpty() ? "" : "、").append(crawlSites).append(" 个爬取站点");
+            }
+            throw new BusinessException("知识库「" + kb.getName() + "」下仍有 " + detail
+                    + "，请先清空后再删除");
+        }
+
         knowledgeBaseRepository.delete(kb);
     }
 

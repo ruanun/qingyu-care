@@ -46,10 +46,13 @@ class KnowledgeServiceUrlDocumentTest {
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
     @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock com.qingyu.care.repository.QaPairRepository qaPairRepository;
+    @Mock com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
     private KnowledgeServiceImpl service() {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider);
+                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                qaPairRepository, crawlSiteRepository);
         ReflectionTestUtils.setField(service, "chunkSize", 800);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);
         return service;
