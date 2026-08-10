@@ -228,4 +228,33 @@ describe('CrawlSiteList 轮询生命周期', () => {
         expect(screen.getByText(/已爬 7/)).toBeInTheDocument();
         expect(onCrawlFinished).toHaveBeenCalledTimes(1);
     });
+
+    /**
+     * T3｜变异实验：删掉 CrawlSiteList.tsx:84 那行 `isMountedRef.current = true;`
+     * （卸载 effect 的 setup 阶段），本条必须转红。
+     *
+     * 缺陷机理：isMountedRef 初值是 true，<StrictMode> 会把 effect 跑成
+     * setup → cleanup → setup。setup 里不复位的话，中间那次 cleanup 置的 false
+     * 就永久生效——组件挂载完标志位直接卡死在 false，poll 的第一次响应回来就被
+     * 挡返回：进度不更新、定时器不续期、FAILED 不 toast、爬完不通知父组件。
+     * 只在 `pnpm dev` 下发作，`vite build` 的生产包不受影响，React 18 起也没有
+     * console 警告——所以极难靠人工发现，正是这条测试存在的理由。
+     *
+     * ⚠️ 判别性只在 DOM 断言上：请求本身在守卫**之前**就发出去了，
+     * 所以 getCrawlProgress 的调用次数在变异前后都是 1，拿它断言抓不到东西。
+     * 同理本条也不断言 listCrawlSites 的调用次数——StrictMode 下挂载 effect
+     * 跑两次，首次 loadSites 本来就会被调用两次，与本条要守护的缺陷无关。
+     */
+    it('StrictMode 双调用后轮询照常工作（isMountedRef 在 setup 阶段被复位）', async () => {
+        vi.mocked(knowledgeService.recrawlSite).mockResolvedValue(ok('job-1'));
+        vi.mocked(knowledgeService.getCrawlProgress).mockResolvedValue(ok(progress({ crawled: 5 })));
+
+        await renderList({ strict: true });
+        clickRecrawl();
+        await flush();
+
+        await flush(2000);
+
+        expect(screen.getByText(/已爬 5/)).toBeInTheDocument();
+    });
 });
