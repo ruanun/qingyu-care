@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiResponse, CrawlProgress, CrawlSite } from '@/types';
+import type { ApiResponse, CrawlProgress, CrawlSite, CrawlSiteRequest } from '@/types';
 import { knowledgeService } from '@/api/knowledge';
 import { CrawlSiteList } from './CrawlSiteList';
 
@@ -21,7 +21,13 @@ import { CrawlSiteList } from './CrawlSiteList';
 // vi.mock 的工厂会被提到所有 import 之前执行，工厂里直接引用模块顶层的 const
 // 会撞 TDZ（ReferenceError: Cannot access before initialization），
 // 必须用 vi.hoisted 把桩函数一起提上去。
-const { toastSpy } = vi.hoisted(() => ({ toastSpy: vi.fn() }));
+// stubSubmit 也必须走 vi.hoisted：下面 CrawlSiteDialog 的桩要在自己的 onSubmit
+// 回调里记录「这次提交是被 resolve 还是被 reject 的」，而那个桩工厂同样被提到
+// import 之前，引用模块顶层的 const 会撞同一个 TDZ。
+const { toastSpy, stubSubmit } = vi.hoisted(() => ({
+    toastSpy: vi.fn(),
+    stubSubmit: { rejected: false },
+}));
 
 vi.mock('@/hooks/use-toast', () => ({
     useToast: () => ({ toast: toastSpy }),
@@ -38,10 +44,36 @@ vi.mock('@/api/knowledge', () => ({
     },
 }));
 
-// Radix Dialog 的 portal 与 focus trap 在 jsdom 下的行为跟轮询链毫无关系，
-// 把表单对话框桩成空组件，让测试只面对轮询逻辑。
+// 表单对话框仍然不渲染真实实现——它内部包着 Radix Dialog，而 portal 与 focus trap
+// 在 jsdom 下的行为跟本文件要验的组件逻辑无关，硬测只会引入噪声。
+//
+// 但**不能桩成 `() => null`**：建站与编辑是通过这个组件的 onSubmit 回调触发的，
+// 桩成空组件时 handleCreate / handleUpdate 永远执行不到，那两条路径就是零覆盖
+// （全分支终审点名过这个缺口）。所以桩成一个可控 stub：只在 open 时渲染，
+// 把「建站还是编辑」暴露成可断言的文本，并给一个按钮触发 onSubmit。
+//
+// stub 还要接住 onSubmit 返回的 promise：handleCreate / handleUpdate 在业务异常时
+// 会 `throw error`，真实对话框靠它决定「提交失败就不要关闭、让用户改完重试」。
+// 把 resolve / reject 记进 stubSubmit.rejected，测试才能断言这个行为还在。
 vi.mock('./CrawlSiteDialog', () => ({
-    CrawlSiteDialog: () => null,
+    CrawlSiteDialog: ({ open, initial, onSubmit }: {
+        open: boolean;
+        initial?: CrawlSite | null;
+        onSubmit: (req: CrawlSiteRequest) => Promise<void>;
+    }) => (open ? (
+        <div>
+            <span>{`stub-mode:${initial ? 'edit' : 'create'}`}</span>
+            <button
+                onClick={() => {
+                    void onSubmit({ entryUrl: 'https://example.com/help/' })
+                        .then(() => { stubSubmit.rejected = false; })
+                        .catch(() => { stubSubmit.rejected = true; });
+                }}
+            >
+                stub-submit
+            </button>
+        </div>
+    ) : null),
 }));
 
 const ok = <T,>(data: T): ApiResponse<T> => ({
@@ -116,9 +148,17 @@ beforeEach(() => {
     vi.useFakeTimers();
     toastSpy.mockReset();
     onCrawlFinished = vi.fn<() => void>();
+    stubSubmit.rejected = false;
     vi.mocked(knowledgeService.listCrawlSites).mockReset().mockResolvedValue(ok([site1]));
     vi.mocked(knowledgeService.getCrawlProgress).mockReset();
     vi.mocked(knowledgeService.recrawlSite).mockReset();
+    // 这三个此前不在 reset 名单里。当时无害（没有一条测试调得到它们），但
+    // 「桩不被 reset」是典型的测试顺序依赖来源：一旦有测试给它们设了
+    // mockResolvedValueOnce 或 mockImplementation，就会漏到后面的测试里。
+    // 现在建站 / 编辑 / 删除三条路径都有测试了，必须一起清。
+    vi.mocked(knowledgeService.addCrawlSite).mockReset();
+    vi.mocked(knowledgeService.updateCrawlSite).mockReset();
+    vi.mocked(knowledgeService.deleteCrawlSite).mockReset();
 });
 
 afterEach(() => {
@@ -305,5 +345,146 @@ describe('CrawlSiteList 轮询生命周期', () => {
 
         await flush(4000);
         expect(knowledgeService.getCrawlProgress).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * 写操作与对话框路径。
+ *
+ * 这一组补的是上一批的覆盖缺口（全分支终审点名）：当时 CrawlSiteDialog 被桩成
+ * `() => null`，于是 handleCreate / handleUpdate 一行都没执行过；删除路径走的是
+ * 内联的 Radix Dialog、根本没被桩，只是没测到。
+ *
+ * 每条同样配了变异实验，实验方式记在各条注释里。
+ */
+describe('CrawlSiteList 写操作与对话框路径', () => {
+    const dialog = () => screen.getByRole('dialog');
+    const openDeleteDialog = () => fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    const clickStubSubmit = () => fireEvent.click(screen.getByRole('button', { name: 'stub-submit' }));
+
+    /**
+     * T6｜变异实验：删掉 CrawlSiteList.tsx:181 那行 `setDeleteWithDocs(false);`
+     * （openDeleteDialog 里的复位），本条必须转红。
+     *
+     * ⚠️ 这条测试的构造是刻意的：**只断言「首次打开时未勾选」是永真的**——
+     * `useState(false)` 的初值本来就是 false，把那行复位删掉照样绿。要守住它，
+     * 必须走「勾上 → 关闭 → 重开」这条路：deleteWithDocs 是组件级 state、
+     * 不随对话框关闭而重置，唯一让它回到 false 的就是那行复位。
+     *
+     * 守的行为本身：勾上表示「同时删除已抓取的文档与向量」，不可恢复。
+     * 上一批评审专门把这里从「两次 confirm」改成「复选框默认不勾」，
+     * 残留上次的勾选等于把不可恢复的操作变成默认动作。
+     */
+    it('删除对话框重开后不残留上次的勾选，未勾选时传 deleteDocuments=false', async () => {
+        vi.mocked(knowledgeService.deleteCrawlSite).mockResolvedValue(ok<void>(undefined));
+
+        await renderList();
+
+        openDeleteDialog();
+        fireEvent.click(within(dialog()).getByRole('checkbox'));
+        expect(within(dialog()).getByRole('checkbox')).toBeChecked();
+
+        // 关掉对话框（DialogContent 自带的那个 X），deleteTarget 置空、对话框卸载
+        fireEvent.click(within(dialog()).getByRole('button', { name: 'Close' }));
+        await flush();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+        openDeleteDialog();
+        expect(within(dialog()).getByRole('checkbox')).not.toBeChecked();
+
+        fireEvent.click(within(dialog()).getByRole('button', { name: '删除' }));
+        await flush();
+
+        expect(knowledgeService.deleteCrawlSite).toHaveBeenCalledWith(1, false);
+    });
+
+    /**
+     * T7｜变异实验：把 CrawlSiteList.tsx:187 的 `deleteWithDocs` 写死成 `false`，
+     * 本条必须转红——勾了也白勾，文档不会被一起删掉。
+     * （反向变异「写死成 true」会让上面 T6 转红，两条合起来把这个参数钉在两头。）
+     */
+    it('勾选后删除传 deleteDocuments=true，并重查列表与通知父组件', async () => {
+        vi.mocked(knowledgeService.deleteCrawlSite).mockResolvedValue(ok<void>(undefined));
+
+        await renderList();
+        openDeleteDialog();
+        fireEvent.click(within(dialog()).getByRole('checkbox'));
+        fireEvent.click(within(dialog()).getByRole('button', { name: '删除' }));
+        await flush();
+
+        expect(knowledgeService.deleteCrawlSite).toHaveBeenCalledWith(1, true);
+        expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(2); // 挂载 + 删除后重查
+        expect(onCrawlFinished).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * T8｜变异实验：删掉 CrawlSiteList.tsx:146 那行 `if (res.data?.jobId) poll(res.data.jobId);`，
+     * 本条必须转红——站点建好了但进度永远不出现，用户看不到爬取在跑。
+     */
+    it('新建站点成功后重查列表并按返回的 jobId 启动轮询', async () => {
+        vi.mocked(knowledgeService.addCrawlSite).mockResolvedValue(ok({ siteId: 1, jobId: 'job-9' }));
+        vi.mocked(knowledgeService.getCrawlProgress).mockResolvedValue(ok(progress({ jobId: 'job-9', crawled: 4 })));
+
+        await renderList();
+        fireEvent.click(screen.getByRole('button', { name: '爬取整个站点' }));
+        expect(screen.getByText('stub-mode:create')).toBeInTheDocument();
+
+        clickStubSubmit();
+        await flush();
+
+        expect(knowledgeService.addCrawlSite).toHaveBeenCalledWith(7, { entryUrl: 'https://example.com/help/' });
+        expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(2);
+
+        await flush(2000);
+        expect(knowledgeService.getCrawlProgress).toHaveBeenCalledWith('job-9');
+        expect(screen.getByText(/已爬 4/)).toBeInTheDocument();
+    });
+
+    /**
+     * T9｜变异实验有两处，任一处都必须让本条转红：
+     * ① 删掉 CrawlSiteList.tsx:144 的 `if (res.code !== 200) throw new Error(res.message);`
+     *    → toast 断言落空（业务错误被静默吞掉，同 T5 守的那条全局约定）；
+     * ② 删掉 CrawlSiteList.tsx:150 的 `throw error;`
+     *    → stubSubmit.rejected 仍为 false。那行是对话框「提交失败就别关闭、
+     *    让用户改完重试」的唯一依据，删掉它对话框会当成功关掉、用户的输入全丢。
+     */
+    it('新建站点返回业务错误时报错，且把失败抛回对话框（不静默关闭）', async () => {
+        vi.mocked(knowledgeService.addCrawlSite)
+            .mockResolvedValue(fail<{ siteId: number; jobId: string }>('入口地址重复'));
+
+        await renderList();
+        fireEvent.click(screen.getByRole('button', { name: '爬取整个站点' }));
+        clickStubSubmit();
+        await flush();
+
+        expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({
+            variant: 'destructive',
+            title: '添加爬取站点失败',
+            description: '入口地址重复',
+        }));
+        expect(stubSubmit.rejected).toBe(true);
+
+        await flush(4000);
+        expect(knowledgeService.getCrawlProgress).not.toHaveBeenCalled();
+    });
+
+    /**
+     * T10｜变异实验：把 CrawlSiteList.tsx:263 的
+     * `onSubmit={editing ? handleUpdate : handleCreate}` 三元反过来，本条必须转红——
+     * 点「编辑」保存会变成新建一个站点，而原站点的配置改动全丢。
+     */
+    it('编辑站点走 updateCrawlSite 而非 addCrawlSite', async () => {
+        vi.mocked(knowledgeService.updateCrawlSite).mockResolvedValue(ok(site1));
+
+        await renderList();
+        fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+        expect(screen.getByText('stub-mode:edit')).toBeInTheDocument();
+
+        clickStubSubmit();
+        await flush();
+
+        expect(knowledgeService.updateCrawlSite).toHaveBeenCalledWith(1, { entryUrl: 'https://example.com/help/' });
+        expect(knowledgeService.addCrawlSite).not.toHaveBeenCalled();
+        expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(2);
     });
 });
