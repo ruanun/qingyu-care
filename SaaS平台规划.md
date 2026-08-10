@@ -276,7 +276,9 @@
    </details>
 
 7. **前端 lint 有 69 个既有 error 基线**
-   构成：`@typescript-eslint/no-explicit-any` 50（多为 `catch (error: any)`）、`react-hooks/set-state-in-effect` 15、`react-hooks/exhaustive-deps` 9、`no-unused-vars` 2。
+   构成（2026-08-10 实测复核）：`@typescript-eslint/no-explicit-any` **50**（多为 `catch (error: any)`）、`react-hooks` 的 setState-in-effect **15**、`@typescript-eslint/no-unused-vars` **2**、`react-refresh/only-export-components` **2**。合计 69。
+   ⚠️ 上一版把构成写成「set-state-in-effect 15、`react-hooks/exhaustive-deps` 9、no-unused-vars 2」（合计 76，本身就与 69 对不上）：**`exhaustive-deps` 现在是 0 条**（该规则的告警都已在既有代码里被 eslint-disable 注释或依赖补齐消掉），而漏列了 `react-refresh/only-export-components` 2 条。照旧构成去修的人会去找 9 条不存在的错误。
+   ⚠️ 与第 9 项有大面积重叠：那 50 条 `no-explicit-any` 绝大多数是 `catch (error: any)`，而第 9 项要补的失败分支正好就写在这些 catch 块里——**两条债一起修比分开修便宜得多**。
    当前只能保证「每次改动不新增」，无法把 lint 当红绿灯用。
 
 8. **站点爬取 C-1 只有结构性哨兵**
