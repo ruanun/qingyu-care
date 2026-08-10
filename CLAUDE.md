@@ -115,9 +115,10 @@ pnpm test    # vitest
 - ⚠️ **推进时间一律 `await vi.advanceTimersByTimeAsync(ms)`，包在 `act` 里**。轮询类代码的回调内部有 `await`，同步的 `advanceTimersByTime` 只把定时器回调排出去、推不动后面的 promise 链——测试会「通过」但实际什么都没验证。
 - 桩 HTTP 一律**桩到 `api/*.ts` 的 service 对象**（`vi.mock('@/api/knowledge')`），返回 `{code, message, data}`。这一层正是「HTTP 200 + `body.code`」约定发生的位置，构造 `{code: 400}` 最直接。不引入 MSW。
 - `vi.mock` 的工厂被提到所有 import 之前执行，工厂里引用模块顶层 `const` 会撞 TDZ——桩函数必须用 `vi.hoisted` 一起提上去。
-- Radix 组件（Dialog / Select 等）的 portal 与 focus trap 在 jsdom 下行为特殊，测别的逻辑时**直接 `vi.mock` 桩成空组件**，别顺带把它们一起测了。
+- Radix 组件（Dialog / Select 等）的 portal 与 focus trap 在 jsdom 下行为特殊，测别的逻辑时把它们 `vi.mock` 掉、别顺带一起测。⚠️ 但**别桩成 `() => null`**：如果被桩组件是通过回调（`onSubmit` / `onChange`）驱动父组件逻辑的，桩成空组件会让那条回调路径**静默零覆盖**——`CrawlSiteDialog` 就这么让 `handleCreate` / `handleUpdate` 一行都没执行过，而测试全绿、没有任何现象提醒。桩成一个「只在 `open` 时渲染、暴露回调触发点」的极简 stub 即可（见 `CrawlSiteList.test.tsx` 里那个桩）。
 - `src/test/strictModeDoubleInvoke.test.tsx` 是**工具链前提哨兵**，不测产品代码：它断言 vitest 下 `<StrictMode>` 真的把 effect 跑成 setup→cleanup→setup。`CrawlSiteList.test.tsx` 里那条 `isMountedRef` 回归测试依赖这个前提——前提一旦不成立，那条测试会**静默退化成永真**而不是转红，所以把前提本身钉成一条测试。
-- 覆盖面目前只有 `CrawlSiteList` 的轮询链与 `handleRecrawl` 这一个写操作（技术债清单第 6 项的第一批）：建站 / 编辑走的 `CrawlSiteDialog` 被桩成空组件，`handleCreate`/`handleUpdate` 从未被执行到；删除路径（`openDeleteDialog`/`handleConfirmDelete`）用的是内联 `Dialog`、并没有被桩掉，只是现有测试没点过「删除」按钮，同样零覆盖。其余页面与组件仍是零覆盖。
+- ⚠️ **断言「默认值」时小心永真**：只断言「首次打开时复选框未勾选」守不住 `openDeleteDialog` 里那行复位——`useState(false)` 的初值本来就是 `false`，删掉复位照样绿。要走「改动 → 关闭 → 重开仍是默认值」这条路才有判别力。凡是「组件级 state + 每次打开时复位」的组合都吃这个坑。
+- 覆盖面目前只有 `CrawlSiteList`（技术债清单第 6 项的第一批）：轮询链五条 + 建站 / 编辑 / 删除三条对话框路径五条，共 10 条，另有一条工具链哨兵。其余 27 个页面与 29 个组件仍是零覆盖。
 
 ## 架构要点
 

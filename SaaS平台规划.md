@@ -267,8 +267,8 @@
 ### 测试覆盖缺口
 
 6. **管理后台前端测试覆盖仍近乎为零**（基建已建，2026-08-10）
-   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），并用五条测试把站点爬取前端那三轮返工的缺陷锁住（`CrawlSiteList.test.tsx`：轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），每条都配了变异实验。**但也仅此一处**——27 个页面与其余 29 个组件仍是零覆盖（这部分唯一验收仍是 `pnpm build` + lint），所以这条债**没清完**、不折叠。
-   ⚠️ **`CrawlSiteList` 自己的覆盖也不完整**：建站/编辑/删除三条对话框路径里只有前两条因 `CrawlSiteDialog` 被桩成空组件而未覆盖，删除路径（`openDeleteDialog` 的「破坏性操作默认不勾选」+ `handleConfirmDelete`）用的是内联 `Dialog`、并没有被桩掉，补测不需要改桩策略——只是现有五条测试都没点过「删除」按钮。这条一旦退化（默认值改回勾选、或误删逻辑漂移），后果是不可恢复地删掉文档与向量；上一批评审专门把这里从「两次 confirm」改成现在这样。
+   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），`CrawlSiteList` 现有 **10 条测试**外加一条工具链哨兵，每条都配了变异实验：五条锁住站点爬取前端那三轮返工的缺陷（轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），五条覆盖建站 / 编辑 / 删除三条对话框路径（删除对话框重开不残留勾选、勾选后传 `deleteDocuments=true`、建站成功后按 jobId 启动轮询、建站业务异常把失败抛回对话框、编辑走 `updateCrawlSite`）。**但也仅此一个组件**——27 个页面与其余 29 个组件仍是零覆盖（这部分唯一验收仍是 `pnpm build` + lint），所以这条债**没清完**、不折叠。
+   ⚠️ 补删除路径那两条时踩到一个**永真测试**的坑，值得记住：「破坏性操作默认不勾选」如果只断言**首次打开时未勾选**，那是永真的——`useState(false)` 的初值本来就是 `false`，把 `openDeleteDialog` 里那行复位删掉照样绿。要真守住它必须走「勾上 → 关闭 → 重开仍未勾」这条路（`deleteWithDocs` 是组件级 state、不随对话框关闭而重置）。
    ⚠️ **`pnpm test` 目前不被任何东西自动执行**：`pnpm build` 只是 `tsc -b && vite build`，不跑测试；仓库没有 CI（CI 与覆盖率门槛是本批 spec 明确排除的范围）。这五条测试只在有人主动想起去跑的时候才起作用，不能假设「有测试了、回归会被自动抓住」。
    <details><summary>原问题</summary>
    `frontend/` 无 vitest，唯一验收是 `pnpm build` + lint；反倒是 `widget/` 有 vitest 与 10 个测试文件。
@@ -285,8 +285,12 @@
 
 9. **管理后台大量写操作把业务错误静默吞掉**
    形态是 `if (res.code === 200) { 成功分支 }` **没有 else**——不是没判 code，是判了却没有失败分支。业务异常走「HTTP 200 + `body.code`」、axios 不 reject，于是后端的业务错误（重复入口、资源被占用、并发上限、额度超限等）到了前端一律无声无息：用户点按钮毫无反应，也没有任何报错。
-   已确认的样本：`ApplicationListPage`（创建 / 更新 / 启停）、`HandoverRulePage`（启停 / 保存配置）、`KnowledgePage`（删文档）、`PromptPage`（创建版本 / 激活版本 / 删除版本——`pages/PromptPage.tsx:69`/`:83`/`:96` 三处均是裸 `if (response.code === 200) {...}` 无 else）。
-   ⚠️ 初步 `grep -A4` 式扫描显示约 20 个左右页面/组件命中 `code === 200`，但尚未逐处分类点数：既未排除**读操作**（拉列表、看板取数，本条债只关心写操作），也未排除**三元表达式**（如 `CrawlSiteList.tsx:105` 的 `p = res.code === 200 ? res.data : null`，形态上撞了关键词但不是本条债的问题）。`AbTestPage` 曾被浅层扫描误列为样本——复核后它的 `runAction` 封装（`AbTestPage.tsx:216-227`）其实带 else 分支 + destructive toast，是本仓库里业务错误处理**做对了**的页面，已从样本里删除。**没有可信的总数**；处理这项债时必须先逐处分类点数，不能沿用任何聚合数字。
+   **逐处分类点数结果（2026-08-10）**。`frontend/src/pages` + `src/components` 下命中 `code === 200` 共 **78 处**：
+   - **写操作 44 处，其中 36 处无失败分支——这 36 处才是本条债的范围**，分布在 12 个文件：`QaPairPanel`(5) / `KnowledgePage`(4) / `UserListPage`(4) / `ApplicationListPage`(3) / `ModelConfigPage`(3) / `PromptPage`(3) / `SkillConfigPage`(3) / `TenantListPage`(3) / `ToolConfigPage`(3) / `AgentPage`(2) / `HandoverRulePage`(2) / `StrategyConfigPage`(1)。另外 8 处写操作已正确带 else（`LoginPage` 登录/注册、`AbTestPage` 创建与 `runAction` 封装、两处 `uploadChatFile`、`testModel`、`ReportDialog`）。
+   - **读操作 32 处**（28 处无 else）：拉列表、看板取数。后果轻得多——页面静默显示空，而不是「点了按钮没反应」。**不在本条债范围内**，要治另立一条。
+   - **三元表达式 2 处**（`CrawlSiteList.tsx:105`、`AgentPage.tsx:107`）：形态上撞关键词但不是本条债；前者的注释还写明了「业务异常时 `res.data` 为 null，下面的判空分支会自然停止轮询」，是刻意的。
+   ⚠️ **点数方法上有两个坑，重新点数时别再踩**：① `grep -A4` 之类的固定上下文窗口**看不到 else 分支**（else 常在 5 行之外），必须按大括号配对定位 `if` 块的收尾行再判断——上一版正是因此把 `AbTestPage` 误列为样本，而它其实是做对了的页面；② 「有 else」不能靠「往下若干行内出现 `} else`」判定，那会把外层 `if (editingXxx) {...} else {...}` 的 else 误算进来（`ApplicationListPage:90`、`ModelConfigPage:58`、`TenantListPage:106`、`UserListPage:127` 四处都会被误判成已处理）。
+   ⚠️ 顺带纠正上一版那句「全量约 43 处写操作，判了 code 的约 20 处」：**数对了但含义是反的**——20 处其实是**已经用正确范式**（`code !== 200` + throw）处理的数量，分布在 `IntegrationPage`(7) / `CrawlSiteList`(5) / `SharedModelPage`(4) / `ConfigForm`(2) / `AuditLogPage`(1) / `PlatformOverviewPage`(1) 六个文件，不是「判了 code 却没处理」的数量。
    正确写法在仓库里现成：`components/knowledge/CrawlSiteList.tsx` 的四个写操作都是 `if (res.code !== 200) throw new Error(res.message)` + catch 里 destructive toast。
    ⚠️ 修的时候顺手给关键页面补回归测试——基建已经有了（见第 6 项），这类缺陷正是它最擅长抓的。
 
