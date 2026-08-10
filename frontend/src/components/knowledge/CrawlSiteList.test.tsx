@@ -51,6 +51,15 @@ const ok = <T,>(data: T): ApiResponse<T> => ({
     timestamp: '2026-08-10T00:00:00',
 });
 
+// 业务异常的形态：HTTP 200 + body.code != 200，data 为 null。
+// axios 不会 reject 这种响应，调用方必须自己判 code——这正是 T5 守的那条约定。
+const fail = <T,>(message: string): ApiResponse<T> => ({
+    code: 400,
+    message,
+    data: null as unknown as T,
+    timestamp: '2026-08-10T00:00:00',
+});
+
 const site1: CrawlSite = {
     id: 1,
     entryUrl: 'https://example.com/help/',
@@ -256,5 +265,31 @@ describe('CrawlSiteList 轮询生命周期', () => {
         await flush(2000);
 
         expect(screen.getByText(/已爬 5/)).toBeInTheDocument();
+    });
+
+    /**
+     * T5｜变异实验：删掉 CrawlSiteList.tsx:171 那行
+     * `if (res.code !== 200) throw new Error(res.message);`，本条必须转红。
+     *
+     * 守的是本仓库的全局约定：业务异常走「HTTP 200 + body.code」，axios 不会 reject，
+     * 不显式判 code 就会把后端的业务错误静默吞掉——用户点按钮毫无反应且没有任何报错。
+     * 变异后 res.data 是 null，`if (res.data) poll(...)` 自然不进，于是既不轮询也不报错，
+     * 正是「静默」那个形态。
+     */
+    it('重新爬取返回业务错误时报错而非静默，且不启动轮询', async () => {
+        vi.mocked(knowledgeService.recrawlSite).mockResolvedValue(fail<string>('站点不存在'));
+
+        await renderList();
+        clickRecrawl();
+        await flush();
+
+        expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({
+            variant: 'destructive',
+            title: '重新爬取失败',
+            description: '站点不存在',
+        }));
+
+        await flush(4000);
+        expect(knowledgeService.getCrawlProgress).not.toHaveBeenCalled();
     });
 });
