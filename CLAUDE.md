@@ -84,6 +84,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
 pnpm build                 # tsc -b && vite build
 pnpm lint                  # ESLint（flat config: eslint.config.js）
+pnpm test                  # vitest（jsdom + @testing-library/react）
 ```
 
 ### Widget（widget/，pnpm — 独立子项目）
@@ -104,6 +105,19 @@ pnpm test    # vitest
 - IT 基类提供 `seedApp(...)` 播种租户+应用。多租户过滤器只在**真实 HTTP 请求**流经 `TenantInterceptor` 时生效，因此 IT 里的种子数据要么走 MockMvc 请求，要么用不继承 `BaseTenantEntity` 的实体（如 `Application` 靠关系映射）。
 - `*FallbackIT`（`ChatStrategyFallbackIT`/`PromptTemplateFallbackIT`/`ModelRouterDefaultIT`/`HandoverRuleFallbackIT`）专门守护下方「多级配置回退」这条易错链路，改动相关服务后务必 `mvn verify`。
 - ⚠️ **跑 `mvn verify` 前必须先停掉本机在跑的 dev 后端**（`:8080`），否则 `WebhookDeliveryIT` 必红。IT 用 Testcontainers 起自己的 PG，但 Redis 连的是**本机 6379**，与 dev 后端共用消费组 `webhook-workers`——dev 后端的 `WebhookStreamConsumer` 会抢走 IT 投进流里的消息并 ACK，再拿 `deliveryId` 去自己的 dev 库查（查不到），IT 的投递行永远到不了 SUCCESS，最后表现为一条 10 秒 `ConditionTimeout`，**看不出与 Redis 有任何关系**。已实测确认：停掉 dev 后端后同一条 IT 即绿。
+
+### 前端测试（frontend/，vitest）
+
+`src/**/*.test.tsx` 与被测文件同目录并放（同 `widget/`）。`pnpm test` 跑一次就退，`pnpm test:watch` 是监听模式。
+
+- ⚠️ **故意不开 `globals: true`**（这点与 `widget/` 不同）：测试文件显式 `import { describe, it, expect, vi } from 'vitest'`。收益是 eslint 不必加 vitest globals、`tsconfig` 不必加全局类型，前端 lint 的既有 error 基线零新增。
+- ⚠️ **代价是 RTL 不再自动清理**：`@testing-library/react` 只在 `afterEach` 是全局函数时才自己注册 `cleanup`。`src/test/setup.ts` 里那行 `afterEach(cleanup)` **不能删**——漏掉的症状是「单个测试跑绿、整套一起跑红」，因为上一个测试的 DOM 还挂在 `document` 上。
+- ⚠️ **推进时间一律 `await vi.advanceTimersByTimeAsync(ms)`，包在 `act` 里**。轮询类代码的回调内部有 `await`，同步的 `advanceTimersByTime` 只把定时器回调排出去、推不动后面的 promise 链——测试会「通过」但实际什么都没验证。
+- 桩 HTTP 一律**桩到 `api/*.ts` 的 service 对象**（`vi.mock('@/api/knowledge')`），返回 `{code, message, data}`。这一层正是「HTTP 200 + `body.code`」约定发生的位置，构造 `{code: 400}` 最直接。不引入 MSW。
+- `vi.mock` 的工厂被提到所有 import 之前执行，工厂里引用模块顶层 `const` 会撞 TDZ——桩函数必须用 `vi.hoisted` 一起提上去。
+- Radix 组件（Dialog / Select 等）的 portal 与 focus trap 在 jsdom 下行为特殊，测别的逻辑时**直接 `vi.mock` 桩成空组件**，别顺带把它们一起测了。
+- `src/test/strictModeDoubleInvoke.test.tsx` 是**工具链前提哨兵**，不测产品代码：它断言 vitest 下 `<StrictMode>` 真的把 effect 跑成 setup→cleanup→setup。`CrawlSiteList.test.tsx` 里那条 `isMountedRef` 回归测试依赖这个前提——前提一旦不成立，那条测试会**静默退化成永真**而不是转红，所以把前提本身钉成一条测试。
+- 覆盖面目前只有 `CrawlSiteList`（技术债清单第 6 项的第一批），其余页面仍是零覆盖。
 
 ## 架构要点
 
@@ -202,7 +216,7 @@ pnpm test    # vitest
 - 统一响应包 `dto/ApiResponse`，分页 `dto/PageDTO`，全局异常在 `exception/GlobalExceptionHandler`（业务异常 `BusinessException`/`ResourceNotFoundException`/`OpenApiException` 等）。
 
 ### 前端结构（frontend/src/）
-- **HTTP** `api/client.ts`：单例 axios。请求拦截器从 localStorage 注入 `satoken`（key `qingyu-auth`）与 `X-App-Id`（key `qingyu-current-app`）；响应拦截器拆 `ApiResponse.data`，401 清登录态并跳 `/login`。各领域 service（`api/*.ts`）都走这个实例。
+- **HTTP** `api/client.ts`：单例 axios。请求拦截器从 localStorage 注入 `satoken`（key `qingyu-auth`）与 `X-App-Id`（key `qingyu-current-app`）；响应拦截器返回 `response.data`（即后端那整个 `ApiResponse`，**不是**再往里取一层 `.data`——调用方拿到的是 `{code, message, data}`），401 清登录态并跳 `/login`。各领域 service（`api/*.ts`）都走这个实例。
 - ⚠️ **业务异常是「HTTP 200 + `body.code`」约定，axios 不会 reject**：响应拦截器只特殊处理 401，其余状态原样把 `{code, message, data}` resolve 给调用方——**写操作必须显式判 `if (res.code !== 200) throw new Error(res.message)`**，不判就会把后端业务错误（重复入口、资源被占用、并发上限等）静默吞掉，用户点按钮毫无反应且没有任何报错。不限于某一特性，是全局约定；参考写法见 `components/knowledge/CrawlSiteList.tsx` 的四个写操作。
 - **状态** Zustand + persist：`stores/authStore.ts`（token/user，持久化）、`stores/appStore.ts`（当前应用 `currentApp`，其 `id` 即上面注入的 `X-App-Id`）。
 - **路由/守卫** `App.tsx`：`<ProtectedRoute>` 校验登录；应用级配置页（知识库/Prompt/策略等）额外包 `<RequireApp>`——未选应用时显示空状态。`layouts/MainLayout.tsx` 按 `user.role`（PLATFORM_ADMIN/TENANT_ADMIN/TENANT_MEMBER）过滤侧边导航。

@@ -266,9 +266,12 @@
 
 ### 测试覆盖缺口
 
-6. **管理后台前端零测试**（`frontend/` 无 vitest）
-   唯一验收是 `pnpm build` + lint；反倒是 `widget/` 有 vitest 与 10 个测试文件。
+6. **管理后台前端测试覆盖仍近乎为零**（基建已建，2026-08-10）
+   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），并用五条测试把站点爬取前端那三轮返工的缺陷锁住（`CrawlSiteList.test.tsx`：轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），每条都配了变异实验。**但也仅此一处**——27 个页面与其余 29 个组件仍是零覆盖，唯一验收还是 `pnpm build` + lint，所以这条债**没清完**、不折叠。
+   <details><summary>原问题</summary>
+   `frontend/` 无 vitest，唯一验收是 `pnpm build` + lint；反倒是 `widget/` 有 vitest 与 10 个测试文件。
    代价已经实际发生过：站点爬取的前端三轮返工（轮询生命周期、双并发任务互踩、StrictMode 下 `isMountedRef` 永久卡死）全靠人工代码走查发现，**有测试的话第一轮就该红**。
+   </details>
 
 7. **前端 lint 有 69 个既有 error 基线**
    构成：`@typescript-eslint/no-explicit-any` 50（多为 `catch (error: any)`）、`react-hooks/set-state-in-effect` 15、`react-hooks/exhaustive-deps` 9、`no-unused-vars` 2。
@@ -277,6 +280,12 @@
 8. **站点爬取 C-1 只有结构性哨兵**
    「`startCrawl` 在事务内投递 `@Async`」这条竞态无法确定性复现（实测把 `@Transactional` 加回后 IT 连跑 4 次全绿），现在只有一条反射断言守住「注解被加回来」这一种回归方式，竞态本身靠手工验证项兜底。
    同批的另两处（`Error` 逃逸留僵尸 RUNNING、收尾 detached merge 静默回滚配置）终审已证明纯 Mockito 可测并补了真守护。
+
+9. **管理后台大量写操作把业务错误静默吞掉**
+   形态是 `if (res.code === 200) { 成功分支 }` **没有 else**——不是没判 code，是判了却没有失败分支。业务异常走「HTTP 200 + `body.code`」、axios 不 reject，于是后端的业务错误（重复入口、资源被占用、并发上限、额度超限等）到了前端一律无声无息：用户点按钮毫无反应，也没有任何报错。
+   已确认的样本：`ApplicationListPage`（创建 / 更新 / 启停）、`HandoverRulePage`（启停 / 保存配置）、`KnowledgePage`（删文档）、`AbTestPage`（创建 / 更新）。全量约 43 处写操作调用点，判了 code 的约 20 处，其中带失败分支的更少。
+   正确写法在仓库里现成：`components/knowledge/CrawlSiteList.tsx` 的四个写操作都是 `if (res.code !== 200) throw new Error(res.message)` + catch 里 destructive toast。
+   ⚠️ 修的时候顺手给关键页面补回归测试——基建已经有了（见第 6 项），这类缺陷正是它最擅长抓的。
 
 ---
 

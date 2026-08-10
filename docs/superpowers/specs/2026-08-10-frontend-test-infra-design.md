@@ -123,6 +123,10 @@ afterEach(cleanup);
 
 探针本身不留在仓库里（它验证的是工具链行为、不是产品行为），结论写进 spec 与测试注释。
 
+**实测结论（2026-08-10）**：探针通过——vitest 下 `<StrictMode>` 确实把 effect 跑成
+`setup → cleanup → setup`，T3 按真实复现写（强守护）。探针留在
+`src/test/strictModeDoubleInvoke.test.tsx` 守护这个前提，未按原计划删除，理由见实现计划。
+
 ## 5. CrawlSiteList 测试清单
 
 五条，每条都必须配一次变异实验：**把实现改坏，测试必须转红；红不了的测试当场重写**。
