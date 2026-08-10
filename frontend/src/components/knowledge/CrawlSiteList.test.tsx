@@ -196,10 +196,12 @@ describe('CrawlSiteList 轮询生命周期', () => {
     });
 
     /**
-     * T2｜变异实验：把 poll 里 progressMap 与 timersRef 的索引键从 jobId 改回 siteId
-     * （三处：第 117 行的 setProgressMap、第 118 行的 timersRef、第 128-134 行的收尾清理，
-     * 以及第 138 行首次挂表；连带把渲染处第 216 行的反查改成直接取 progressMap[site.id]），
+     * T2｜变异实验：把 poll 里 progressMap 与 timersRef 的索引键从 jobId 改成同一个写死的
+     * 固定常量（共 6 处：第 117/118 行 RUNNING 分支的 setProgressMap 与续期、第 128 行
+     * delete timersRef、第 130/132 行收尾的 in 判断与 delete、第 138 行首次挂表），
      * 本条必须转红——job-1 的收尾会把 job-2 刚写进去的那条进度抹掉。
+     * 渲染处第 216 行的反查（`Object.values(progressMap).find((p) => p.siteId === site.id)`）
+     * 按 siteId 遍历 values 匹配，与索引键名无关，**不需要跟着改**。
      */
     it('同一站点两条任务并发时，旧任务收尾不会抹掉新任务的进度', async () => {
         vi.mocked(knowledgeService.recrawlSite)
