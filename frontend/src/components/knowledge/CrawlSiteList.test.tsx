@@ -253,14 +253,26 @@ describe('CrawlSiteList 轮询生命周期', () => {
      *
      * ⚠️ 判别性只在 DOM 断言上：请求本身在守卫**之前**就发出去了，
      * 所以 getCrawlProgress 的调用次数在变异前后都是 1，拿它断言抓不到东西。
-     * 同理本条也不断言 listCrawlSites 的调用次数——StrictMode 下挂载 effect
-     * 跑两次，首次 loadSites 本来就会被调用两次，与本条要守护的缺陷无关。
+     *
+     * `listCrawlSites` 的调用次数断言不是为了守护上面这条缺陷（挂载 effect 在
+     * StrictMode 下本来就跑两次，首次 loadSites 变成 2 次与 isMountedRef 无关），
+     * 而是这条测试自身的**前提自证**：`strictModeDoubleInvoke.test.tsx` 只证明了
+     * "vitest 下 StrictMode 会双调用"这个工具链事实，证不了"这条测试真的传了
+     * `{ strict: true }`"——若哪天有人手滑去掉那个参数，变异前后 StrictMode 都不
+     * 生效，cleanup 根本不会跑，`isMountedRef` 一直是初值 `true`，本条测试在
+     * 正确实现与变异实现下会**同时绿**、隔壁的哨兵也不会红，静默退化成永真。
+     * `listCrawlSites` 恰好是 2 次（StrictMode 生效）还是 1 次（不生效）能在
+     * 测试内部把这件事钉住，不用依赖隔壁文件的哨兵。T3 的 mock 全程返回
+     * RUNNING、不会进入 poll 收尾分支，所以不会有额外的 loadSites 调用，
+     * 次数在整条测试期间恰好稳定在 2。
      */
     it('StrictMode 双调用后轮询照常工作（isMountedRef 在 setup 阶段被复位）', async () => {
         vi.mocked(knowledgeService.recrawlSite).mockResolvedValue(ok('job-1'));
         vi.mocked(knowledgeService.getCrawlProgress).mockResolvedValue(ok(progress({ crawled: 5 })));
 
         await renderList({ strict: true });
+        expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(2);
+
         clickRecrawl();
         await flush();
 

@@ -117,7 +117,7 @@ pnpm test    # vitest
 - `vi.mock` 的工厂被提到所有 import 之前执行，工厂里引用模块顶层 `const` 会撞 TDZ——桩函数必须用 `vi.hoisted` 一起提上去。
 - Radix 组件（Dialog / Select 等）的 portal 与 focus trap 在 jsdom 下行为特殊，测别的逻辑时**直接 `vi.mock` 桩成空组件**，别顺带把它们一起测了。
 - `src/test/strictModeDoubleInvoke.test.tsx` 是**工具链前提哨兵**，不测产品代码：它断言 vitest 下 `<StrictMode>` 真的把 effect 跑成 setup→cleanup→setup。`CrawlSiteList.test.tsx` 里那条 `isMountedRef` 回归测试依赖这个前提——前提一旦不成立，那条测试会**静默退化成永真**而不是转红，所以把前提本身钉成一条测试。
-- 覆盖面目前只有 `CrawlSiteList`（技术债清单第 6 项的第一批），其余页面仍是零覆盖。
+- 覆盖面目前只有 `CrawlSiteList` 的轮询链与 `handleRecrawl` 这一个写操作（技术债清单第 6 项的第一批）：建站 / 编辑走的 `CrawlSiteDialog` 被桩成空组件，`handleCreate`/`handleUpdate` 从未被执行到；删除路径（`openDeleteDialog`/`handleConfirmDelete`）用的是内联 `Dialog`、并没有被桩掉，只是现有测试没点过「删除」按钮，同样零覆盖。其余页面与组件仍是零覆盖。
 
 ## 架构要点
 

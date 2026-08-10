@@ -267,7 +267,9 @@
 ### 测试覆盖缺口
 
 6. **管理后台前端测试覆盖仍近乎为零**（基建已建，2026-08-10）
-   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），并用五条测试把站点爬取前端那三轮返工的缺陷锁住（`CrawlSiteList.test.tsx`：轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），每条都配了变异实验。**但也仅此一处**——27 个页面与其余 29 个组件仍是零覆盖，唯一验收还是 `pnpm build` + lint，所以这条债**没清完**、不折叠。
+   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），并用五条测试把站点爬取前端那三轮返工的缺陷锁住（`CrawlSiteList.test.tsx`：轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），每条都配了变异实验。**但也仅此一处**——27 个页面与其余 29 个组件仍是零覆盖（这部分唯一验收仍是 `pnpm build` + lint），所以这条债**没清完**、不折叠。
+   ⚠️ **`CrawlSiteList` 自己的覆盖也不完整**：建站/编辑/删除三条对话框路径里只有前两条因 `CrawlSiteDialog` 被桩成空组件而未覆盖，删除路径（`openDeleteDialog` 的「破坏性操作默认不勾选」+ `handleConfirmDelete`）用的是内联 `Dialog`、并没有被桩掉，补测不需要改桩策略——只是现有五条测试都没点过「删除」按钮。这条一旦退化（默认值改回勾选、或误删逻辑漂移），后果是不可恢复地删掉文档与向量；上一批评审专门把这里从「两次 confirm」改成现在这样。
+   ⚠️ **`pnpm test` 目前不被任何东西自动执行**：`pnpm build` 只是 `tsc -b && vite build`，不跑测试；仓库没有 CI（CI 与覆盖率门槛是本批 spec 明确排除的范围）。这五条测试只在有人主动想起去跑的时候才起作用，不能假设「有测试了、回归会被自动抓住」。
    <details><summary>原问题</summary>
    `frontend/` 无 vitest，唯一验收是 `pnpm build` + lint；反倒是 `widget/` 有 vitest 与 10 个测试文件。
    代价已经实际发生过：站点爬取的前端三轮返工（轮询生命周期、双并发任务互踩、StrictMode 下 `isMountedRef` 永久卡死）全靠人工代码走查发现，**有测试的话第一轮就该红**。

@@ -23,8 +23,9 @@ StrictMode），基建撑得住它才说明它对后续特性也有用。
 
 **顺带发现、另记技术债不在本批处理**：管理后台大量写操作是 `if (res.code === 200) { 成功 }`
 **没有 else 分支**的形态（`ApplicationListPage` / `HandoverRulePage` / `KnowledgePage` /
-`AbTestPage` 等）——不是没判 code，是判了却没有失败分支，业务错误时按钮静默无反应。这正是
-CLAUDE.md 点名的「HTTP 200 + `body.code`」约定被违反的准确形态，涉及 20+ 处调用点，自己就是一批。
+`PromptPage` 等）——不是没判 code，是判了却没有失败分支，业务错误时按钮静默无反应。这正是
+CLAUDE.md 点名的「HTTP 200 + `body.code`」约定被违反的准确形态，数量待逐处分类点数（见
+`SaaS平台规划.md` 技术债 9），自己就是一批。
 
 ## 2. 桩策略：桩到 api service 模块层
 
@@ -172,7 +173,7 @@ T1/T2/T4 对应站点爬取前端三轮返工的三个缺陷，T3 对应其中�
 - CLAUDE.md 修正响应拦截器「拆 `ApiResponse.data`」的表述（见 §2）
 - `SaaS平台规划.md` 技术债清单：
   - 第 6 项标注「基建已建 + `CrawlSiteList` 已覆盖」，但**不折叠**——全站仍近乎零覆盖，债没清完
-  - 新增一条：写操作 `if (code === 200)` 无 else 分支导致业务错误静默（20+ 处，见 §1 范围）
+  - 新增一条：写操作 `if (code === 200)` 无 else 分支导致业务错误静默（数量待逐处分类点数，见 `SaaS平台规划.md` 技术债 9）
 
 ## 7. 验收
 
