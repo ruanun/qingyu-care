@@ -150,4 +150,39 @@ describe('CrawlSiteList 轮询生命周期', () => {
         await flush(4000); // 终态之后不该再有任何续期
         expect(knowledgeService.getCrawlProgress).toHaveBeenCalledTimes(2);
     });
+
+    /**
+     * T4｜变异实验：删掉 CrawlSiteList.tsx:114 那行 `if (!isMountedRef.current) return;`，
+     * 本条必须转红。
+     *
+     * ⚠️ 卸载 effect 里的 clearTimeout **拦不住这条**——它只能取消「还没触发的」
+     * 下一次调度。这里刻意让请求在卸载那一刻正挂在半空（deferred promise），
+     * 唯一能挡住后续副作用的就是那行 isMountedRef 判断。
+     */
+    it('卸载后，在飞的请求返回终态也不再刷新列表或通知父组件', async () => {
+        vi.mocked(knowledgeService.recrawlSite).mockResolvedValue(ok('job-1'));
+
+        let settle!: (r: ApiResponse<CrawlProgress>) => void;
+        vi.mocked(knowledgeService.getCrawlProgress).mockReturnValueOnce(
+            new Promise<ApiResponse<CrawlProgress>>((resolve) => {
+                settle = resolve;
+            }),
+        );
+
+        const { unmount } = await renderList();
+        clickRecrawl();
+        await flush();
+
+        await flush(2000); // tick 触发，请求挂在半空
+        expect(knowledgeService.getCrawlProgress).toHaveBeenCalledTimes(1);
+
+        unmount();
+
+        settle(ok(progress({ status: 'COMPLETED', finishedAt: '2026-08-10T00:01:00' })));
+        await flush();
+
+        expect(onCrawlFinished).not.toHaveBeenCalled();
+        // 只该有挂载时那一次；收尾分支里的 loadSites 不该被执行
+        expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(1);
+    });
 });
