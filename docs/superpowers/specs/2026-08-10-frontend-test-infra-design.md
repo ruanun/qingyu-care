@@ -91,8 +91,12 @@ afterEach(cleanup);
 ⚠️ 非 globals 模式下 RTL **不会自动 cleanup**。漏掉 `afterEach(cleanup)` 的症状是「单个测试跑绿、
 整套跑红」，定位很费时间，所以在基建这一步就固定住。
 
-**`tsconfig.app.json`**：`types` 数组加 `"@testing-library/jest-dom"`。测试文件留在 `src/` 下受
-`tsc -b` 检查——`pnpm build` 顺带给测试做类型检查，这是想要的。
+**`tsconfig.app.json`**：**刻意不加** `"@testing-library/jest-dom"` 到 `types` 数组——
+`@testing-library/jest-dom/vitest` 子路径本身就是给 vitest 用的模块增强入口（根入口
+`@testing-library/jest-dom` 才是给 jest 的），`src/test/setup.ts` 里
+`import '@testing-library/jest-dom/vitest'` 这一行已经把 `toBeInTheDocument` 等断言类型接上，
+不需要再显式声明全局类型。测试文件仍留在 `src/` 下受 `tsc -b` 检查——`pnpm build` 顺带给测试做
+类型检查，这是想要的。
 
 **`package.json`**：
 
@@ -121,7 +125,8 @@ afterEach(cleanup);
   断言，并在测试注释与 CLAUDE.md 里写明「这条只有结构性守护、真复现靠手工验证项兜底」——与后端
   技术债 8（站点爬取 C-1 只有结构性哨兵）同款处理，**不假装它是强守护**。
 
-探针本身不留在仓库里（它验证的是工具链行为、不是产品行为），结论写进 spec 与测试注释。
+探针留不留在仓库里取决于实测结论——它验证的是工具链行为、不是产品行为，本身没有留存的必然性；
+结论写进 spec 与测试注释。
 
 **实测结论（2026-08-10）**：探针通过——vitest 下 `<StrictMode>` 确实把 effect 跑成
 `setup → cleanup → setup`，T3 按真实复现写（强守护）。探针留在

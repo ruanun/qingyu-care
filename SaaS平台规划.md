@@ -283,7 +283,8 @@
 
 9. **管理后台大量写操作把业务错误静默吞掉**
    形态是 `if (res.code === 200) { 成功分支 }` **没有 else**——不是没判 code，是判了却没有失败分支。业务异常走「HTTP 200 + `body.code`」、axios 不 reject，于是后端的业务错误（重复入口、资源被占用、并发上限、额度超限等）到了前端一律无声无息：用户点按钮毫无反应，也没有任何报错。
-   已确认的样本：`ApplicationListPage`（创建 / 更新 / 启停）、`HandoverRulePage`（启停 / 保存配置）、`KnowledgePage`（删文档）、`AbTestPage`（创建 / 更新）。全量约 43 处写操作调用点，判了 code 的约 20 处，其中带失败分支的更少。
+   已确认的样本：`ApplicationListPage`（创建 / 更新 / 启停）、`HandoverRulePage`（启停 / 保存配置）、`KnowledgePage`（删文档）、`PromptPage`（创建版本 / 激活版本 / 删除版本——`pages/PromptPage.tsx:69`/`:83`/`:96` 三处均是裸 `if (response.code === 200) {...}` 无 else）。
+   ⚠️ 初步 `grep -A4` 式扫描显示约 20 个左右页面/组件命中 `code === 200`，但尚未逐处分类点数：既未排除**读操作**（拉列表、看板取数，本条债只关心写操作），也未排除**三元表达式**（如 `CrawlSiteList.tsx:105` 的 `p = res.code === 200 ? res.data : null`，形态上撞了关键词但不是本条债的问题）。`AbTestPage` 曾被浅层扫描误列为样本——复核后它的 `runAction` 封装（`AbTestPage.tsx:216-227`）其实带 else 分支 + destructive toast，是本仓库里业务错误处理**做对了**的页面，已从样本里删除。**没有可信的总数**；处理这项债时必须先逐处分类点数，不能沿用任何聚合数字。
    正确写法在仓库里现成：`components/knowledge/CrawlSiteList.tsx` 的四个写操作都是 `if (res.code !== 200) throw new Error(res.message)` + catch 里 destructive toast。
    ⚠️ 修的时候顺手给关键页面补回归测试——基建已经有了（见第 6 项），这类缺陷正是它最擅长抓的。
 
