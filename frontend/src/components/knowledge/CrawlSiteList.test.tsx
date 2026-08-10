@@ -185,4 +185,47 @@ describe('CrawlSiteList 轮询生命周期', () => {
         // 只该有挂载时那一次；收尾分支里的 loadSites 不该被执行
         expect(knowledgeService.listCrawlSites).toHaveBeenCalledTimes(1);
     });
+
+    /**
+     * T2｜变异实验：把 poll 里 progressMap 与 timersRef 的索引键从 jobId 改回 siteId
+     * （三处：第 117 行的 setProgressMap、第 118 行的 timersRef、第 128-134 行的收尾清理，
+     * 以及第 138 行首次挂表；连带把渲染处第 216 行的反查改成直接取 progressMap[site.id]），
+     * 本条必须转红——job-1 的收尾会把 job-2 刚写进去的那条进度抹掉。
+     */
+    it('同一站点两条任务并发时，旧任务收尾不会抹掉新任务的进度', async () => {
+        vi.mocked(knowledgeService.recrawlSite)
+            .mockResolvedValueOnce(ok('job-1'))
+            .mockResolvedValueOnce(ok('job-2'));
+
+        // job-1 的响应按住，等 job-2 写完进度之后再放——这才是「旧任务收尾」
+        // 与「新任务写入」交叠的那个窗口。若让 job-1 立刻 resolve，
+        // 定时器注册顺序会让它先收尾、job-2 后写入，覆盖方向正好反过来，抓不到缺陷。
+        let settleJob1!: (r: ApiResponse<CrawlProgress>) => void;
+        vi.mocked(knowledgeService.getCrawlProgress).mockImplementation((jobId: string) => {
+            if (jobId === 'job-1') {
+                return new Promise<ApiResponse<CrawlProgress>>((resolve) => {
+                    settleJob1 = resolve;
+                });
+            }
+            return Promise.resolve(ok(progress({ jobId: 'job-2', crawled: 7 })));
+        });
+
+        await renderList();
+        // 两次都是对同一个站点（site1）点「重新爬取」——按 siteId 索引的缺陷
+        // 只在两条任务的 siteId 相同时才现形，换成两个不同站点这条测试就是摆设
+        clickRecrawl();
+        await flush();
+        clickRecrawl();
+        await flush();
+
+        await flush(2000); // 两条 tick 都触发；job-2 立刻落地，job-1 仍被按住
+        expect(screen.getByText(/已爬 7/)).toBeInTheDocument();
+
+        settleJob1(ok(progress({ jobId: 'job-1', status: 'COMPLETED', crawled: 40 })));
+        await flush();
+
+        // 判别性断言：job-1 收尾之后，job-2 的进度必须还在
+        expect(screen.getByText(/已爬 7/)).toBeInTheDocument();
+        expect(onCrawlFinished).toHaveBeenCalledTimes(1);
+    });
 });
