@@ -16,6 +16,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import com.qingyu.care.util.AfterCommit;
 
 /**
  * 监听领域事件（事务提交后），过滤订阅、落投递行并触发异步首投。
@@ -71,8 +72,13 @@ public class WebhookDispatcher {
                 String.valueOf(delivery.getId()), event.getEventType(), event.getOccurredAt(), data));
         deliveryRepository.save(delivery);
 
-        // 首投走队列（Redis Stream；队列关闭或故障时内部回退直投）
-        queue.dispatch(delivery.getId());
+        // 首投走队列（Redis Stream；队列关闭或故障时内部回退直投）。
+        // 经 AfterCommit 推迟到本 REQUIRES_NEW 事务提交之后再投递：dispatch 是 @Async，
+        // 消费侧拿 deliveryId 去 findById，在提交前投递时可能读不到这一行。
+        // 那样并不会丢事件（WebhookRetryScheduler 会重扫 PENDING 行，DB 投递行才是事实源、
+        // 队列只是加速通道），但白等一个重试周期没有必要。
+        final Long deliveryId = delivery.getId();
+        AfterCommit.run(() -> queue.dispatch(deliveryId));
     }
 
     /** 逗号拆分、trim 后精确匹配事件类型。 */

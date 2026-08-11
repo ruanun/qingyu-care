@@ -27,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
+import com.qingyu.care.util.AfterCommit;
 
 @Service
 @Slf4j
@@ -184,10 +185,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .fileSize(file.getSize())
                 .build();
         doc = documentRepository.save(doc);
-        
-        // 异步处理文档（通过 self 调用确保 @Async 生效）
-        self.processDocumentAsync(doc.getId());
-        
+
+        // 异步处理文档。两件事都不能省：
+        //   · 经 self 调用才命中 Spring 代理，@Async 才真正生效（同类直调会被隐式 this. 绕过）；
+        //   · 经 AfterCommit 推迟到本事务提交之后再投递——本方法带 @Transactional，
+        //     直接投递时异步线程可能早于提交被调度，READ COMMITTED 下 findById 取不到刚建的
+        //     文档行，而 processDocument 那边是 orElse(null) 后直接 return，**完全静默**：
+        //     文档永远停在 PENDING、不入向量库、无日志无异常（同站点爬取 C-1 那条竞态）。
+        final Long docId = doc.getId();
+        AfterCommit.run(() -> self.processDocumentAsync(docId));
+
         return doc;
     }
 

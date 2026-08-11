@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import com.qingyu.care.util.AfterCommit;
 
 /**
  * 网页文档的建档与同步编排。抓取本身在 {@link WebPageFetcher}，本类只管「结果怎么落到知识库」。
@@ -101,8 +102,14 @@ public class WebPageSyncService {
                 .build();
         doc = documentRepository.save(doc);
 
-        // 必须经 self 调用才能命中 Spring 代理，@Async 才会真正生效（同类直调会被隐式 this. 绕过代理）
-        self.syncDocumentAsync(doc.getId());
+        // 两件事都不能省：
+        //   · 必须经 self 调用才命中 Spring 代理，@Async 才真正生效（同类直调会被隐式 this. 绕过代理）；
+        //   · 必须经 AfterCommit 推迟到本事务提交之后再投递——本方法带 @Transactional，
+        //     直接投递时异步线程可能早于提交被调度，READ COMMITTED 下 syncDocument 的 findById
+        //     取不到刚建的行，只会留一句「网页同步跳过：文档不存在」的 warn，文档卡在 PENDING
+        //     再无人处理（同站点爬取 C-1 那条竞态）。
+        final Long docId = doc.getId();
+        AfterCommit.run(() -> self.syncDocumentAsync(docId));
         return doc;
     }
 
