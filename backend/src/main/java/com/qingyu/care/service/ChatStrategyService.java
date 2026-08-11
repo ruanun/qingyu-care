@@ -39,11 +39,22 @@ public class ChatStrategyService {
     public void init() {
         PlatformSeeder.seedIfEmpty(repository.count(), "问答策略", () -> {
             // 默认场景策略
+            //
+            // ⚠️ similarityThreshold 是按当前 embedding 模型实测标定的，别凭直觉往上调。
+            // qwen3.7-text-embedding 下的实际分数分布（2026-08-11 真机测量，中文短问句 →
+            // 帮助中心长段落）：
+            //   真正相关的命中  0.57 ~ 0.73（逐字命中标题的问法才 0.7298）
+            //   完全无关的问题  0.25 ~ 0.30（天气 / 写诗 / 编程）
+            // 原值 0.7 恰好卡在相关命中那一带的顶端，几乎把所有真实相关的匹配都滤掉，
+            // 表现为「知识库明明有、问什么都答不知道」。0.45 落在 0.30 与 0.57 之间那段
+            // 干净空档的中央：噪声进不来、真命中不漏掉。
+            // 换 embedding 模型后这个刻度会整体平移，必须重新测量而不是沿用本值——
+            // 测法见 docs/使用手册.md「问答策略」一节。
             repository.save(ChatStrategy.builder()
                     .name("通用默认策略")
                     .scenario("default")
                     .topK(5)
-                    .similarityThreshold(0.7)
+                    .similarityThreshold(0.45)
                     .allowNoKnowledge(true)
                     .isDefault(true)
                     .enabled(true)
@@ -52,12 +63,16 @@ public class ChatStrategyService {
                     .rrfK(60)
                     .build());
 
-            // 投诉场景策略（更高的 TopK 和 阈值，不允许自由发挥）
+            // 投诉场景策略（更高的 TopK 和阈值，不允许自由发挥）
+            //
+            // 阈值保持「比默认高 0.1」这个相对关系（0.45 + 0.1）：本场景的意图是宁可转人工
+            // 也不猜，所以要比默认严一档。原值 0.8 是在旧刻度下的 0.7 + 0.1，重标定后照搬
+            // 会变成「任何问题都够不着、永远转人工」——严到失去意义。
             repository.save(ChatStrategy.builder()
                     .name("严谨投诉处理")
                     .scenario("complaint")
                     .topK(8)
-                    .similarityThreshold(0.8)
+                    .similarityThreshold(0.55)
                     .allowNoKnowledge(false)
                     .fallbackMessage("抱歉，我无法在知识库中找到关于该投诉的明确处理方案，已为您转接人工处理。")
                     .isDefault(true)
@@ -86,7 +101,7 @@ public class ChatStrategyService {
                         .name("运行时硬编码兜底")
                         .scenario("default")
                         .topK(5)
-                        .similarityThreshold(0.7)
+                        .similarityThreshold(0.45)   // 与 init() 播种的平台默认保持一致
                         .allowNoKnowledge(true)
                         .build());
     }

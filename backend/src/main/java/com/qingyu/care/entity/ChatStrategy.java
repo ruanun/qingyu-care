@@ -49,11 +49,15 @@ public class ChatStrategy extends BaseTenantEntity {
     private Integer topK = 5;
 
     /**
-     * 相似度阈值
+     * 相似度阈值。
+     *
+     * <p>初值与平台默认策略保持一致——标定依据见 {@code ChatStrategyService.init()} 的注释：
+     * 当前 embedding 模型下真实命中落在 0.57~0.73、无关噪声落在 0.25~0.30，0.45 取两者
+     * 之间的空档。换 embedding 模型后这个刻度会整体平移，须重新测量。
      */
     @Column(nullable = false)
     @Builder.Default
-    private Double similarityThreshold = 0.7;
+    private Double similarityThreshold = 0.45;
 
     /**
      * 是否允许在无知识库命中时由 AI 自由发挥

@@ -68,7 +68,7 @@ class RequestBodyDeserializationTest {
         ChatStrategy s = om.readValue("{\"name\":\"默认策略\"}", ChatStrategy.class);
 
         assertThat(s.getTopK()).isEqualTo(5);
-        assertThat(s.getSimilarityThreshold()).isEqualTo(0.7);
+        assertThat(s.getSimilarityThreshold()).isEqualTo(0.45);
         assertThat(s.getAllowNoKnowledge()).isTrue();
         assertThat(s.getEnabled()).isTrue();
         assertThat(s.getIsDefault()).isFalse();
