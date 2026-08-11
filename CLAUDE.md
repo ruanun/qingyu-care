@@ -41,13 +41,17 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 5. **停止生成不落库**：管理端点「停止」后半截回复留在屏上，刷新即消失（`Flux.concat` 的落库 Mono 在 cancel 时不被订阅）。
 
 ### 改动卡片 Action URI 协议后必须同步三处
-卡片按钮的动作协议（`url://` 打开链接 / `msg://` 发消息 / `copy://` 复制）白名单分散在三个语言里，**没有任何自动化测试能比对它们**：
+卡片按钮的动作协议（`url://` 打开链接 / `msg://` 发消息 / `copy://` 复制）白名单分散在三个语言里：
 
 1. `ChatServiceImpl.CARD_PROMPT`（Java 字符串，决定 LLM 会生成什么）
 2. `frontend/src/lib/actionUri.ts` 的 `VALID_PROTOCOLS`
 3. `widget/src/actionUri.ts` 的 `VALID_PROTOCOLS`
 
-漏改任一处的后果：LLM 产出客户端不认的协议 → 按钮退化成发一条奇怪的消息，或彻底静默。改协议后务必真机点一遍三类按钮。
+漏改任一处的后果：LLM 产出客户端不认的协议 → 按钮退化成发一条奇怪的消息，或彻底静默。
+
+**`CardActionProtocolSyncTest`（Surefire 单测）现在守住了「三处白名单集合必须逐字相等」**：反射读 `CARD_PROMPT` 抽 `xxx://`（排掉嵌在示例链接里的 `https` 等通用 scheme），正则抽两份 TS 的 `VALID_PROTOCOLS`，三者两两比对。改一处忘另两处即红。四轮变异验证过：单端加协议 / 两端加而 prompt 不加 / 只 prompt 加 / 抽取正则失配，全部转红——最后一条尤其重要，正则一旦失配集合会静默变空、断言退化成「空==空」永真，故先各自断言非空。
+
+⚠️ **它只比对白名单集合，不验证行为**。「三个协议各自实现得对不对」（fail-closed 语义、`safeUrl` 白名单、剪贴板降级）它一概不管——改协议后仍须真机点一遍三类按钮。
 
 ⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
 
