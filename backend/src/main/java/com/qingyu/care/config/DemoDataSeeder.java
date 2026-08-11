@@ -4,20 +4,30 @@ import cn.dev33.satoken.secure.BCrypt;
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
 import com.qingyu.care.entity.Application;
+import com.qingyu.care.entity.ChatMessage;
+import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.entity.SysApiUsage;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.DocumentStatus;
 import com.qingyu.care.enums.DocumentVisibility;
+import com.qingyu.care.enums.MessageRole;
+import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.repository.ApplicationRepository;
+import com.qingyu.care.repository.ChatMessageRepository;
+import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.ChatStrategyRepository;
+import com.qingyu.care.repository.SysApiUsageRepository;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
+import com.qingyu.care.service.AnalyticsRollupService;
 import com.qingyu.care.service.KnowledgeService;
 import com.qingyu.care.service.QaPairService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -36,8 +47,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.UUID;
 
 /**
  * 演示数据播种：一条命令产出可截图、可试用的完整数据。
@@ -79,6 +95,11 @@ public class DemoDataSeeder implements ApplicationRunner {
     private final ChatStrategyRepository chatStrategyRepository;
     private final KnowledgeService knowledgeService;
     private final QaPairService qaPairService;
+    private final ChatSessionRepository chatSessionRepository;
+    private final ChatMessageRepository chatMessageRepository;
+    private final SysApiUsageRepository sysApiUsageRepository;
+    private final AnalyticsRollupService analyticsRollupService;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -99,7 +120,7 @@ public class DemoDataSeeder implements ApplicationRunner {
     private void seed() {
         Tenant tenant = seedTenant();
         User admin = seedUser(tenant, "demo_admin", "云舟管理员", UserRole.TENANT_ADMIN);
-        seedUser(tenant, "demo_agent", "云舟客服小舟", UserRole.TENANT_MEMBER);
+        User agent = seedUser(tenant, "demo_agent", "云舟客服小舟", UserRole.TENANT_MEMBER);
         Application shopApp = seedApp(tenant, "云舟商城客服", DEMO_APP_KEY, DEMO_APP_SECRET,
                 "您好！我是云舟商城的智能客服小舟，可以帮您查询订单、退换货政策、配送与积分规则～");
         seedApp(tenant, "云舟内部 IT 助手", "demo-cloudboat-it", "demo-secret-cloudboat-it-0001",
@@ -122,8 +143,14 @@ public class DemoDataSeeder implements ApplicationRunner {
             TenantContext.setAccessLevel(DocumentVisibility.INTERNAL);
 
             seedStrategy();
-            Long kbId = seedKnowledge();
-            log.info("演示知识库就绪 knowledgeBaseId={}", kbId);
+            KnowledgeSeed knowledge = seedKnowledge();
+            log.info("演示知识库就绪 knowledgeBaseId={} 文档数={}",
+                    knowledge.kbId(), knowledge.docIds().size());
+
+            seedSessions(agent.getId(), knowledge.docIds());
+            seedUsage(tenant.getId(), shopApp.getId());
+            int days = analyticsRollupService.backfill(LocalDate.now().minusDays(29), LocalDate.now());
+            log.info("演示分析日表回填完成 天数={}", days);
         } finally {
             // 启动线程会被后续请求复用，不清理即泄漏给下一个使用者
             TenantContext.clear();
@@ -170,9 +197,9 @@ public class DemoDataSeeder implements ApplicationRunner {
      * 产出的数据完全同构——S3 里真有对象、Tika 真解析过、切分块数与文件大小都是真的、
      * 向量是真的。截图里的文档列表因此不会露出破绽，且顺带验证了整条摄取链路可用。
      *
-     * @return 知识库 id
+     * @return 知识库 id 与已建文档 id 列表（后者供会话数据写真实的 hit_document_ids）
      */
-    private Long seedKnowledge() {
+    private KnowledgeSeed seedKnowledge() {
         KnowledgeBaseRequest req = new KnowledgeBaseRequest();
         req.setName("云舟商城帮助中心");
         req.setDescription("退换货、配送物流、会员积分、支付发票四大类客服知识");
@@ -193,7 +220,11 @@ public class DemoDataSeeder implements ApplicationRunner {
         }
         log.info("演示 QA 问答对已嵌入 count={}", DemoDataContent.QA_PAIRS.size());
 
-        return kb.getId();
+        return new KnowledgeSeed(kb.getId(), docIds);
+    }
+
+    /** 知识库播种结果：知识库 id + 已建文档 id 列表 */
+    private record KnowledgeSeed(Long kbId, List<Long> docIds) {
     }
 
     /**
@@ -227,6 +258,106 @@ public class DemoDataSeeder implements ApplicationRunner {
             }
         }
         log.warn("演示文档摄取等待超时（{}s），截图前请确认文档状态", timeout.toSeconds());
+    }
+
+    /**
+     * 播种 12 组历史会话，按最近 30 天铺开。
+     *
+     * <p><b>为什么要用原生 SQL 回填时间</b>：{@code ChatSession} 与 {@code ChatMessage} 的
+     * {@code createdAt} 带 {@code @CreationTimestamp}，Hibernate 在 INSERT 时会覆盖任何手工
+     * 赋值。不回填的话 12 条会话全部落在今天，而分析 rollup 是按 {@code cm.created_at} 分日
+     * 聚合的（见 {@code AnalyticsRollupDao.insertQuality}），30 天曲线会退化成一根柱子。
+     *
+     * @param agentUserId 坐席用户 id，供演示「已转人工」的那条会话挂接管人
+     * @param docIds      演示文档 id，用来写 {@code hit_document_ids}
+     */
+    private void seedSessions(Long agentUserId, List<Long> docIds) {
+        // 固定种子：每次播种的置信度与点赞分布一致，截图可复现
+        Random random = new Random(20260811L);
+        int total = DemoDataContent.CONVERSATIONS.size();
+        int index = 0;
+
+        for (DemoDataContent.DemoConversation conv : DemoDataContent.CONVERSATIONS) {
+            // 均匀铺在最近 30 天内，每条会话落在当天的营业时段
+            int daysAgo = 29 - index * 29 / Math.max(1, total - 1);
+            LocalDateTime start = LocalDate.now().minusDays(daysAgo)
+                    .atTime(9 + random.nextInt(12), random.nextInt(60));
+
+            boolean handover = conv.tag() == SessionTag.COMPLAINT;   // 投诉类演示转人工
+            ChatSession session = chatSessionRepository.save(ChatSession.builder()
+                    .sessionId(UUID.randomUUID().toString())
+                    .userId("demo-visitor-" + (index + 1))
+                    .status(handover ? SessionStatus.AGENT_PROCESSING : SessionStatus.ENDED)
+                    .tags(new HashSet<>(List.of(conv.tag())))
+                    .summary(conv.title())
+                    .agentId(handover ? agentUserId : null)
+                    .handoverTime(handover ? start.plusMinutes(3) : null)
+                    .endedAt(handover ? null : start.plusMinutes(5))
+                    .build());
+            backdate("chat_session", session.getId(), start, true);
+
+            int turn = 0;
+            for (DemoDataContent.Qa qa : conv.turns()) {
+                LocalDateTime askedAt = start.plusMinutes(turn * 2L);
+
+                ChatMessage userMsg = chatMessageRepository.save(ChatMessage.builder()
+                        .session(session).role(MessageRole.USER).content(qa.question()).build());
+                backdate("chat_message", userMsg.getId(), askedAt, false);
+
+                // 置信度落在实测的「真实命中」区间 0.57~0.73 内，与真机跑出来的分布一致
+                double confidence = 0.57 + random.nextDouble() * 0.16;
+                ChatMessage aiMsg = chatMessageRepository.save(ChatMessage.builder()
+                        .session(session).role(MessageRole.ASSISTANT).content(qa.answer())
+                        .confidenceScore(confidence)
+                        // ⚠️ 必须是 JSON 数组字面量（如 "[16]"）而非裸数字："[]" 那层是
+                        // AnalyticsRollupDao.insertDocHits 用 json_array_elements_text 展开的前提，
+                        // 写成裸数字会让该日整条 rollup 事务抛错回滚——连质量与热词一起丢。
+                        .hitDocumentIds("[" + docIds.get(random.nextInt(docIds.size())) + "]")
+                        .tokenUsage(180 + random.nextInt(420))
+                        .fallback(false)
+                        .feedback(random.nextInt(4) == 0 ? 1 : null)   // 约四分之一点赞
+                        .build());
+                backdate("chat_message", aiMsg.getId(), askedAt.plusSeconds(6), false);
+                turn++;
+            }
+            index++;
+        }
+        log.info("演示会话已播种 count={}", total);
+    }
+
+    /** 用原生 SQL 覆盖 @CreationTimestamp 写入的时间（见 {@link #seedSessions} 的说明）。 */
+    private void backdate(String table, Long id, LocalDateTime ts, boolean alsoUpdatedAt) {
+        String sql = alsoUpdatedAt
+                ? "UPDATE " + table + " SET created_at = ?, updated_at = ? WHERE id = ?"
+                : "UPDATE " + table + " SET created_at = ? WHERE id = ?";
+        if (alsoUpdatedAt) {
+            jdbcTemplate.update(sql, ts, ts, id);
+        } else {
+            jdbcTemplate.update(sql, ts, id);
+        }
+    }
+
+    /**
+     * 播种最近 30 天的开放 API 用量，让用量看板与套餐额度页非空。
+     *
+     * <p>{@code SysApiUsage} 的 {@code usageDate} 是显式 {@code LocalDate} 字段、不受
+     * {@code @CreationTimestamp} 影响，可以直接设，无需像会话那样回填。
+     */
+    private void seedUsage(Long tenantId, Long appId) {
+        Random random = new Random(20260812L);
+        for (int i = 29; i >= 0; i--) {
+            LocalDate day = LocalDate.now().minusDays(i);
+            // 工作日高、周末低，让曲线有形状而不是一条直线
+            boolean weekend = day.getDayOfWeek().getValue() >= 6;
+            long calls = (weekend ? 40 : 120) + random.nextInt(weekend ? 30 : 90);
+            sysApiUsageRepository.save(SysApiUsage.builder()
+                    .tenantId(tenantId).appId(appId).usageDate(day)
+                    .callCount(calls)
+                    .messageCount(calls * 2)
+                    .tokenCount(calls * (350L + random.nextInt(250)))
+                    .build());
+        }
+        log.info("演示用量已播种 天数=30");
     }
 
     /**
