@@ -29,7 +29,7 @@ import {
 import { tenantService } from '@/api/tenant';
 import type { Tenant, TenantStatus, TenantPlan } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const TenantListPage: React.FC = () => {
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -104,18 +104,16 @@ const TenantListPage: React.FC = () => {
         try {
             if (editingTenant) {
                 const response = await tenantService.update(editingTenant.id, formData);
-                if (response.code === 200) {
-                    toast({ title: "更新成功" });
-                    fetchTenants();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "更新成功" });
+                fetchTenants();
+                setIsDialogOpen(false);
             } else {
                 const response = await tenantService.create(formData);
-                if (response.code === 200) {
-                    toast({ title: "创建成功", description: `租户 ${formData.name} 已创建` });
-                    fetchTenants();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "创建成功", description: `租户 ${formData.name} 已创建` });
+                fetchTenants();
+                setIsDialogOpen(false);
             }
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
@@ -128,10 +126,9 @@ const TenantListPage: React.FC = () => {
         const newStatus = tenant.status === 'ACTIVE' ? 'FROZEN' : 'ACTIVE';
         try {
             const response = await tenantService.update(tenant.id, { status: newStatus as TenantStatus });
-            if (response.code === 200) {
-                toast({ title: newStatus === 'ACTIVE' ? "已解冻" : "已冻结" });
-                fetchTenants();
-            }
+            throwIfFailed(response);
+            toast({ title: newStatus === 'ACTIVE' ? "已解冻" : "已冻结" });
+            fetchTenants();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }

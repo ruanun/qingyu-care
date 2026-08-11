@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { throwIfFailed } from '@/lib/apiResult';
 import { Wrench, Plus, Edit2, Trash2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
@@ -44,7 +45,7 @@ const ToolConfigPage: React.FC = () => {
     const handleToggle = async (t: AiTool) => {
         try {
             const res = await aiToolService.update(t.id, { enabled: !t.enabled });
-            if (res.code === 200) { toast({ title: t.enabled ? '工具已禁用' : '工具已启用' }); fetchTools(); }
+            throwIfFailed(res); toast({ title: t.enabled ? '工具已禁用' : '工具已启用' }); fetchTools();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '操作失败', description: msg });
@@ -60,10 +61,9 @@ const ToolConfigPage: React.FC = () => {
             const res = editing.id
                 ? await aiToolService.update(editing.id, editing)
                 : await aiToolService.create(editing);
-            if (res.code === 200) {
-                toast({ title: editing.id ? '工具已更新' : '工具已创建' });
-                setIsDialogOpen(false); fetchTools();
-            }
+            throwIfFailed(res);
+            toast({ title: editing.id ? '工具已更新' : '工具已创建' });
+            setIsDialogOpen(false); fetchTools();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '保存失败', description: msg });
@@ -74,7 +74,7 @@ const ToolConfigPage: React.FC = () => {
         if (!confirm('确定要删除该工具吗？绑定它的技能将失去该工具。')) return;
         try {
             const res = await aiToolService.remove(id);
-            if (res.code === 200) { toast({ title: '工具已删除' }); fetchTools(); }
+            throwIfFailed(res); toast({ title: '工具已删除' }); fetchTools();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '删除失败', description: msg });

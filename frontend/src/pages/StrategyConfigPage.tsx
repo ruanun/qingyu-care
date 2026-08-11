@@ -36,7 +36,7 @@ import { chatStrategyService, type ChatStrategy } from '@/api/strategy';
 import { promptService, type PromptTemplate } from '@/api/prompt';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const StrategyConfigPage: React.FC = () => {
     const [strategies, setStrategies] = useState<ChatStrategy[]>([]);
@@ -78,11 +78,10 @@ const StrategyConfigPage: React.FC = () => {
                 ? await chatStrategyService.update(editingStrategy.id, editingStrategy)
                 : await chatStrategyService.create(editingStrategy);
 
-            if (res.code === 200) {
-                toast({ title: "策略保存成功" });
-                setIsDialogOpen(false);
-                fetchData();
-            }
+            throwIfFailed(res);
+            toast({ title: "策略保存成功" });
+            setIsDialogOpen(false);
+            fetchData();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }

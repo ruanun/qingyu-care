@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { throwIfFailed } from '@/lib/apiResult';
 import { Sparkles, Plus, Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
@@ -43,7 +44,7 @@ const SkillConfigPage: React.FC = () => {
     const handleToggle = async (s: AiSkill) => {
         try {
             const res = await aiSkillService.update(s.id, { enabled: !s.enabled });
-            if (res.code === 200) { toast({ title: s.enabled ? '技能已禁用' : '技能已启用' }); fetchAll(); }
+            throwIfFailed(res); toast({ title: s.enabled ? '技能已禁用' : '技能已启用' }); fetchAll();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '操作失败', description: msg });
@@ -59,10 +60,9 @@ const SkillConfigPage: React.FC = () => {
             const res = editing.id
                 ? await aiSkillService.update(editing.id, editing)
                 : await aiSkillService.create(editing);
-            if (res.code === 200) {
-                toast({ title: editing.id ? '技能已更新' : '技能已创建' });
-                setIsDialogOpen(false); fetchAll();
-            }
+            throwIfFailed(res);
+            toast({ title: editing.id ? '技能已更新' : '技能已创建' });
+            setIsDialogOpen(false); fetchAll();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '保存失败', description: msg });
@@ -73,7 +73,7 @@ const SkillConfigPage: React.FC = () => {
         if (!confirm('确定要删除该技能吗？')) return;
         try {
             const res = await aiSkillService.remove(id);
-            if (res.code === 200) { toast({ title: '技能已删除' }); fetchAll(); }
+            throwIfFailed(res); toast({ title: '技能已删除' }); fetchAll();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '删除失败', description: msg });

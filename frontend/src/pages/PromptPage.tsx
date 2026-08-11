@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 import { FileText, Plus, Check, Trash2, Clock, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -67,12 +67,11 @@ const PromptPage: React.FC = () => {
 
         try {
             const response = await promptService.createVersion(newPrompt);
-            if (response.code === 200) {
-                toast({ title: "创建成功" });
-                setIsDialogOpen(false);
-                setNewPrompt({ name: '', content: '', description: '' });
-                fetchTemplates();
-            }
+            throwIfFailed(response);
+            toast({ title: "创建成功" });
+            setIsDialogOpen(false);
+            setNewPrompt({ name: '', content: '', description: '' });
+            fetchTemplates();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "创建失败", description: getErrorMessage(error) });
         }
@@ -81,10 +80,9 @@ const PromptPage: React.FC = () => {
     const handleActivate = async (id: number) => {
         try {
             const response = await promptService.activateVersion(id);
-            if (response.code === 200) {
-                toast({ title: "激活成功" });
-                fetchTemplates();
-            }
+            throwIfFailed(response);
+            toast({ title: "激活成功" });
+            fetchTemplates();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "激活失败", description: getErrorMessage(error) });
         }
@@ -94,10 +92,9 @@ const PromptPage: React.FC = () => {
         if (!deleteId) return;
         try {
             const response = await promptService.deleteVersion(deleteId);
-            if (response.code === 200) {
-                toast({ title: "删除成功" });
-                fetchTemplates();
-            }
+            throwIfFailed(response);
+            toast({ title: "删除成功" });
+            fetchTemplates();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         } finally {

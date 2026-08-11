@@ -24,7 +24,7 @@ import { aiModelService } from '@/api/ai-model';
 import type { AiModelConfig } from '@/api/ai-model';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const ModelConfigPage: React.FC = () => {
     const [models, setModels] = useState<AiModelConfig[]>([]);
@@ -56,10 +56,9 @@ const ModelConfigPage: React.FC = () => {
     const handleToggleEnabled = async (model: AiModelConfig) => {
         try {
             const response = await aiModelService.updateModel(model.id, { enabled: !model.enabled });
-            if (response.code === 200) {
-                toast({ title: model.enabled ? "模型已禁用" : "模型已启用" });
-                fetchModels();
-            }
+            throwIfFailed(response);
+            toast({ title: model.enabled ? "模型已禁用" : "模型已启用" });
+            fetchModels();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
@@ -95,11 +94,10 @@ const ModelConfigPage: React.FC = () => {
                 response = await aiModelService.createModel(editingModel);
             }
 
-            if (response.code === 200) {
-                toast({ title: editingModel.id ? "模型已更新" : "模型已创建" });
-                setIsDialogOpen(false);
-                fetchModels();
-            }
+            throwIfFailed(response);
+            toast({ title: editingModel.id ? "模型已更新" : "模型已创建" });
+            setIsDialogOpen(false);
+            fetchModels();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }
@@ -109,10 +107,9 @@ const ModelConfigPage: React.FC = () => {
         if (!confirm('确定要删除该模型配置吗？')) return;
         try {
             const response = await aiModelService.deleteModel(id);
-            if (response.code === 200) {
-                toast({ title: "模型配置已删除" });
-                fetchModels();
-            }
+            throwIfFailed(response);
+            toast({ title: "模型配置已删除" });
+            fetchModels();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }

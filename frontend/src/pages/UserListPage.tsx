@@ -33,7 +33,7 @@ import type { User, UserRole, Tenant } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const UserListPage: React.FC = () => {
     const [users, setUsers] = useState<User[]>([]);
@@ -125,22 +125,20 @@ const UserListPage: React.FC = () => {
             const { tenantId, ...rest } = formData;
             if (editingUser) {
                 const response = await userService.update(editingUser.id, rest);
-                if (response.code === 200) {
-                    toast({ title: "更新成功" });
-                    fetchUsers();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "更新成功" });
+                fetchUsers();
+                setIsDialogOpen(false);
             } else {
                 // 平台管理员携带 tenantId；租户管理员由后端按当前租户自动归属
                 const payload = isPlatformAdmin
                     ? { ...rest, tenantId: tenantId ? Number(tenantId) : undefined }
                     : rest;
                 const response = await userService.create(payload);
-                if (response.code === 200) {
-                    toast({ title: "创建成功", description: `用户 ${formData.username} 已创建` });
-                    fetchUsers();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "创建成功", description: `用户 ${formData.username} 已创建` });
+                fetchUsers();
+                setIsDialogOpen(false);
             }
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
@@ -152,10 +150,9 @@ const UserListPage: React.FC = () => {
     const toggleUserStatus = async (user: User) => {
         try {
             const response = await userService.update(user.id, { enabled: !user.enabled });
-            if (response.code === 200) {
-                toast({ title: user.enabled ? "已禁用" : "已启用" });
-                fetchUsers();
-            }
+            throwIfFailed(response);
+            toast({ title: user.enabled ? "已禁用" : "已启用" });
+            fetchUsers();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
@@ -165,10 +162,9 @@ const UserListPage: React.FC = () => {
         if (!confirm('确定要删除此用户吗？此操作不可撤销。')) return;
         try {
             const response = await userService.delete(id);
-            if (response.code === 200) {
-                toast({ title: "删除成功" });
-                fetchUsers();
-            }
+            throwIfFailed(response);
+            toast({ title: "删除成功" });
+            fetchUsers();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }

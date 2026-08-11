@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -94,11 +94,10 @@ const KnowledgePage: React.FC = () => {
         setIsUploading(true);
         try {
             const response = await knowledgeService.uploadDocument(selectedKb.id, file);
-            if (response.code === 200) {
-                toast({ title: "上传成功", description: "文档正在处理中..." });
-                // 刷新文档列表
-                fetchDocuments(selectedKb.id);
-            }
+            throwIfFailed(response);
+            toast({ title: "上传成功", description: "文档正在处理中..." });
+            // 刷新文档列表
+            fetchDocuments(selectedKb.id);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "上传失败", description: getErrorMessage(error) });
         } finally {
@@ -113,11 +112,10 @@ const KnowledgePage: React.FC = () => {
 
         try {
             const response = await knowledgeService.deleteDocument(deleteDocId);
-            if (response.code === 200) {
-                toast({ title: "删除成功" });
-                if (selectedKb) {
-                    fetchDocuments(selectedKb.id);
-                }
+            throwIfFailed(response);
+            toast({ title: "删除成功" });
+            if (selectedKb) {
+                fetchDocuments(selectedKb.id);
             }
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
@@ -130,10 +128,9 @@ const KnowledgePage: React.FC = () => {
         const next = doc.visibility === 'INTERNAL' ? 'PUBLIC' : 'INTERNAL';
         try {
             const response = await knowledgeService.updateDocumentVisibility(doc.id, next);
-            if (response.code === 200) {
-                setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, visibility: next } : d)));
-                toast({ title: next === 'INTERNAL' ? '文档已设为内部（仅受信渠道可检索）' : '文档已设为公开' });
-            }
+            throwIfFailed(response);
+            setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, visibility: next } : d)));
+            toast({ title: next === 'INTERNAL' ? '文档已设为内部（仅受信渠道可检索）' : '文档已设为公开' });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             toast({ variant: "destructive", title: "切换可见性失败", description: message });
@@ -144,10 +141,9 @@ const KnowledgePage: React.FC = () => {
         const next = !(doc.enabled ?? true);
         try {
             const response = await knowledgeService.setDocumentEnabled(doc.id, next);
-            if (response.code === 200) {
-                setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, enabled: next } : d)));
-                toast({ title: next ? '文档已启用检索' : '文档已停用检索' });
-            }
+            throwIfFailed(response);
+            setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, enabled: next } : d)));
+            toast({ title: next ? '文档已启用检索' : '文档已停用检索' });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             toast({ variant: "destructive", title: "切换启用状态失败", description: message });

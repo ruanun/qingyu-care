@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { handoverService } from '@/api/handover';
 import type { HandoverRule, HandoverRuleType } from '@/api/handover';
 import { useToast } from '@/hooks/use-toast';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const HandoverRulePage: React.FC = () => {
     const [rules, setRules] = useState<HandoverRule[]>([]);
@@ -39,10 +39,9 @@ const HandoverRulePage: React.FC = () => {
     const handleToggleEnabled = async (rule: HandoverRule) => {
         try {
             const response = await handoverService.updateRule(rule.id, { enabled: !rule.enabled });
-            if (response.code === 200) {
-                toast({ title: rule.enabled ? "规则已禁用" : "规则已启用" });
-                fetchRules();
-            }
+            throwIfFailed(response);
+            toast({ title: rule.enabled ? "规则已禁用" : "规则已启用" });
+            fetchRules();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "更新失败", description: getErrorMessage(error) });
         }
@@ -62,11 +61,10 @@ const HandoverRulePage: React.FC = () => {
             const response = await handoverService.updateRule(rule.id, {
                 config: JSON.stringify(editConfig)
             });
-            if (response.code === 200) {
-                toast({ title: "配置已保存" });
-                setEditingId(null);
-                fetchRules();
-            }
+            throwIfFailed(response);
+            toast({ title: "配置已保存" });
+            setEditingId(null);
+            fetchRules();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }

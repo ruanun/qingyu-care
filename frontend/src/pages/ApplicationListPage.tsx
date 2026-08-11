@@ -24,7 +24,7 @@ import {
 import { applicationService } from '@/api/application';
 import type { Application } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const ApplicationListPage: React.FC = () => {
     const [apps, setApps] = useState<Application[]>([]);
@@ -88,18 +88,16 @@ const ApplicationListPage: React.FC = () => {
         try {
             if (editingApp) {
                 const response = await applicationService.update(editingApp.id, formData);
-                if (response.code === 200) {
-                    toast({ title: "更新成功" });
-                    fetchApps();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "更新成功" });
+                fetchApps();
+                setIsDialogOpen(false);
             } else {
                 const response = await applicationService.create(formData);
-                if (response.code === 200) {
-                    toast({ title: "创建成功", description: `应用 ${formData.name} 已创建` });
-                    fetchApps();
-                    setIsDialogOpen(false);
-                }
+                throwIfFailed(response);
+                toast({ title: "创建成功", description: `应用 ${formData.name} 已创建` });
+                fetchApps();
+                setIsDialogOpen(false);
             }
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
@@ -111,10 +109,9 @@ const ApplicationListPage: React.FC = () => {
     const toggleAppStatus = async (app: Application) => {
         try {
             const response = await applicationService.update(app.id, { enabled: !app.enabled });
-            if (response.code === 200) {
-                toast({ title: app.enabled ? "应用已禁用" : "应用已启用" });
-                fetchApps();
-            }
+            throwIfFailed(response);
+            toast({ title: app.enabled ? "应用已禁用" : "应用已启用" });
+            fetchApps();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }

@@ -14,7 +14,7 @@ import { JsonRender } from '@/components/chat/JsonRender';
 import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
 import { Attachments } from '@/components/chat/Attachments';
 import { parseUiSpec } from '@/lib/uiSpec';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const AgentPage: React.FC = () => {
     const [waitingSessions, setWaitingSessions] = useState<ChatSession[]>([]);
@@ -100,24 +100,26 @@ const AgentPage: React.FC = () => {
     const handleAcceptSession = async (session: ChatSession) => {
         try {
             const res = await agentService.acceptSession(session.sessionId);
-            if (res.code === 200) {
-                setSelectedSession(res.data);
-                setPendingAttachments([]); // 切会话时清掉上一个会话残留的待发附件
-                const msgs = await chatService.getSessionMessages(session.sessionId);
-                // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好
-                setMessages(msgs.code === 200 ? msgs.data.map((m: ChatMessageEntity) => ({
-                    id: m.id,
-                    role: m.role,
-                    content: m.content,
-                    createdAt: m.createdAt,
-                    uiParts: parseUiSpec(m.uiSpec),
-                    attachments: m.attachments,
-                })) : []);
-                clearUnread(session.sessionId);
-                fetchWaitingSessions();
-            }
-        } catch {
-            toast({ title: '接管失败', variant: 'destructive' });
+            throwIfFailed(res);
+            setSelectedSession(res.data);
+            setPendingAttachments([]); // 切会话时清掉上一个会话残留的待发附件
+            const msgs = await chatService.getSessionMessages(session.sessionId);
+            // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好
+            setMessages(msgs.code === 200 ? msgs.data.map((m: ChatMessageEntity) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                createdAt: m.createdAt,
+                uiParts: parseUiSpec(m.uiSpec),
+                attachments: m.attachments,
+            })) : []);
+            clearUnread(session.sessionId);
+            fetchWaitingSessions();
+        } catch (error: unknown) {
+            // 必须把原因带出来：接管失败最常见的就是「已被别的坐席接管」这类
+            // 后端业务错误（HTTP 200 + code≠200），无参 catch 会把 throwIfFailed
+            // 抛出的那条 message 丢掉，坐席只看到「接管失败」不知道为什么
+            toast({ title: '接管失败', variant: 'destructive', description: getErrorMessage(error) });
         }
     };
 
@@ -203,13 +205,12 @@ const AgentPage: React.FC = () => {
         if (!selectedSession) return;
         try {
             const res = await agentService.returnToAI(selectedSession.sessionId);
-            if (res.code === 200) {
-                toast({ title: '已交还 AI' });
-                setSelectedSession(null);
-                setMessages([]);
-                setPendingAttachments([]);
-                fetchWaitingSessions();
-            }
+            throwIfFailed(res);
+            toast({ title: '已交还 AI' });
+            setSelectedSession(null);
+            setMessages([]);
+            setPendingAttachments([]);
+            fetchWaitingSessions();
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(error) });
         }
