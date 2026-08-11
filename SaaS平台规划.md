@@ -267,7 +267,8 @@
 ### 测试覆盖缺口
 
 6. **管理后台前端测试覆盖仍近乎为零**（基建已建，2026-08-10）
-   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），`CrawlSiteList` 现有 **10 条测试**外加一条工具链哨兵，每条都配了变异实验：五条锁住站点爬取前端那三轮返工的缺陷（轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），五条覆盖建站 / 编辑 / 删除三条对话框路径（删除对话框重开不残留勾选、勾选后传 `deleteDocuments=true`、建站成功后按 jobId 启动轮询、建站业务异常把失败抛回对话框、编辑走 `updateCrawlSite`）。**但也仅此一个组件**——27 个页面与其余 29 个组件仍是零覆盖（这部分唯一验收仍是 `pnpm build` + lint），所以这条债**没清完**、不折叠。
+   `frontend/` 已接 vitest + jsdom + `@testing-library/react`（`pnpm test`），`CrawlSiteList` 现有 **10 条测试**外加一条工具链哨兵，每条都配了变异实验：五条锁住站点爬取前端那三轮返工的缺陷（轮询续期 / 终态收尾 / 双任务互踩 / 卸载后在途请求 / 写操作业务异常），五条覆盖建站 / 编辑 / 删除三条对话框路径（删除对话框重开不残留勾选、勾选后传 `deleteDocuments=true`、建站成功后按 jobId 启动轮询、建站业务异常把失败抛回对话框、编辑走 `updateCrawlSite`）。2026-08-11 又补两个文件（共 **19 条测试 / 4 个文件**）：`lib/apiResult.test.ts` 9 条守住第 9 项的收敛点（`throwIfFailed` / `getErrorMessage`，它们写错会让 36 处写操作一起静默回去），`ToolConfigPage.test.tsx` 2 条守住「业务错误不静默」这个**范式**（挑 36 处里最短的一条路径：点开关直达 update，不用开对话框）。三次变异实验全部精确命中。
+   **但覆盖面仍然很窄**——26 个页面与其余 29 个组件零覆盖（这部分唯一验收仍是 `pnpm build` + lint），所以这条债**没清完**、不折叠。
    ⚠️ 补删除路径那两条时踩到一个**永真测试**的坑，值得记住：「破坏性操作默认不勾选」如果只断言**首次打开时未勾选**，那是永真的——`useState(false)` 的初值本来就是 `false`，把 `openDeleteDialog` 里那行复位删掉照样绿。要真守住它必须走「勾上 → 关闭 → 重开仍未勾」这条路（`deleteWithDocs` 是组件级 state、不随对话框关闭而重置）。
    ⚠️ **`pnpm test` 目前不被任何东西自动执行**：`pnpm build` 只是 `tsc -b && vite build`，不跑测试；仓库没有 CI（CI 与覆盖率门槛是本批 spec 明确排除的范围）。这五条测试只在有人主动想起去跑的时候才起作用，不能假设「有测试了、回归会被自动抓住」。
    <details><summary>原问题</summary>
