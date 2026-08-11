@@ -245,9 +245,17 @@
    站点爬取现用两层并发上限（全局 + 租户，见 `SiteCrawlProperties`）挡住最坏情况，但那是**用业务层配额补偿基础设施缺陷**。
    </details>
 
-2. **token 多轮聚合计量少计**（涉及计费准确性）
+2. ~~**token 多轮聚合计量少计**~~ ⚠️ **原描述有误，已核实推翻（2026-08-11）；残余风险窄到当前配置下不可能发生**
+   2026-08-11 读 Spring AI 2.0 源码（`spring-ai-openai` / `spring-ai-model` 的 sources jar）逐条核对，结论与原描述**相反**：
+   - **非流式不少计**。`OpenAiChatModel.internalCall(prompt, previousChatResponse)` 在工具多轮之间把上一轮响应传进递归，经 `UsageCalculator.getCumulativeUsage` **逐项相加**（`prompt`/`completion`/`total` 都加，previous 为 null 时才返回 current）。所以最终那个 `ChatResponse` 的 usage **本身就是跨全部轮次的总量**，`getTotalTokens()` 取它是对的。
+   - **流式取末值也是对的**。`internalStream` 传给 `getCumulativeUsage` 的 previous 是 `null`，且它内部**没有**工具执行递归；单轮流式只有末尾 chunk 带 usage，`tokens.set(...)` 取末值恰好正确。
+   ⚠️ **按原描述去「改成累加」会让计费变得更糟**——非流式每轮的值已含前几轮，再累加就是**重复计费**。这个坑已写进 `ChatServiceImpl.meterContentStream` 的 javadoc，免得下一个人照清单动手。
+   **残余风险（窄）**：流式且真的发生多轮工具调用时无跨轮累计。本项目走不到——Qwen 分帧发 tool_call 会先把上游 `ChunkMerger` 打挂，`streamChat` 因此降级到非流式重跑（见 §5.4 与 CLAUDE.md），而非流式是累计的。**换用不触发该上游缺陷的供应商时这条必须重新评估**，届时的验收只能靠真机：挂一个工具并触发它，查 `sys_api_usage.token_count` 是否等于各轮之和。
+   <details><summary>原描述（已证伪，保留以防有人照它动手）</summary>
    `ChatServiceImpl` 里是 `tokens.set(...)` 覆盖而非累加，非流式同样只取单个 response 的 usage。带工具时 Spring AI 内部跑多轮，只记末轮。详见 §5.4 第 8 项。
    ⚠️ 未上线前实际损失为零，而修法可能要接管 Spring AI 的工具循环（关 `internalToolExecutionEnabled` 自驱多轮，或走 observation 拦截累加）——属「看着小其实不小」，别低估。
+   —— 这段很可能是照 Spring AI **1.x** 的行为写的，Boot 4.1 + AI 2.0 迁移之后没有重新核对过。
+   </details>
 
 3. ~~**`deleteKnowledgeBase` 无级联清理**~~ ✅ **已清理（2026-08-07）**
    改为删除前先数 `document`/`qa_pair`/`crawl_site` 三类内容，有内容则拒绝并在文案里说清各有多少。刻意不做级联删除——`Document.knowledgeBase` 是 `nullable = false`，文档没法「置 null 退化」，级联即意味着连文档与向量一起不可恢复地删掉；真需要时再加显式 force 参数。

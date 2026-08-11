@@ -555,6 +555,22 @@ public class ChatServiceImpl implements ChatService {
      * M4 说明：streamUsage(true) 已在 OpenAiChatOptions 中支持（见 ModelRouterService）；
      * 末尾 chunk 携带真实 total_tokens，tokens.get() 即为真实用量。
      * 若某 chunk 无 usage 信息（非末尾 chunk），tokens 保持上次设值（最终为末尾值）。
+     *
+     * <p>⚠️ <b>这里的 {@code set} 是刻意的，不要"顺手"改成累加</b>（2026-08-11 核对
+     * Spring AI 2.0 源码确认，技术债清单第 2 项原先的描述是错的）：
+     * <ul>
+     *   <li>{@code OpenAiChatModel.internalCall} 在工具调用多轮之间会把上一轮的 usage
+     *       传进递归、经 {@code UsageCalculator.getCumulativeUsage} <b>逐项相加</b>——
+     *       非流式最终那个 {@code ChatResponse} 的 usage <b>已经是跨全部轮次的总量</b>。
+     *       在它之上再累加就是<b>重复计费</b>。</li>
+     *   <li>{@code internalStream} 传给 {@code getCumulativeUsage} 的 previous 是
+     *       {@code null}，且它内部<b>没有</b>工具执行递归；单轮流式只有末尾 chunk 带 usage，
+     *       所以 {@code set} 取末值恰好正确。</li>
+     * </ul>
+     * 残余风险只剩一种窄情形：流式且真的发生多轮工具调用。本项目走不到——Qwen 分帧发
+     * tool_call 会先把上游 {@code ChunkMerger} 打挂，{@code streamChat} 因此降级到非流式
+     * 重跑（见类注释与 CLAUDE.md），而非流式是累计的。换用不触发该上游缺陷的供应商时，
+     * 这条要重新评估。
      */
     static Flux<String> meterContentStream(
             Flux<org.springframework.ai.chat.model.ChatResponse> source,
