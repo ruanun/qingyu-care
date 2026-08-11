@@ -40,3 +40,6 @@ test-output/
 
 # 参考项目目录（仅本地参考，不纳入版本控制）
 /references/
+
+# Cygwin/Git Bash 崩溃转储（脚本跑挂时会掉在当前目录）
+*.stackdump
