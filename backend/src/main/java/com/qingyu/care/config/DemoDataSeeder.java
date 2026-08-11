@@ -120,7 +120,8 @@ public class DemoDataSeeder implements ApplicationRunner {
     private void seed() {
         Tenant tenant = seedTenant();
         User admin = seedUser(tenant, "demo_admin", "云舟管理员", UserRole.TENANT_ADMIN);
-        User agent = seedUser(tenant, "demo_agent", "云舟客服小舟", UserRole.TENANT_MEMBER);
+        // 坐席账号：登录后可在人工工作台接管演示数据里那条 WAITING_AGENT 的投诉会话
+        seedUser(tenant, "demo_agent", "云舟客服小舟", UserRole.TENANT_MEMBER);
         Application shopApp = seedApp(tenant, "云舟商城客服", DEMO_APP_KEY, DEMO_APP_SECRET,
                 "您好！我是云舟商城的智能客服小舟，可以帮您查询订单、退换货政策、配送与积分规则～");
         seedApp(tenant, "云舟内部 IT 助手", "demo-cloudboat-it", "demo-secret-cloudboat-it-0001",
@@ -147,7 +148,7 @@ public class DemoDataSeeder implements ApplicationRunner {
             log.info("演示知识库就绪 knowledgeBaseId={} 文档数={}",
                     knowledge.kbId(), knowledge.docIds().size());
 
-            seedSessions(agent.getId(), knowledge.docIds());
+            seedSessions(knowledge.docIds());
             seedUsage(tenant.getId(), shopApp.getId());
             int days = analyticsRollupService.backfill(LocalDate.now().minusDays(29), LocalDate.now());
             log.info("演示分析日表回填完成 天数={}", days);
@@ -258,10 +259,9 @@ public class DemoDataSeeder implements ApplicationRunner {
      * 赋值。不回填的话 12 条会话全部落在今天，而分析 rollup 是按 {@code cm.created_at} 分日
      * 聚合的（见 {@code AnalyticsRollupDao.insertQuality}），30 天曲线会退化成一根柱子。
      *
-     * @param agentUserId 坐席用户 id，供演示「已转人工」的那条会话挂接管人
-     * @param docIds      演示文档 id，用来写 {@code hit_document_ids}
+     * @param docIds 演示文档 id，用来写 {@code hit_document_ids}
      */
-    private void seedSessions(Long agentUserId, List<Long> docIds) {
+    private void seedSessions(List<Long> docIds) {
         // 固定种子：每次播种的置信度与点赞分布一致，截图可复现
         Random random = new Random(20260811L);
         int total = DemoDataContent.CONVERSATIONS.size();
@@ -273,14 +273,23 @@ public class DemoDataSeeder implements ApplicationRunner {
             LocalDateTime start = LocalDate.now().minusDays(daysAgo)
                     .atTime(9 + random.nextInt(12), random.nextInt(60));
 
-            boolean handover = conv.tag() == SessionTag.COMPLAINT;   // 投诉类演示转人工
+            // 投诉类演示转人工，且必须满足两个条件人工工作台才截得到东西：
+            //   · 状态是 WAITING_AGENT 而非 AGENT_PROCESSING——「待接管队列」查的是前者，
+            //     后者表示已被某个坐席接走，不会出现在队列里；
+            //   · SessionTimeoutScheduler 只关 AI_PROCESSING 与 AGENT_PROCESSING，
+            //     WAITING_AGENT 不受超时影响，所以这条会一直等在队列里，随时可截图。
+            // 时间也拉到刚刚：一条「等了两周还没人接」的会话看着就不像真的。
+            boolean handover = conv.tag() == SessionTag.COMPLAINT;
+            if (handover) {
+                start = LocalDateTime.now().minusMinutes(12);
+            }
+
             ChatSession session = chatSessionRepository.save(ChatSession.builder()
                     .sessionId(UUID.randomUUID().toString())
                     .userId("demo-visitor-" + (index + 1))
-                    .status(handover ? SessionStatus.AGENT_PROCESSING : SessionStatus.ENDED)
+                    .status(handover ? SessionStatus.WAITING_AGENT : SessionStatus.ENDED)
                     .tags(new HashSet<>(List.of(conv.tag())))
                     .summary(conv.title())
-                    .agentId(handover ? agentUserId : null)
                     .handoverTime(handover ? start.plusMinutes(3) : null)
                     .endedAt(handover ? null : start.plusMinutes(5))
                     .build());
