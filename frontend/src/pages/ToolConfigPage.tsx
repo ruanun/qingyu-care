@@ -28,7 +28,7 @@ const ToolConfigPage: React.FC = () => {
         try {
             setIsLoading(true);
             const res = await aiToolService.list();
-            if (res.code === 200) setTools(res.data);
+            throwIfFailed(res); setTools(res.data);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '获取工具列表失败', description: msg });

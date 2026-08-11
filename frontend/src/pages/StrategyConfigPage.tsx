@@ -53,8 +53,8 @@ const StrategyConfigPage: React.FC = () => {
                 chatStrategyService.getAll(),
                 promptService.getAllVersions()
             ]);
-            if (stratRes.code === 200) setStrategies(stratRes.data);
-            if (promptRes.code === 200) setPrompts(promptRes.data);
+            throwIfFailed(stratRes); setStrategies(stratRes.data);
+            throwIfFailed(promptRes); setPrompts(promptRes.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "数据加载失败", description: getErrorMessage(error) });
         } finally {

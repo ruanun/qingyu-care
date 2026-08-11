@@ -57,7 +57,7 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import SessionMessages from '@/components/SessionMessages';
-import { getErrorMessage } from '@/lib/apiResult';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const SessionPage: React.FC = () => {
     const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -77,10 +77,9 @@ const SessionPage: React.FC = () => {
         try {
             const status = statusFilter === 'ALL' ? undefined : statusFilter;
             const response = await chatService.getAllSessions(status, page, 10);
-            if (response.code === 200) {
-                setSessions(response.data.content);
-                setTotalPages(response.data.totalPages);
-            }
+            throwIfFailed(response);
+            setSessions(response.data.content);
+            setTotalPages(response.data.totalPages);
         } catch (error: unknown) {
             toast({
                 variant: "destructive",

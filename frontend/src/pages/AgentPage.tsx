@@ -85,9 +85,8 @@ const AgentPage: React.FC = () => {
     async function fetchWaitingSessions() {
         try {
             const response = await agentService.getWaitingAgentSessions(0, 50);
-            if (response.code === 200) {
-                setWaitingSessions(response.data.content);
-            }
+            throwIfFailed(response);
+            setWaitingSessions(response.data.content);
         } catch (error: unknown) {
             console.error('获取待接管会话失败:', getErrorMessage(error));
         }

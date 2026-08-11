@@ -36,9 +36,8 @@ const HandoverRulePage: React.FC = () => {
         try {
             setIsLoading(true);
             const response = await handoverService.getAllRules();
-            if (response.code === 200) {
-                setRules(response.data);
-            }
+            throwIfFailed(response);
+            setRules(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "获取规则失败", description: getErrorMessage(error) });
         } finally {

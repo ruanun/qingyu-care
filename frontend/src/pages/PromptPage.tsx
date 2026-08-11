@@ -44,9 +44,8 @@ const PromptPage: React.FC = () => {
         try {
             setIsLoading(true);
             const response = await promptService.getAllVersions();
-            if (response.code === 200) {
-                setTemplates(response.data);
-            }
+            throwIfFailed(response);
+            setTemplates(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "获取模板失败", description: getErrorMessage(error) });
         } finally {

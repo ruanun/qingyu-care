@@ -46,9 +46,8 @@ const KnowledgePage: React.FC = () => {
         setIsDocLoading(true);
         try {
             const response = await knowledgeService.getDocuments(kbId);
-            if (response.code === 200) {
-                setDocuments(response.data);
-            }
+            throwIfFailed(response);
+            setDocuments(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "获取文档失败", description: getErrorMessage(error) });
         } finally {
@@ -60,13 +59,12 @@ const KnowledgePage: React.FC = () => {
         setIsLoading(true);
         try {
             const response = await knowledgeService.getKnowledgeBases();
-            if (response.code === 200) {
-                setKnowledgeBases(response.data);
-                if (response.data.length > 0 && !selectedKb) {
-                    const firstKb = response.data[0];
-                    setSelectedKb(firstKb);
-                    fetchDocuments(firstKb.id);
-                }
+            throwIfFailed(response);
+            setKnowledgeBases(response.data);
+            if (response.data.length > 0 && !selectedKb) {
+                const firstKb = response.data[0];
+                setSelectedKb(firstKb);
+                fetchDocuments(firstKb.id);
             }
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });

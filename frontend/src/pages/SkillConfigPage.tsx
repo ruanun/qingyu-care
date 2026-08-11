@@ -26,8 +26,8 @@ const SkillConfigPage: React.FC = () => {
         try {
             setIsLoading(true);
             const [s, t] = await Promise.all([aiSkillService.list(), aiToolService.list()]);
-            if (s.code === 200) setSkills(s.data);
-            if (t.code === 200) setTools(t.data);
+            throwIfFailed(s); setSkills(s.data);
+            throwIfFailed(t); setTools(t.data);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '加载失败', description: msg });

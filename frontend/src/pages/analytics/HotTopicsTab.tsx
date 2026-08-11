@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { throwIfFailed } from '@/lib/apiResult';
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -20,7 +21,7 @@ const HotTopicsTab: React.FC<Props> = ({ days, appId }) => {
         setIsLoading(true);
         try {
             const res = await analyticsService.getHotTopics(days, appId);
-            if (res.code === 200) setData(res.data);
+            throwIfFailed(res); setData(res.data);
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             toast({ variant: 'destructive', title: '加载失败', description: msg });

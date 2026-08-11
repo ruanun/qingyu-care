@@ -38,9 +38,8 @@ const ModelConfigPage: React.FC = () => {
         try {
             setIsLoading(true);
             const response = await aiModelService.getAllModels();
-            if (response.code === 200) {
-                setModels(response.data);
-            }
+            throwIfFailed(response);
+            setModels(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "获取模型列表失败", description: getErrorMessage(error) });
         } finally {

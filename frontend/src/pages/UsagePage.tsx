@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { throwIfFailed } from '@/lib/apiResult';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer,
@@ -51,7 +52,7 @@ const UsagePage: React.FC = () => {
                 Number(days),
                 appId === ALL_APPS ? undefined : Number(appId),
             );
-            if (res.code === 200) setData(res.data);
+            throwIfFailed(res); setData(res.data);
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             toast({ variant: 'destructive', title: '加载失败', description: msg });

@@ -306,10 +306,14 @@
    ⚠️ 顺带纠正上一版那句「全量约 43 处写操作，判了 code 的约 20 处」：**数对了但含义是反的**——20 处其实是**已经用正确范式**（`code !== 200` + throw）处理的数量，分布在 `IntegrationPage`(7) / `CrawlSiteList`(5) / `SharedModelPage`(4) / `ConfigForm`(2) / `AuditLogPage`(1) / `PlatformOverviewPage`(1) 六个文件，不是「判了 code 却没处理」的数量。
    </details>
 
-10. **读操作的业务错误也静默，只是后果轻**（从第 9 项拆出，2026-08-11）
-   28 处 `if (res.code === 200) setXxx(res.data)` 无 else：拉列表、看板取数失败时页面静默显示空，而不是「点了按钮没反应」。所以它是**「看起来没数据」而非「操作没生效」**，危害等级比第 9 项低一档，当时刻意没跟着一起改。
-   典型分布：`analytics/` 四个 Tab、`DashboardPage`(2)、`AgentPage` 的在线坐席与待接管队列(3)、各配置页的列表加载。
-   ⚠️ 改法与第 9 项相同（`throwIfFailed` + 复用已有 catch），但要**逐处判断该不该打断用户**：`analytics/CoverageTab` 的明细请求本来就写着 `catch { /* 明细失败不阻断整页 */ }`，那是刻意的 fail-soft，不该改成弹错误。**别一把 sed 过去。**
+10. ~~**读操作的业务错误也静默，只是后果轻**~~ ✅ **已清理（2026-08-11，从第 9 项拆出当天即清）**
+   21 处改成 `throwIfFailed(res)` + 复用已有 catch。**另 10 处刻意不动**，且这个「不动」是**脚本按条件筛出来的、不是手挑的**：4 处本来就有 `else` 分支（`AbTestPage` 两处读、`ChatPage` 恢复历史、`SessionMessages`）已经是对的；6 处的 catch 是空的或只有注释（`AgentPage` 的在线坐席数与 presence 刷新、`UsagePage` 的下钻列表与额度、`CoverageTab` 的明细、`UserListPage` 的租户下拉），注释明写「不阻断看板/整页/页面」，是刻意的 fail-soft。
+   ⚠️ **一处刻意接受的行为变化**：`DashboardPage` / `StrategyConfigPage` / `SkillConfigPage` 是 `Promise.all` 取两份数据后分别判 code。改后第一份失败就短路、第二份的 setter 不再执行——即从「静默展示一半数据」变成「整页报一次错」。对看板来说后者更可取（半份数据看不出是残缺的）。
+   <details><summary>原问题</summary>
+   28 处 `if (res.code === 200) setXxx(res.data)` 无 else：拉列表、看板取数失败时页面静默显示空，而不是「点了按钮没反应」。所以它是**「看起来没数据」而非「操作没生效」**，危害等级比第 9 项低一档，故从第 9 项拆出。
+   ⚠️ 改法与第 9 项相同，但要**逐处判断该不该打断用户**，别一把 sed 过去。
+   ⚠️ **实施时真踩了一次**：我从「只显示 catch 处理」的那一版扫描里取行号来拼待修清单，没回头核对前一版扫描标的 `有else`，于是把 `AbTestPage:83/88` 与 `ChatPage:55` 三处**本来就正确**的也改了——`else` 的 body 被留成孤儿，`tsc` 当场炸。教训：**筛选条件要写进脚本，别手工拼清单**；重做时把「读操作 + 无 else + catch 里真的做了事」三条判据都交给脚本，结果与手工分析的差异正好就是那 3 处错误。
+   </details>
    正确写法在仓库里现成：`components/knowledge/CrawlSiteList.tsx` 的四个写操作都是 `if (res.code !== 200) throw new Error(res.message)` + catch 里 destructive toast。
    ⚠️ 修的时候顺手给关键页面补回归测试——基建已经有了（见第 6 项），这类缺陷正是它最擅长抓的。
 

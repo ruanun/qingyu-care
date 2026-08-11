@@ -67,9 +67,8 @@ const UserListPage: React.FC = () => {
         setIsLoading(true);
         try {
             const response = await userService.list();
-            if (response.code === 200) {
-                setUsers(response.data);
-            }
+            throwIfFailed(response);
+            setUsers(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {

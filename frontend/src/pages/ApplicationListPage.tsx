@@ -51,9 +51,8 @@ const ApplicationListPage: React.FC = () => {
         setIsLoading(true);
         try {
             const response = await applicationService.list();
-            if (response.code === 200) {
-                setApps(response.data);
-            }
+            throwIfFailed(response);
+            setApps(response.data);
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {
