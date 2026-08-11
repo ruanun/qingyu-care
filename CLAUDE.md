@@ -10,11 +10,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cd docker && docker compose up -d   # PostgreSQL(pgvector) + RustFS(S3) + Redis
 ```
-`docker/init.sql` 仅负责 `CREATE EXTENSION vector`；业务表由后端启动时通过 JPA `ddl-auto: update` 自动建立。
+`docker/init.sql` 负责 `CREATE EXTENSION vector` 与 `zhparser` + `chinese_zh` 分词配置；业务表由后端启动时通过 JPA `ddl-auto: update` 自动建立。
+
+⚠️ **`init.sql` 只在数据目录为空时执行一次**。镜像后来加了 zhparser，而存量数据卷不会重跑它——症状是启动打 WARN `混合检索表结构初始化失败，关键词检索可能不可用`，服务照常起、只是中文关键词检索与热点分析静默失效。手工补建即可（不必重建卷），语句见 `docs/部署文档.md` 故障手册第 2 条。
+
+生产用 `docker/docker-compose.prod.yml`（含 backend/frontend 两个应用服务）。它声明了独立项目名 `name: qingyu-care-prod`，**别删**——两个 compose 同在 `docker/` 目录，不指定项目名会共用命名卷，生产直接挂上开发库的数据。
 
 ### 后端（backend/，Maven）
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=dev   # 启动（dev profile）
+mvn spring-boot:run -Dspring-boot.run.profiles=dev,demo   # 带演示数据启动（DemoDataSeeder）
 mvn clean install                                    # 全量构建 + 单测（不含 IT）
 mvn test                                              # 跑单元测试（Surefire，免 Docker）
 mvn test -Dtest=ConfigServiceTest                     # 单个测试类
@@ -25,6 +30,18 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 - JDK 17。后端启动需注入环境变量 `DASHSCOPE_API_KEY`（通义千问）。可选覆盖 `AI_BASE_URL` / `AI_CHAT_MODEL` / `AI_EMBEDDING_MODEL` 切换任意 OpenAI 兼容端点。
 - ⚠️ **`AI_BASE_URL` 必须自带 `/v1`**（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`）。Spring AI 2.0 起改用官方 openai-java SDK，只往 baseUrl 后拼 `chat/completions` / `embeddings`，**不再补 `/v1`**（1.x 的 `OpenAiApi` 拼的是 `/v1/xxx`，故当年要求不带，契约已翻转）。该项同时喂给 ChatModel 与 EmbeddingModel，缺 `/v1` 会让对话/摄取/检索全线 404；库里 `ai_model_config.endpoint` 同理。
 - 服务上下文路径是 `/api`，Swagger 在 `http://localhost:8080/api/swagger-ui.html`。
+
+### 演示数据与截图
+
+`DemoDataSeeder`（`@Profile("demo")` + `ApplicationRunner`）播种「云舟科技」整套演示数据：租户/应用/用户、租户级问答策略、知识库 4 篇文档（走真实 `uploadDocument()`，S3 + Tika + 真实 embedding，向量可检索）、8 条 QA、12 组会话（铺在最近 30 天）、30 天用量、分析日表经 `backfill` 真实聚合。幂等键是租户 code `demo-cloudboat`，反复重启不重播。演示账号 `demo_admin` / `demo123456`（租户管理员）、`demo_agent` / `demo123456`（坐席）。
+
+⚠️ 三个坑已写在类注释里，改动时别退化：
+
+1. **`ApplicationRunner` 没有 `TenantContext`**，不手工搬运则知识库与文档的 `tenant_id` 静默落 NULL——后果不是「对所有租户可见」而是反过来「对任何租户都检索不到」（metadata 写成 `tenantId: ""`，与 `tenantId == '<真实id>'` 永远匹配不上）。`finally` 里必须 `clear()`，启动线程会被后续请求复用。
+2. **`ChatSession`/`ChatMessage` 的 `createdAt` 带 `@CreationTimestamp`**，Hibernate 在 INSERT 时覆盖任何手工赋值，必须落库后用原生 UPDATE 回填，否则 12 条会话全落在今天，而 rollup 按 `cm.created_at` 分日聚合，30 天曲线退化成一根柱子。
+3. **`hit_document_ids` 必须写 JSON 数组字面量**（`"[16]"`）而非裸数字：`AnalyticsRollupDao.insertDocHits` 用 `json_array_elements_text` 展开，标量直接抛，而 `rollupDay` 把三条 insert 包在同一事务里——那一天的质量与热词聚合会被一起回滚。
+
+`docs/images/` 的 15 张截图基于这套数据实拍（1440×900）。改了界面要重拍时：起 `dev,demo` profile，用 `demo_admin` 登录并**在顶部选中「云舟商城客服」应用**（应用级配置页外包 `<RequireApp>`，未选应用截出来是空白），按编号顺序走一遍。⚠️ 每张截图都在 README 或使用手册里有引用，删改文件名要同步改引用。
 
 ### 下面几节「必须手工验证」不用全背——用脚本按改动点名
 
@@ -247,6 +264,10 @@ pnpm test    # vitest
 - 全部使用简体中文：对话、代码注释、commit 信息。
 - 本仓库允许 `git commit`；在默认分支上先建特性分支再改，未获授权不 `git push`。
 
-## 路线图参考
+## 文档地图
+- `docs/README.md`：文档索引，区分「使用者该读的」与「开发过程存档」。
+- `docs/使用手册.md`：面向租户管理员的功能操作指南（配截图）。改了界面行为要同步。
+- `docs/部署文档.md`：部署、容器化、备份恢复、监控与**故障手册**——本文件里那些「不报错只静默异常」的坑，运维视角的版本在那儿。
+- `docs/技术债清单.md`：已交付代码欠的账（2026-08-11 从 `SaaS平台规划.md` 拆出，原位置只留指针）。
 - `SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）的详细任务与接口设计。
-- `docs/superpowers/` 下为各子功能的 spec 与实现计划。
+- `docs/superpowers/` 下为各子功能的 spec 与实现计划（开发过程存档，刻意不迁走：本文件有若干带章节号的指针指向具体 spec，且它是写 spec 的默认路径）。

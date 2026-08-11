@@ -33,7 +33,10 @@ readonly RULES=(
   'CARD_PROMPT|actionUri|[Uu]iSpec|CardErrorBoundary::### 改动卡片 Action URI 协议后必须同步三处'
   'service/web/|WebPageSync|WebPageFetcher|SiteCrawl|LinkExtractor|RobotsChecker|CrawlSite::### 改动网站知识库同步 / 站点爬取链路后必须手工验证'
   'service/media/|ChatAttachment|Attachment|widget/src/attachments\.ts::### 改动聊天附件链路后必须手工验证'
-  'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml::### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
+  # ChatStrategy / 混合检索 / 检索范围也归到这一节：该节第 1 条「向量检索活性（命中且
+  # score > 0）」正是它们共同决定的东西。相似度阈值改错的症状与换模型没标定完全一样——
+  # 知识库有内容却问什么都答不知道，且检索返回空是 fail-soft 正常路径，日志里什么都没有。
+  'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml|ChatStrategy|HybridRetrieval|RetrievalScope|KeywordSearchDao::### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then
