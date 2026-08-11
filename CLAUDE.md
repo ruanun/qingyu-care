@@ -100,6 +100,10 @@ pnpm test    # vitest
 ```
 **关键**：`widget.js` 是**提交进仓库的构建产物**，由后端作为静态资源对外提供（`<script src=".../api/widget.js?appKey=...">`）。改动 `widget/src/` 后必须重新 build 并提交 `widget.js`；`.gitattributes` 强制其为 LF 行尾以保证跨平台 diff 稳定。
 
+**`scripts/buildFreshness.test.ts` 现在守住了这条**：`vite.config.ts` 的 `injectSrcHash` 插件把 `widget/src/**/*.ts`（排除 `*.test.ts`）的 sha256 指纹写进产物，测试重算比对，改了源码没 build 即红。忘了 build 的后果本来是完全无声的——后端照常启动、页面照常加载 widget，只是线上跑旧代码，改动看起来「没生效」而任何日志里都查不到原因。三轮变异验证过：改 src 不 build → 红；只改 `*.test.ts` → 仍绿（测试不进产物，不该要求重建）；抹掉产物 banner → 红。
+
+⚠️ 动这套指纹机制时的两个坑：**指纹注入必须用插件的 `generateBundle`，`rollupOptions.output.banner` 在 lib 模式下实测完全不生效**（产物一个字节不变、build 无任何提示）；**指纹计算必须归一化行尾与路径分隔符**，否则 Windows（CRLF 工作区）与 Linux 算出的指纹不同，变成谁跑谁红。
+
 ## 测试约定（重要）
 
 分两层，由 Maven 插件按文件名/标签自动切分（见 `pom.xml`）：
