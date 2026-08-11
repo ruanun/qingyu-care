@@ -118,7 +118,8 @@ pnpm test    # vitest
 - Radix 组件（Dialog / Select 等）的 portal 与 focus trap 在 jsdom 下行为特殊，测别的逻辑时把它们 `vi.mock` 掉、别顺带一起测。⚠️ 但**别桩成 `() => null`**：如果被桩组件是通过回调（`onSubmit` / `onChange`）驱动父组件逻辑的，桩成空组件会让那条回调路径**静默零覆盖**——`CrawlSiteDialog` 就这么让 `handleCreate` / `handleUpdate` 一行都没执行过，而测试全绿、没有任何现象提醒。桩成一个「只在 `open` 时渲染、暴露回调触发点」的极简 stub 即可（见 `CrawlSiteList.test.tsx` 里那个桩）。
 - `src/test/strictModeDoubleInvoke.test.tsx` 是**工具链前提哨兵**，不测产品代码：它断言 vitest 下 `<StrictMode>` 真的把 effect 跑成 setup→cleanup→setup。`CrawlSiteList.test.tsx` 里那条 `isMountedRef` 回归测试依赖这个前提——前提一旦不成立，那条测试会**静默退化成永真**而不是转红，所以把前提本身钉成一条测试。
 - ⚠️ **断言「默认值」时小心永真**：只断言「首次打开时复选框未勾选」守不住 `openDeleteDialog` 里那行复位——`useState(false)` 的初值本来就是 `false`，删掉复位照样绿。要走「改动 → 关闭 → 重开仍是默认值」这条路才有判别力。凡是「组件级 state + 每次打开时复位」的组合都吃这个坑。
-- 覆盖面目前只有 `CrawlSiteList`（技术债清单第 6 项的第一批）：轮询链五条 + 建站 / 编辑 / 删除三条对话框路径五条，共 10 条，另有一条工具链哨兵。其余 27 个页面与 29 个组件仍是零覆盖。
+- **常态约定：动了某个页面/组件的写操作，就顺手给它补一条回归测试。** 追覆盖率数字没意义（27 个页面一次性补完不现实，补出来的也多是走过场的断言），但「改到哪补到哪」能让覆盖面跟着实际风险增长。最省事的模板是 `ToolConfigPage.test.tsx`：桩 api service + `useToast`，点一下触发写操作，断言业务错误弹 destructive toast、成功才刷新列表——两条测试就把一条写操作钉住了。
+- 覆盖面目前：`CrawlSiteList` 10 条（轮询链五条 + 建站/编辑/删除三条对话框路径五条）、`lib/apiResult` 9 条、`ToolConfigPage` 2 条，另一条工具链哨兵。其余页面与组件仍是零覆盖。
 
 ## 架构要点
 
