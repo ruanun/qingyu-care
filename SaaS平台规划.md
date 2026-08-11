@@ -275,17 +275,27 @@
    代价已经实际发生过：站点爬取的前端三轮返工（轮询生命周期、双并发任务互踩、StrictMode 下 `isMountedRef` 永久卡死）全靠人工代码走查发现，**有测试的话第一轮就该红**。
    </details>
 
-7. **前端 lint 有 69 个既有 error 基线**
+7. ~~**前端 lint 有 69 个既有 error 基线**~~ ✅ **已清理（2026-08-11）**
+   `pnpm lint` 现在退出码 0，可以当红绿灯用了。分两类处理：
+   **真修 7 条**——`badgeVariants` 全库无人引用故收成模块私有；`buttonVariants` 只被 `alert-dialog` 用，抽到 `ui/button-variants.ts`（组件文件里混非组件导出会让该文件的 HMR 整体降级为整页刷新）；`toaster.tsx` 去掉 `: any` 靠 `useToast()` 推类型；`HandoverRulePage` 的 `useState<any>` 换成显式 `HandoverRuleConfig`（三种规则各用一个字段，原先字段名写错编译不拦）；`SessionPage` 的 `val as any` 换成 `as SessionStatus | 'ALL'`；`use-toast` 的 `actionTypes` 常量值全库无人读取（只被 `typeof` 当类型用），直接写成类型；`UserListPage` 未使用的 catch 参数改无参 catch。
+   **15 条 `set-state-in-effect` 用带理由的抑制注释**（仓库原有三处同款先例）：它们全是同一模式——effect 里调取数函数、函数开头 `setIsLoading(true)`。该规则针对的是「用 effect 派生 state」那类反模式，而**加载态本就要触发一次重渲染**。⚠️ **真正的正解是引入数据请求库（react-query 之类）替掉 effect 取数**，属架构改动、刻意不塞进这批；理由逐条写在注释里、可 grep 出来。
+   ⚠️ 另一处易错：`IntegrationPage` 那个 effect 原本已有一条 `exhaustive-deps` 抑制注释，两个规则**必须合到同一条 `eslint-disable-next-line` 里**才都生效，另起一行不管用。
+   <details><summary>原问题</summary>
    构成（2026-08-10 实测复核）：`@typescript-eslint/no-explicit-any` **50**（多为 `catch (error: any)`）、`react-hooks` 的 setState-in-effect **15**、`@typescript-eslint/no-unused-vars` **2**、`react-refresh/only-export-components` **2**。合计 69。
-   ⚠️ 上一版把构成写成「set-state-in-effect 15、`react-hooks/exhaustive-deps` 9、no-unused-vars 2」（合计 76，本身就与 69 对不上）：**`exhaustive-deps` 现在是 0 条**（该规则的告警都已在既有代码里被 eslint-disable 注释或依赖补齐消掉），而漏列了 `react-refresh/only-export-components` 2 条。照旧构成去修的人会去找 9 条不存在的错误。
-   ⚠️ 与第 9 项有大面积重叠：那 50 条 `no-explicit-any` 绝大多数是 `catch (error: any)`，而第 9 项要补的失败分支正好就写在这些 catch 块里——**两条债一起修比分开修便宜得多**。
+   ⚠️ 更早一版把构成写成「set-state-in-effect 15、`react-hooks/exhaustive-deps` 9、no-unused-vars 2」（合计 76，本身就与 69 对不上）：**`exhaustive-deps` 是 0 条**，而漏列了 `react-refresh/only-export-components` 2 条。照那个构成去修的人会去找 9 条不存在的错误。
+   ⚠️ 与第 9 项有大面积重叠：那 50 条 `no-explicit-any` 绝大多数是 `catch (error: any)`，而第 9 项要补的失败分支正好就写在这些 catch 块里——**两条债一起修比分开修便宜得多**（实际就是一起修的）。
    当前只能保证「每次改动不新增」，无法把 lint 当红绿灯用。
+   </details>
 
 8. **站点爬取 C-1 只有结构性哨兵**
    「`startCrawl` 在事务内投递 `@Async`」这条竞态无法确定性复现（实测把 `@Transactional` 加回后 IT 连跑 4 次全绿），现在只有一条反射断言守住「注解被加回来」这一种回归方式，竞态本身靠手工验证项兜底。
    同批的另两处（`Error` 逃逸留僵尸 RUNNING、收尾 detached merge 静默回滚配置）终审已证明纯 Mockito 可测并补了真守护。
 
-9. **管理后台大量写操作把业务错误静默吞掉**
+9. ~~**管理后台大量写操作把业务错误静默吞掉**~~ ✅ **已清理（2026-08-11）**
+   36 处全部改成仓库既定写法：新增 `lib/apiResult.ts` 的 `throwIfFailed(res)`（`code ≠ 200` 即抛）+ **复用调用点已有的 catch**——那些 catch 本来就在弹 destructive toast，只是从来走不到。同一批里 `getErrorMessage(error)` 收敛了 47 处 `catch (error: any)`（技术债 7 的最大一块）。
+   ⚠️ 顺带修了一处**「改完仍然吞信息」**的：`AgentPage.handleAcceptSession` 的 catch 是无参的 `catch {}`，只弹「接管失败」不带原因——而接管失败最常见的恰好就是「已被别的坐席接管」这类后端业务消息。**光把 `throwIfFailed` 加上不够，还要看 catch 有没有把 message 用起来。**
+   ⚠️ **读操作那 28 处没动**，另立为第 10 项。
+   <details><summary>原问题</summary>
    形态是 `if (res.code === 200) { 成功分支 }` **没有 else**——不是没判 code，是判了却没有失败分支。业务异常走「HTTP 200 + `body.code`」、axios 不 reject，于是后端的业务错误（重复入口、资源被占用、并发上限、额度超限等）到了前端一律无声无息：用户点按钮毫无反应，也没有任何报错。
    **逐处分类点数结果（2026-08-10）**。`frontend/src/pages` + `src/components` 下命中 `code === 200` 共 **78 处**：
    - **写操作 44 处，其中 36 处无失败分支——这 36 处才是本条债的范围**，分布在 12 个文件：`QaPairPanel`(5) / `KnowledgePage`(4) / `UserListPage`(4) / `ApplicationListPage`(3) / `ModelConfigPage`(3) / `PromptPage`(3) / `SkillConfigPage`(3) / `TenantListPage`(3) / `ToolConfigPage`(3) / `AgentPage`(2) / `HandoverRulePage`(2) / `StrategyConfigPage`(1)。另外 8 处写操作已正确带 else（`LoginPage` 登录/注册、`AbTestPage` 创建与 `runAction` 封装、两处 `uploadChatFile`、`testModel`、`ReportDialog`）。
@@ -293,6 +303,12 @@
    - **三元表达式 2 处**（`CrawlSiteList.tsx:105`、`AgentPage.tsx:107`）：形态上撞关键词但不是本条债；前者的注释还写明了「业务异常时 `res.data` 为 null，下面的判空分支会自然停止轮询」，是刻意的。
    ⚠️ **点数方法上有两个坑，重新点数时别再踩**：① `grep -A4` 之类的固定上下文窗口**看不到 else 分支**（else 常在 5 行之外），必须按大括号配对定位 `if` 块的收尾行再判断——上一版正是因此把 `AbTestPage` 误列为样本，而它其实是做对了的页面；② 「有 else」不能靠「往下若干行内出现 `} else`」判定，那会把外层 `if (editingXxx) {...} else {...}` 的 else 误算进来（`ApplicationListPage:90`、`ModelConfigPage:58`、`TenantListPage:106`、`UserListPage:127` 四处都会被误判成已处理）。
    ⚠️ 顺带纠正上一版那句「全量约 43 处写操作，判了 code 的约 20 处」：**数对了但含义是反的**——20 处其实是**已经用正确范式**（`code !== 200` + throw）处理的数量，分布在 `IntegrationPage`(7) / `CrawlSiteList`(5) / `SharedModelPage`(4) / `ConfigForm`(2) / `AuditLogPage`(1) / `PlatformOverviewPage`(1) 六个文件，不是「判了 code 却没处理」的数量。
+   </details>
+
+10. **读操作的业务错误也静默，只是后果轻**（从第 9 项拆出，2026-08-11）
+   28 处 `if (res.code === 200) setXxx(res.data)` 无 else：拉列表、看板取数失败时页面静默显示空，而不是「点了按钮没反应」。所以它是**「看起来没数据」而非「操作没生效」**，危害等级比第 9 项低一档，当时刻意没跟着一起改。
+   典型分布：`analytics/` 四个 Tab、`DashboardPage`(2)、`AgentPage` 的在线坐席与待接管队列(3)、各配置页的列表加载。
+   ⚠️ 改法与第 9 项相同（`throwIfFailed` + 复用已有 catch），但要**逐处判断该不该打断用户**：`analytics/CoverageTab` 的明细请求本来就写着 `catch { /* 明细失败不阻断整页 */ }`，那是刻意的 fail-soft，不该改成弹错误。**别一把 sed 过去。**
    正确写法在仓库里现成：`components/knowledge/CrawlSiteList.tsx` 的四个写操作都是 `if (res.code !== 200) throw new Error(res.message)` + catch 里 destructive toast。
    ⚠️ 修的时候顺手给关键页面补回归测试——基建已经有了（见第 6 项），这类缺陷正是它最擅长抓的。
 
