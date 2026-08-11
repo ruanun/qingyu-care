@@ -26,6 +26,17 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 - ⚠️ **`AI_BASE_URL` 必须自带 `/v1`**（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`）。Spring AI 2.0 起改用官方 openai-java SDK，只往 baseUrl 后拼 `chat/completions` / `embeddings`，**不再补 `/v1`**（1.x 的 `OpenAiApi` 拼的是 `/v1/xxx`，故当年要求不带，契约已翻转）。该项同时喂给 ChatModel 与 EmbeddingModel，缺 `/v1` 会让对话/摄取/检索全线 404；库里 `ai_model_config.endpoint` 同理。
 - 服务上下文路径是 `/api`，Swagger 在 `http://localhost:8080/api/swagger-ui.html`。
 
+### 下面几节「必须手工验证」不用全背——用脚本按改动点名
+
+```bash
+./scripts/manual-smoke-hints.sh              # 看工作区改动触发了哪几节
+./scripts/manual-smoke-hints.sh master...HEAD  # 看整个分支
+```
+
+按本次改动的文件，只列出下面**对应那几节**的标题，让人展开去读。**它只存「路径 → 章节标题」的映射、不复述任何条目内容**——复述就会产生第二份会漂移的文案，正是卡片协议白名单分裂三处那个病。引用的章节标题在 CLAUDE.md 里找不到时脚本 exit 1（标题被改却忘了同步规则，会让对应提示静默消失，和「本次改动无需验证」长得一模一样）。
+
+刻意**不判红**：这些条目自动化测试永远覆盖不到，判红只会逼人为了绿而空跑流程。
+
 ### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事
 这三条自动化测试**永远覆盖不到**——IT 里 `VectorStore` 与 `ChatClient` 全被 mock，`streamUsage` 静默失效不抛异常，出站 URL 更是测试看不到的东西。Boot 4.1 + Spring AI 2.0 迁移就是靠这三条真机冒烟才闭合的（`docs/superpowers/specs/2026-07-30-boot4-springai2-migration-design.md` §8.1/§8.3）：
 1. **向量检索活性**：上传文档 → 提问 → 确认命中且 `score > 0`。
