@@ -81,8 +81,8 @@ const UserListPage: React.FC = () => {
         try {
             const response = await tenantService.list();
             if (response.code === 200) setTenants(response.data);
-        } catch (error) {
-            // 拉取租户失败不阻断页面
+        } catch {
+            // 拉取租户失败不阻断页面：平台管理员的租户下拉为空时仍可按当前租户建用户
         }
     };
 

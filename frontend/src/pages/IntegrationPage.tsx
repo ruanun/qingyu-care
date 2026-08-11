@@ -35,7 +35,7 @@ const IntegrationPage: React.FC = () => {
         }
     };
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- 后者：load() 开头会 setLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
     useEffect(() => { load(); }, [currentApp?.id]);
 
     const copy = async (text: string) => {

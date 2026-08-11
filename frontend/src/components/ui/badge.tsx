@@ -33,4 +33,6 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   )
 }
 
-export { Badge, badgeVariants }
+// badgeVariants 不再导出：全仓库只有本文件用它，导出会触发
+// react-refresh/only-export-components（组件文件里混着非组件导出会让 HMR 失效）
+export { Badge }

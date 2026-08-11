@@ -179,7 +179,7 @@ const SessionPage: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                     <Filter className="w-4 h-4 text-muted-foreground" />
-                    <Select value={statusFilter} onValueChange={(val) => setStatusFilter(val as any)}>
+                    <Select value={statusFilter} onValueChange={(val) => setStatusFilter(val as SessionStatus | 'ALL')}>
                         <SelectTrigger className="w-40 bg-background">
                             <SelectValue placeholder="状态过滤" />
                         </SelectTrigger>

@@ -13,7 +13,8 @@ export function Toaster() {
 
   return (
     <ToastProvider>
-      {toasts.map(function ({ id, title, description, action, ...props }: any) {
+      {/* 不写类型注解，让 TS 从 useToast() 的 toasts 推出 ToasterToast——原先标成 any */}
+      {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
           <Toast key={id} {...props}>
             <div className="grid gap-1">

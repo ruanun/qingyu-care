@@ -55,6 +55,7 @@ const PromptPage: React.FC = () => {
     };
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
         fetchTemplates();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

@@ -10,11 +10,26 @@ import type { HandoverRule, HandoverRuleType } from '@/api/handover';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
+/**
+ * 转人工规则的配置载荷。后端 `HandoverRule.config` 是一个 JSON 字符串，
+ * 三种规则类型各只用其中一个字段，故三个都可选。
+ */
+type HandoverRuleConfig = {
+    /** KEYWORD：命中即转人工的关键词 */
+    keywords?: string[];
+    /** LOW_CONFIDENCE：检索最高分低于此值就转人工 */
+    threshold?: number;
+    /** NO_HIT_STREAK：连续未命中多少轮后转人工 */
+    count?: number;
+};
+
 const HandoverRulePage: React.FC = () => {
     const [rules, setRules] = useState<HandoverRule[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [editingId, setEditingId] = useState<number | null>(null);
-    const [editConfig, setEditConfig] = useState<any>({});
+    // 三种规则类型共用一个配置对象：KEYWORD 用 keywords，LOW_CONFIDENCE 用 threshold，
+    // NO_HIT_STREAK 用 count。原先是 useState<any>，字段名写错不会被编译拦住。
+    const [editConfig, setEditConfig] = useState<HandoverRuleConfig>({});
     const { toast } = useToast();
 
     const fetchRules = async () => {
@@ -32,6 +47,7 @@ const HandoverRulePage: React.FC = () => {
     };
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
         fetchRules();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

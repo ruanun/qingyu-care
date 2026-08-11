@@ -61,6 +61,7 @@ const UsagePage: React.FC = () => {
     }, [days, appId, toast]);
 
     // days 或 appId 变化时重新拉取
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
     useEffect(() => { fetchData(); }, [fetchData]);
 
     // 租户视角才需要应用下钻列表；平台视角接口忽略 appId，无需拉取
@@ -79,6 +80,7 @@ const UsagePage: React.FC = () => {
                 if (res.code === 200 && res.data?.plan) setQuota(res.data);
             }).catch(() => { /* 额度拉取失败不阻断看板 */ });
         } else {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
             setQuota(null); // 非租户视角清零，防旧额度残留
         }
     }, [data?.scope]);
