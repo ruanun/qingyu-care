@@ -24,6 +24,7 @@ import { aiModelService } from '@/api/ai-model';
 import type { AiModelConfig } from '@/api/ai-model';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const ModelConfigPage: React.FC = () => {
     const [models, setModels] = useState<AiModelConfig[]>([]);
@@ -40,8 +41,8 @@ const ModelConfigPage: React.FC = () => {
             if (response.code === 200) {
                 setModels(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "获取模型列表失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "获取模型列表失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -59,8 +60,8 @@ const ModelConfigPage: React.FC = () => {
                 toast({ title: model.enabled ? "模型已禁用" : "模型已启用" });
                 fetchModels();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "操作失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
     };
 
@@ -73,8 +74,8 @@ const ModelConfigPage: React.FC = () => {
             } else {
                 toast({ variant: "destructive", title: "连接测试失败", description: response.message });
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "测试过程中出错", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "测试过程中出错", description: getErrorMessage(error) });
         } finally {
             setIsTesting(null);
         }
@@ -99,8 +100,8 @@ const ModelConfigPage: React.FC = () => {
                 setIsDialogOpen(false);
                 fetchModels();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }
     };
 
@@ -112,8 +113,8 @@ const ModelConfigPage: React.FC = () => {
                 toast({ title: "模型配置已删除" });
                 fetchModels();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "删除失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }
     };
 

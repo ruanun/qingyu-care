@@ -57,6 +57,7 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import SessionMessages from '@/components/SessionMessages';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const SessionPage: React.FC = () => {
     const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -80,11 +81,11 @@ const SessionPage: React.FC = () => {
                 setSessions(response.data.content);
                 setTotalPages(response.data.totalPages);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             toast({
                 variant: "destructive",
                 title: "获取会话失败",
-                description: error.message,
+                description: getErrorMessage(error),
             });
         } finally {
             setIsLoading(false);
@@ -137,8 +138,8 @@ const SessionPage: React.FC = () => {
                 toast({ title: "标签已添加" });
             }
             fetchSessions();
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "操作失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
     };
 
@@ -147,8 +148,8 @@ const SessionPage: React.FC = () => {
             await chatService.endSession(sessionId);
             toast({ title: '会话已结束' });
             fetchSessions();
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '操作失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(error) });
         }
     };
 
@@ -157,8 +158,8 @@ const SessionPage: React.FC = () => {
             await agentService.acceptSession(sessionId); // 去 agentId：后端从登录态取
             toast({ title: '已接管会话', description: '可到人工工作台回复用户' });
             fetchSessions();
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '接管失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '接管失败', description: getErrorMessage(error) });
         }
     };
 

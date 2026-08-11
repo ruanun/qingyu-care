@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getErrorMessage } from '@/lib/apiResult';
 import { FileText, Plus, Check, Trash2, Clock, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -46,8 +47,8 @@ const PromptPage: React.FC = () => {
             if (response.code === 200) {
                 setTemplates(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "获取模板失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "获取模板失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -72,8 +73,8 @@ const PromptPage: React.FC = () => {
                 setNewPrompt({ name: '', content: '', description: '' });
                 fetchTemplates();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "创建失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "创建失败", description: getErrorMessage(error) });
         }
     };
 
@@ -84,8 +85,8 @@ const PromptPage: React.FC = () => {
                 toast({ title: "激活成功" });
                 fetchTemplates();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "激活失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "激活失败", description: getErrorMessage(error) });
         }
     };
 
@@ -97,8 +98,8 @@ const PromptPage: React.FC = () => {
                 toast({ title: "删除成功" });
                 fetchTemplates();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "删除失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         } finally {
             setDeleteId(null);
         }

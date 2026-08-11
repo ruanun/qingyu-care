@@ -17,6 +17,7 @@ import { Attachments } from '@/components/chat/Attachments';
 import { loadChatSession, saveChatSession, clearChatSession } from '@/lib/chatSession';
 import { streamChat } from '@/lib/chatStream';
 import { parseUiSpec } from '@/lib/uiSpec';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -141,9 +142,11 @@ const ChatPage: React.FC = () => {
                 },
                 onError: (msg) => appendDelta(placeholderId, `\n\n${msg}`),
             }, controller.signal);
-        } catch (error: any) {
-            if (error?.name !== 'AbortError') {
-                toast({ variant: 'destructive', title: '发送失败', description: error?.message });
+        } catch (error: unknown) {
+            // 用户点「停止生成」时 fetch 抛的是 AbortError，那是预期路径、不该弹错误。
+            // 非 Error 值（有库 throw 字符串的先例）走 else 分支照常提示。
+            if (!(error instanceof Error) || error.name !== 'AbortError') {
+                toast({ variant: 'destructive', title: '发送失败', description: getErrorMessage(error) });
             }
         } finally {
             abortRef.current = null;
@@ -191,8 +194,8 @@ const ChatPage: React.FC = () => {
             setIsWaitingAgent(true);
             setSuggestHandover(false);
             toast({ title: '已请求人工客服', description: '请稍等，人工客服将尽快接入...' });
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '请求失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '请求失败', description: getErrorMessage(error) });
         }
     };
 

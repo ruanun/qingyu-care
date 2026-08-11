@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const empty: Partial<AiModelConfig> = {
   name: '',
@@ -40,8 +41,8 @@ const SharedModelPage: React.FC = () => {
       const res = await platformService.listSharedModels();
       if (res.code !== 200) throw new Error(res.message);
       setList(res.data);
-    } catch (e: any) {
-      toast({ title: '加载失败', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: '加载失败', description: getErrorMessage(e), variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -89,8 +90,8 @@ const SharedModelPage: React.FC = () => {
       setOpen(false);
       setForm(empty);
       reload();
-    } catch (e: any) {
-      toast({ title: '保存失败', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: '保存失败', description: getErrorMessage(e), variant: 'destructive' });
     } finally {
       setIsSaving(false);
     }
@@ -103,8 +104,8 @@ const SharedModelPage: React.FC = () => {
       if (res.code !== 200) throw new Error(res.message);
       toast({ title: '共享模型已删除' });
       reload();
-    } catch (e: any) {
-      toast({ title: '删除失败', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: '删除失败', description: getErrorMessage(e), variant: 'destructive' });
     }
   };
 

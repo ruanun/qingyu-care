@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import type { ApiResponse } from '@/types';
+import { getErrorMessage } from '@/lib/apiResult';
 
 export interface ConfigField {
   key: string;
@@ -36,7 +37,7 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ title, fields, load, save }) =>
         });
         setValues(merged);
       })
-      .catch((e) => toast({ title: '加载失败', description: e.message, variant: 'destructive' }))
+      .catch((e) => toast({ title: '加载失败', description: getErrorMessage(e), variant: 'destructive' }))
       .finally(() => setLoading(false));
   }, [load, fields, toast]);
 
@@ -48,8 +49,8 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ title, fields, load, save }) =>
       const res = await save(values);
       if (res.code !== 200) throw new Error(res.message);
       toast({ title: res.message || '已保存' });
-    } catch (e: any) {
-      toast({ title: '保存失败', description: e.message, variant: 'destructive' });
+    } catch (e: unknown) {
+      toast({ title: '保存失败', description: getErrorMessage(e), variant: 'destructive' });
     } finally {
       setSaving(false);
     }

@@ -29,6 +29,7 @@ import {
 import { tenantService } from '@/api/tenant';
 import type { Tenant, TenantStatus, TenantPlan } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const TenantListPage: React.FC = () => {
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -61,8 +62,8 @@ const TenantListPage: React.FC = () => {
             if (response.code === 200) {
                 setTenants(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "加载失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -116,8 +117,8 @@ const TenantListPage: React.FC = () => {
                     setIsDialogOpen(false);
                 }
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         } finally {
             setIsSubmitting(false);
         }
@@ -131,8 +132,8 @@ const TenantListPage: React.FC = () => {
                 toast({ title: newStatus === 'ACTIVE' ? "已解冻" : "已冻结" });
                 fetchTenants();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "操作失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
     };
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { platformService } from '@/api/platform';
 import type { PlatformOverview } from '@/api/platform';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const StatCard: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
   <div className="rounded-lg border p-4 bg-muted/20">
@@ -24,7 +25,7 @@ const PlatformOverviewPage: React.FC = () => {
       })
       .catch((e: Error) => {
         setError(true);
-        toast({ title: '加载失败', description: e.message, variant: 'destructive' });
+        toast({ title: '加载失败', description: getErrorMessage(e), variant: 'destructive' });
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

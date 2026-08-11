@@ -4,6 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { chatService } from '@/api/chat';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 interface Message {
     id: number;
@@ -28,8 +29,7 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
             await chatService.submitFeedback(sessionId, msg.id, value);
             setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, feedback: value } : m)));
         } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            toast({ variant: 'destructive', title: '评价失败', description: errMsg });
+            toast({ variant: 'destructive', title: '评价失败', description: getErrorMessage(err) });
         }
     };
 
@@ -44,8 +44,8 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
                 } else {
                     setError(response.message || '加载失败');
                 }
-            } catch (err: any) {
-                setError(err.message || '加载消息失败');
+            } catch (err: unknown) {
+                setError(getErrorMessage(err) || '加载消息失败');
             } finally {
                 setIsLoading(false);
             }

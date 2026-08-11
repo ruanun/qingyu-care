@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { getErrorMessage } from '@/lib/apiResult';
 import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,8 +49,8 @@ const KnowledgePage: React.FC = () => {
             if (response.code === 200) {
                 setDocuments(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "获取文档失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "获取文档失败", description: getErrorMessage(error) });
         } finally {
             setIsDocLoading(false);
         }
@@ -67,8 +68,8 @@ const KnowledgePage: React.FC = () => {
                     fetchDocuments(firstKb.id);
                 }
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "加载失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -98,8 +99,8 @@ const KnowledgePage: React.FC = () => {
                 // 刷新文档列表
                 fetchDocuments(selectedKb.id);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "上传失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "上传失败", description: getErrorMessage(error) });
         } finally {
             setIsUploading(false);
             // 清空文件输入
@@ -118,8 +119,8 @@ const KnowledgePage: React.FC = () => {
                     fetchDocuments(selectedKb.id);
                 }
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "删除失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         } finally {
             setDeleteDocId(null);
         }

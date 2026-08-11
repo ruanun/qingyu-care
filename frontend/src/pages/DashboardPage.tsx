@@ -7,6 +7,7 @@ import { dashboardService } from '@/api/dashboard';
 import type { DashboardStats } from '@/api/dashboard';
 import type { ChatSession } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const DashboardPage: React.FC = () => {
     console.log("DashboardPage.tsx: Rendering...");
@@ -29,8 +30,8 @@ const DashboardPage: React.FC = () => {
             ]);
             if (statsRes.code === 200) setStats(statsRes.data);
             if (sessionsRes.code === 200) setRecentSessions(sessionsRes.data);
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '加载失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '加载失败', description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }

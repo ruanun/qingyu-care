@@ -33,6 +33,7 @@ import type { User, UserRole, Tenant } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const UserListPage: React.FC = () => {
     const [users, setUsers] = useState<User[]>([]);
@@ -69,8 +70,8 @@ const UserListPage: React.FC = () => {
             if (response.code === 200) {
                 setUsers(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "加载失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -141,8 +142,8 @@ const UserListPage: React.FC = () => {
                     setIsDialogOpen(false);
                 }
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         } finally {
             setIsSubmitting(false);
         }
@@ -155,8 +156,8 @@ const UserListPage: React.FC = () => {
                 toast({ title: user.enabled ? "已禁用" : "已启用" });
                 fetchUsers();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "操作失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
     };
 
@@ -168,8 +169,8 @@ const UserListPage: React.FC = () => {
                 toast({ title: "删除成功" });
                 fetchUsers();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "删除失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }
     };
 

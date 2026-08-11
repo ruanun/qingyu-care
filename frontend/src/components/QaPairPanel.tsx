@@ -6,6 +6,7 @@ import { qaService } from '@/api/qa';
 import type { QaPair } from '@/api/qa';
 import type { Document } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 interface Props {
     kbId: number;
@@ -24,9 +25,10 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
         setLoading(true);
         try {
             const res = await qaService.list(kbId);
-            if (res.code === 200) setPairs(res.data);
+            throwIfFailed(res);
+            setPairs(res.data);
         } catch (e) {
-            toast({ variant: 'destructive', title: '获取问答对失败', description: e instanceof Error ? e.message : String(e) });
+            toast({ variant: 'destructive', title: '获取问答对失败', description: getErrorMessage(e) });
         } finally {
             setLoading(false);
         }
@@ -44,32 +46,34 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
         }
         try {
             const res = await qaService.create(kbId, { question, answer });
-            if (res.code === 200) { toast({ title: '问答对已创建' }); setQuestion(''); setAnswer(''); fetchPairs(); }
-        } catch (e) { toast({ variant: 'destructive', title: '创建失败', description: e instanceof Error ? e.message : String(e) }); }
+            throwIfFailed(res);
+            toast({ title: '问答对已创建' }); setQuestion(''); setAnswer(''); fetchPairs();
+        } catch (e) { toast({ variant: 'destructive', title: '创建失败', description: getErrorMessage(e) }); }
     };
 
     const handleApprove = async (id: number) => {
-        try { const res = await qaService.approve(id); if (res.code === 200) { toast({ title: '已通过复核' }); fetchPairs(); } }
-        catch (e) { toast({ variant: 'destructive', title: '操作失败', description: e instanceof Error ? e.message : String(e) }); }
+        try { const res = await qaService.approve(id); throwIfFailed(res); toast({ title: '已通过复核' }); fetchPairs(); }
+        catch (e) { toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(e) }); }
     };
 
     const handleToggle = async (p: QaPair) => {
-        try { const res = await qaService.setEnabled(p.id, p.status === 'DISABLED'); if (res.code === 200) fetchPairs(); }
-        catch (e) { toast({ variant: 'destructive', title: '操作失败', description: e instanceof Error ? e.message : String(e) }); }
+        try { const res = await qaService.setEnabled(p.id, p.status === 'DISABLED'); throwIfFailed(res); fetchPairs(); }
+        catch (e) { toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(e) }); }
     };
 
     const handleDelete = async (id: number) => {
         if (!confirm('确定删除该问答对吗？相关向量也会清除。')) return;
-        try { const res = await qaService.remove(id); if (res.code === 200) { toast({ title: '已删除' }); fetchPairs(); } }
-        catch (e) { toast({ variant: 'destructive', title: '删除失败', description: e instanceof Error ? e.message : String(e) }); }
+        try { const res = await qaService.remove(id); throwIfFailed(res); toast({ title: '已删除' }); fetchPairs(); }
+        catch (e) { toast({ variant: 'destructive', title: '删除失败', description: getErrorMessage(e) }); }
     };
 
     const handleGenerate = async () => {
         if (!genDocId) { toast({ variant: 'destructive', title: '请选择用于生成的文档' }); return; }
         try {
             const res = await qaService.generate(Number(genDocId));
-            if (res.code === 200) toast({ title: '已开始生成', description: '稍后刷新查看草稿并复核' });
-        } catch (e) { toast({ variant: 'destructive', title: '生成失败', description: e instanceof Error ? e.message : String(e) }); }
+            throwIfFailed(res);
+            toast({ title: '已开始生成', description: '稍后刷新查看草稿并复核' });
+        } catch (e) { toast({ variant: 'destructive', title: '生成失败', description: getErrorMessage(e) }); }
     };
 
     const statusBadge = (p: QaPair) => {

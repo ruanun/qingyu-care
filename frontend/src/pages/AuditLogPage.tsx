@@ -4,6 +4,7 @@ import type { AuditLog } from '@/api/audit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const AuditLogPage: React.FC = () => {
   const { toast } = useToast();
@@ -21,7 +22,7 @@ const AuditLogPage: React.FC = () => {
         setPage(res.data.number);
       })
       .catch((e: Error) =>
-        toast({ title: '加载失败', description: e.message, variant: 'destructive' })
+        toast({ title: '加载失败', description: getErrorMessage(e), variant: 'destructive' })
       );
   };
 

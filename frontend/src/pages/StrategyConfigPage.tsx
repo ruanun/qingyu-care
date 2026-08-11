@@ -36,6 +36,7 @@ import { chatStrategyService, type ChatStrategy } from '@/api/strategy';
 import { promptService, type PromptTemplate } from '@/api/prompt';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const StrategyConfigPage: React.FC = () => {
     const [strategies, setStrategies] = useState<ChatStrategy[]>([]);
@@ -54,8 +55,8 @@ const StrategyConfigPage: React.FC = () => {
             ]);
             if (stratRes.code === 200) setStrategies(stratRes.data);
             if (promptRes.code === 200) setPrompts(promptRes.data);
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "数据加载失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "数据加载失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -82,8 +83,8 @@ const StrategyConfigPage: React.FC = () => {
                 setIsDialogOpen(false);
                 fetchData();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }
     };
 
@@ -93,8 +94,8 @@ const StrategyConfigPage: React.FC = () => {
             await chatStrategyService.delete(id);
             toast({ title: "策略已删除" });
             fetchData();
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "删除失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }
     };
 

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { handoverService } from '@/api/handover';
 import type { HandoverRule, HandoverRuleType } from '@/api/handover';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const HandoverRulePage: React.FC = () => {
     const [rules, setRules] = useState<HandoverRule[]>([]);
@@ -23,8 +24,8 @@ const HandoverRulePage: React.FC = () => {
             if (response.code === 200) {
                 setRules(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "获取规则失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "获取规则失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -42,8 +43,8 @@ const HandoverRulePage: React.FC = () => {
                 toast({ title: rule.enabled ? "规则已禁用" : "规则已启用" });
                 fetchRules();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "更新失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "更新失败", description: getErrorMessage(error) });
         }
     };
 
@@ -66,8 +67,8 @@ const HandoverRulePage: React.FC = () => {
                 setEditingId(null);
                 fetchRules();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         }
     };
 

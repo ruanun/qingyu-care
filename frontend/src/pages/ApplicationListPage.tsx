@@ -24,6 +24,7 @@ import {
 import { applicationService } from '@/api/application';
 import type { Application } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const ApplicationListPage: React.FC = () => {
     const [apps, setApps] = useState<Application[]>([]);
@@ -53,8 +54,8 @@ const ApplicationListPage: React.FC = () => {
             if (response.code === 200) {
                 setApps(response.data);
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "加载失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "加载失败", description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -100,8 +101,8 @@ const ApplicationListPage: React.FC = () => {
                     setIsDialogOpen(false);
                 }
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "保存失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
         } finally {
             setIsSubmitting(false);
         }
@@ -114,8 +115,8 @@ const ApplicationListPage: React.FC = () => {
                 toast({ title: app.enabled ? "应用已禁用" : "应用已启用" });
                 fetchApps();
             }
-        } catch (error: any) {
-            toast({ variant: "destructive", title: "操作失败", description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "操作失败", description: getErrorMessage(error) });
         }
     };
 

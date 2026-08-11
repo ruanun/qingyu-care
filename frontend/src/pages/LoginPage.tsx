@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { authService } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage } from '@/lib/apiResult';
 
 const LoginPage: React.FC = () => {
     const navigate = useNavigate();
@@ -46,8 +47,8 @@ const LoginPage: React.FC = () => {
             } else {
                 toast({ variant: 'destructive', title: '登录失败', description: res.message });
             }
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '登录失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '登录失败', description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
@@ -70,8 +71,8 @@ const LoginPage: React.FC = () => {
             } else {
                 toast({ variant: 'destructive', title: '注册失败', description: res.message });
             }
-        } catch (error: any) {
-            toast({ variant: 'destructive', title: '注册失败', description: error.message });
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '注册失败', description: getErrorMessage(error) });
         } finally {
             setIsLoading(false);
         }
