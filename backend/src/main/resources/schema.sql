@@ -152,7 +152,6 @@ CREATE TABLE IF NOT EXISTS chat_message (
     hit_chunk_ids VARCHAR(500),                    -- 命中的知识片段 IDs（JSON 数组）
     confidence_score DOUBLE PRECISION,
     token_usage INTEGER,
-    is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
