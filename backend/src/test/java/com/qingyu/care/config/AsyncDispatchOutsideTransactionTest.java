@@ -48,6 +48,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 提交之后；或像 {@code startCrawl} 那样让投递方法不带 {@code @Transactional}；
  * 或像 {@code WebhookDispatcher} 那样用 {@code @TransactionalEventListener(AFTER_COMMIT)}。
  *
+ * <p>⚠️ <b>已知盲区：只看「直接调用」，抓不到经私有方法间接投递的情况。</b>
+ * {@code SiteCrawlService.startCrawl} 就是这种形状——它调私有的 {@code launch()}，
+ * 由后者投递 {@code runCrawl}。所以有人给 {@code startCrawl} 加回 {@code @Transactional} 时
+ * 本测试<b>不会红</b>，那一种回归仍由 {@code SiteCrawlServiceTest} 里那条窄的反射断言盯着。
+ * 两条测试互补，<b>别因为有了本测试就把那条删掉</b>。
+ * 要覆盖间接调用得做调用图分析（读字节码），代价大于收益，本次未做。
+ *
  * @author ruan
  */
 class AsyncDispatchOutsideTransactionTest {

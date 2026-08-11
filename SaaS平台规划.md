@@ -288,9 +288,18 @@
    当前只能保证「每次改动不新增」，无法把 lint 当红绿灯用。
    </details>
 
-8. **站点爬取 C-1 只有结构性哨兵**
+8. ~~**站点爬取 C-1 只有结构性哨兵**~~ ✅ **已清理（2026-08-11）**
+   把守护从「盯 `startCrawl` 一个方法」扩成「扫全仓库、守这一类错误」：新增 `AsyncDispatchOutsideTransactionTest`，凡 `@Transactional` 方法体内（抠掉 `AfterCommit.run(...)` 实参后）仍出现对 `@Async` 方法的调用即红。白名单**空**。两条非空断言防永真（源码目录必须存在、`@Async` 方法必须扫到至少一个）。
+   ⚠️ **扩守护当场抓出同一形态的另外两处真缺陷**，此前从无人注意：
+   - `KnowledgeServiceImpl.uploadDocument` 在 `@Transactional` 里投递 `processDocumentAsync`，而异步侧 `processDocument` 取不到行时是 `findById(...).orElse(null)` 后直接 return——**完全静默**：上传的文件永远停在 PENDING、不入向量库、无日志无异常。
+   - `WebPageSyncService.addWebPage` 同形态，只多留一句「文档不存在」的 warn，文档同样卡 PENDING。
+   - 另有 `WebhookDispatcher.onDomainEvent`（`REQUIRES_NEW` 事务里投递 `queue.dispatch`）：**有兜底**（`WebhookRetryScheduler` 重扫 PENDING 行，DB 投递行才是事实源、队列只是加速通道），不致命，一并修掉。
+   修法是新增 `util/AfterCommit.run(Runnable)` 把投递推迟到提交之后，**只动投递时机、不动事务边界**（刻意不照 C-1 那样去掉 `@Transactional`，那会顺带改掉这几个方法的事务语义）。
+   ⚠️ **两条测试互补，别删旧的那条**：新扫描器只看「直接调用」，而 `startCrawl` 是经私有 `launch()` 间接投递的——有人给它加回 `@Transactional` 时新测试**不会红**，那一种回归仍由 `SiteCrawlServiceTest` 里那条窄的反射断言盯着。覆盖间接调用需要读字节码做调用图分析，代价大于收益，未做。
+   <details><summary>原问题</summary>
    「`startCrawl` 在事务内投递 `@Async`」这条竞态无法确定性复现（实测把 `@Transactional` 加回后 IT 连跑 4 次全绿），现在只有一条反射断言守住「注解被加回来」这一种回归方式，竞态本身靠手工验证项兜底。
    同批的另两处（`Error` 逃逸留僵尸 RUNNING、收尾 detached merge 静默回滚配置）终审已证明纯 Mockito 可测并补了真守护。
+   </details>
 
 9. ~~**管理后台大量写操作把业务错误静默吞掉**~~ ✅ **已清理（2026-08-11）**
    36 处全部改成仓库既定写法：新增 `lib/apiResult.ts` 的 `throwIfFailed(res)`（`code ≠ 200` 即抛）+ **复用调用点已有的 catch**——那些 catch 本来就在弹 destructive toast，只是从来走不到。同一批里 `getErrorMessage(error)` 收敛了 47 处 `catch (error: any)`（技术债 7 的最大一块）。
