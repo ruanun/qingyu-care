@@ -12,6 +12,7 @@ export interface AiTool {
     timeoutMs: number;
     maxResponseChars: number;
     enabled: boolean;
+    scope?: 'PLATFORM' | 'TENANT';
     createdAt: string;
     updatedAt: string;
 }

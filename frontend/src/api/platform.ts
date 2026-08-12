@@ -1,6 +1,7 @@
 import api from './client';
 import type { ApiResponse } from '../types';
 import type { AiModelConfig } from './ai-model';
+import type { AiTool } from './chat-tool';
 
 export interface PlatformOverview {
   health: string;
@@ -27,6 +28,17 @@ export const platformService = {
     api.put(`/platform/models/${id}`, data),
   deleteSharedModel: (id: number): Promise<ApiResponse<void>> =>
     api.delete(`/platform/models/${id}`),
+
+  // 共享工具（路径不带 /v1——axios 实例的 baseURL 已经是 '/api/v1'，
+  // 见 api/client.ts；写成 '/v1/platform/tools' 会拼成 /api/v1/v1/...）
+  listSharedTools: (): Promise<ApiResponse<AiTool[]>> =>
+    api.get('/platform/tools'),
+  createSharedTool: (data: Partial<AiTool>): Promise<ApiResponse<AiTool>> =>
+    api.post('/platform/tools', data),
+  updateSharedTool: (id: number, data: Partial<AiTool>): Promise<ApiResponse<AiTool>> =>
+    api.put(`/platform/tools/${id}`, data),
+  deleteSharedTool: (id: number): Promise<ApiResponse<void>> =>
+    api.delete(`/platform/tools/${id}`),
 
   // 系统概览
   getOverview: (): Promise<ApiResponse<PlatformOverview>> =>

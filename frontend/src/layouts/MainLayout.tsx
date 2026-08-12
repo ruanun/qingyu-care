@@ -52,6 +52,7 @@ const sections: NavSection[] = [
                 { label: '租户列表', path: '/tenants', icon: Building },
                 { label: '系统概览', path: '/platform/overview', icon: Activity },
                 { label: '共享模型池', path: '/platform/models', icon: Boxes },
+                { label: '共享工具', path: '/platform/tools', icon: Wrench },
                 { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal },
             ],
         }],

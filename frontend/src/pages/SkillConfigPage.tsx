@@ -157,6 +157,9 @@ const SkillConfigPage: React.FC = () => {
                                 <label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer">
                                     <input type="checkbox" checked={(editing?.toolIds || []).includes(t.id)} onChange={() => toggleTool(t.id)} />
                                     <span className="font-mono">{t.name}</span>
+                                    {t.scope === 'PLATFORM' && (
+                                        <Badge variant="secondary" className="text-[10px] ml-1">平台共享</Badge>
+                                    )}
                                     <span className="text-muted-foreground text-xs truncate">{t.description}</span>
                                 </label>
                             ))}

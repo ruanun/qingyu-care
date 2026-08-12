@@ -119,8 +119,17 @@ const ToolConfigPage: React.FC = () => {
                             <Card key={t.id} className={cn('flex flex-col hover:shadow-md', !t.enabled && 'opacity-60')}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-center justify-between mb-2">
-                                        <Badge variant="secondary" className="font-mono text-[10px]">{t.httpMethod}</Badge>
-                                        <Switch checked={t.enabled} onCheckedChange={() => handleToggle(t)} />
+                                        <div className="flex items-center gap-1">
+                                            <Badge variant="secondary" className="font-mono text-[10px]">{t.httpMethod}</Badge>
+                                            {t.scope === 'PLATFORM' && (
+                                                <Badge variant="secondary" className="text-[10px]">平台共享</Badge>
+                                            )}
+                                        </div>
+                                        <Switch
+                                            checked={t.enabled}
+                                            disabled={t.scope === 'PLATFORM'}
+                                            onCheckedChange={() => handleToggle(t)}
+                                        />
                                     </div>
                                     <CardTitle className="text-lg font-mono">{t.name}</CardTitle>
                                     <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{t.description}</p>
@@ -131,8 +140,12 @@ const ToolConfigPage: React.FC = () => {
                                     </div>
                                 </CardContent>
                                 <CardFooter className="pt-2 flex justify-end gap-2 border-t mt-auto">
-                                    <Button variant="outline" size="sm" onClick={() => openEdit(t)}><Edit2 className="w-3 h-3" /></Button>
-                                    <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(t.id)}><Trash2 className="w-3 h-3" /></Button>
+                                    {t.scope !== 'PLATFORM' && (
+                                        <>
+                                            <Button variant="outline" size="sm" onClick={() => openEdit(t)}><Edit2 className="w-3 h-3" /></Button>
+                                            <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(t.id)}><Trash2 className="w-3 h-3" /></Button>
+                                        </>
+                                    )}
                                 </CardFooter>
                             </Card>
                         ))}
