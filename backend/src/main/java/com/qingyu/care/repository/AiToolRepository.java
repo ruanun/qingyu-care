@@ -34,6 +34,14 @@ public interface AiToolRepository extends JpaRepository<AiTool, Long> {
      * {@code findByIdInAndEnabledTrue} 是 filter-bound 的，别的租户的 id 天然查不出来；
      * 这条是 native 查询、不受 @Filter 保护，少了 scope 条件就变成「任意 id 都能查出来」——
      * 租户只要在自己的 skill 里填上别人的工具 id，就能调用他人工具（连带用掉他人的鉴权头）。
+     *
+     * <p>⚠️ <b>调用方必须在 {@code ids} 为空时短路，不要调用本方法。</b>Spring Data JPA
+     * 只对 JPQL 的 {@code IN (:ids)} 做空集合改写，native 查询不享受这个待遇——空集合会被
+     * 原样展开成 {@code IN ()}，PostgreSQL 直接语法报错（不是返回空结果，是直接炸）。
+     * 仓库里已有同款先例：{@code DocumentRepository.findNamesByIds} 同样是 native
+     * {@code IN (:ids)}，其调用方 {@code AnalyticsService} 就写了
+     * {@code rankIds.isEmpty() ? Map.of() : documentRepository.findNamesByIds(rankIds)}
+     * 短路空集合，本方法的调用方须照此写法处理。
      */
     @Query(value = "SELECT * FROM ai_tool WHERE scope = 'PLATFORM' AND enabled = true AND id IN (:ids)",
            nativeQuery = true)
