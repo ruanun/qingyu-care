@@ -37,6 +37,7 @@ readonly RULES=(
   # score > 0）」正是它们共同决定的东西。相似度阈值改错的症状与换模型没标定完全一样——
   # 知识库有内容却问什么都答不知道，且检索返回空是 fail-soft 正常路径，日志里什么都没有。
   'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml|ChatStrategy|HybridRetrieval|RetrievalScope|KeywordSearchDao::### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
+  'AiTool|ChatToolService|SharedCredentialMasker|AiToolRepository::### 平台共享工具（`AiTool.scope`）'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then

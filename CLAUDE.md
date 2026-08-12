@@ -200,6 +200,27 @@ pnpm test    # vitest
 - `@AuditLog(action=, targetType=)`（`annotation/`）+ `AuditLogAspect`（`config/`）：`@Around` 业务方法成功后 `AuditLogService.saveAsync()` 异步落库，含正则脱敏（apiKey/password/secret → `***`）。给写操作打审计日志时加此注解即可。
 - 限流：`RateLimitConfig` + `RateLimitService`（Bucket4j + Lettuce Redis），`tryConsume(appKey, limitPerMinute)`，Redis 异常时 **fail-open**（放行）。
 
+### 平台共享工具（`AiTool.scope`）
+
+平台管理员可建 `scope=PLATFORM` 的共享工具（`tenant_id`/`app_id` 均 null），租户在自己的
+skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 markdown 注入每一轮系统提示，
+共享它等于静默改掉所有租户的回答行为。
+
+⚠️ 三条容易写错的地方：
+
+1. **两条 native 共享查询必须钉 `scope = 'PLATFORM'`**（`AiToolRepository`）。自有工具走的
+   `findByIdInAndEnabledTrue` 是 filter-bound 的，别的租户的 id 天然查不出来；共享查询是
+   native、不受 `@Filter` 保护，少了这个条件就变成任意 id 可绑 = **跨租户调用他人工具并用掉
+   他人的鉴权头**。
+2. **脱敏只能用在管理面 list 出口**（`listTools` / `getAllModels`），**绝不能碰运行时解析**
+   （`resolveTools`）——`HttpToolCallback` 要用真 `authHeader` 发出站请求。误伤的症状是共享
+   工具静默失效：第三方返 401，模型拿着错误响应继续编答案，全程无异常无日志。
+3. **`SharedCredentialMasker` 脱敏前必须 `em.detach`**。本项目未配置
+   `spring.jpa.open-in-view`，即 Spring Boot 默认的 `true`，OSIV 让 list 查出来的实体在整个
+   请求期间保持**受管**，直接 setter 置空会被脏检查刷回库——本意是防泄漏，结果是**把凭据真的
+   删掉**。`SharedToolIT` 用真实 MockMvc 请求钉住这条（直调 service 时实体本来就是分离的，
+   断言会静默退化成永真）。
+
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
 - 控制器在 `controller/open/`，DTO 在 `dto/open/`（如 `OpenChatController` 的 `/chat/completions` 与 SSE `/chat/stream`）。
