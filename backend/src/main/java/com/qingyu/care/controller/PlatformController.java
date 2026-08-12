@@ -4,12 +4,14 @@ import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.PlatformOverviewDTO;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.ApplicationRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
+import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +39,7 @@ public class PlatformController {
     private final UserRepository userRepository;
     private final ChatSessionRepository chatSessionRepository;
     private final HealthEndpoint healthEndpoint;
+    private final ChatToolService chatToolService;
 
     @GetMapping("/models")
     public ApiResponse<List<AiModelConfig>> listSharedModels() {
@@ -84,6 +87,54 @@ public class PlatformController {
         }
         modelRouterService.deleteModel(id);
         return ApiResponse.success("共享模型已删除", null);
+    }
+
+    // ===== 平台共享工具 =====
+
+    @GetMapping("/tools")
+    public ApiResponse<List<AiTool>> listSharedTools() {
+        SecurityUtil.requirePlatformAdmin();
+        return ApiResponse.success(chatToolService.listSharedTools());
+    }
+
+    @AuditLog(action = "SHARED_TOOL_CREATE", targetType = "AiTool")
+    @PostMapping("/tools")
+    public ApiResponse<AiTool> createSharedTool(@RequestBody AiTool tool) {
+        SecurityUtil.requirePlatformAdmin();
+        tool.setId(null);
+        return ApiResponse.success("共享工具已创建", chatToolService.saveSharedTool(tool));
+    }
+
+    @AuditLog(action = "SHARED_TOOL_UPDATE", targetType = "AiTool")
+    @PutMapping("/tools/{id}")
+    public ApiResponse<AiTool> updateSharedTool(@PathVariable Long id, @RequestBody AiTool tool) {
+        SecurityUtil.requirePlatformAdmin();
+        AiTool existing = chatToolService.getTool(id);
+        // 防越权：只允许操作平台共享工具，避免用租户私有工具的 id 越权提升/篡改
+        if (existing.getScope() != OwnerScope.PLATFORM) {
+            throw new BusinessException(404, "共享工具不存在");
+        }
+        if (tool.getName() != null) existing.setName(tool.getName());
+        if (tool.getDescription() != null) existing.setDescription(tool.getDescription());
+        if (tool.getInputSchema() != null) existing.setInputSchema(tool.getInputSchema());
+        if (tool.getHttpMethod() != null) existing.setHttpMethod(tool.getHttpMethod());
+        if (tool.getUrlTemplate() != null) existing.setUrlTemplate(tool.getUrlTemplate());
+        // 空值不覆盖：前端不回显凭据，提交时该字段为空表示「不修改」
+        if (tool.getAuthHeader() != null && !tool.getAuthHeader().isEmpty()) {
+            existing.setAuthHeader(tool.getAuthHeader());
+        }
+        if (tool.getTimeoutMs() != null) existing.setTimeoutMs(tool.getTimeoutMs());
+        if (tool.getMaxResponseChars() != null) existing.setMaxResponseChars(tool.getMaxResponseChars());
+        if (tool.getEnabled() != null) existing.setEnabled(tool.getEnabled());
+        return ApiResponse.success("共享工具已更新", chatToolService.saveSharedTool(existing));
+    }
+
+    @AuditLog(action = "SHARED_TOOL_DELETE", targetType = "AiTool")
+    @DeleteMapping("/tools/{id}")
+    public ApiResponse<Void> deleteSharedTool(@PathVariable Long id) {
+        SecurityUtil.requirePlatformAdmin();
+        chatToolService.deleteSharedTool(id);
+        return ApiResponse.success("共享工具已删除", null);
     }
 
     /**
