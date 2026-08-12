@@ -24,7 +24,10 @@ import static org.mockito.Mockito.when;
 /**
  * AiTool/AiSkill 管理面 list 的应用级收窄单测：TenantDataAspect 对 PLATFORM_ADMIN 整体不启用
  * @Filter，裸 findAll 会让平台管理员跨应用读全平台数据；listTools/listSkills 须显式按
- * TenantContext.getAppId() 收窄，无 appId 返空且不查库。
+ * TenantContext.getAppId() 收窄自有部分，无 appId 时自有部分返空且不查 findByAppId/findAll。
+ *
+ * <p>listTools 额外并入平台共享工具（Task 5），故无 appId 时返回值并非整体为空——
+ * 平台共享工具仍须可见，租户才能在 skill 里勾选它们；listSkills 无此语义，仍是整体返空。
  *
  * @author ruan
  */
@@ -60,13 +63,17 @@ class ChatToolServiceListScopeTest {
     }
 
     @Test
-    void listTools_无appId_返空且不查库() {
+    void listTools_无appId_平台共享仍可见_自有查询不被调用() {
+        // 无 appId（平台管理员未选定应用）时自有部分不查库，但平台共享工具仍须返回——
+        // 与 listSkills 的「整体返空」不是同一契约，别混为一谈（见类注释）。
+        AiTool shared = AiTool.builder().id(9L).name("shared").build();
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of(shared));
         when(credentialMasker.mask(any(), any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         List<AiTool> result = service().listTools();
 
-        assertThat(result).isEmpty();
+        assertThat(result).extracting(AiTool::getId).containsExactly(9L);
         verify(toolRepository, never()).findByAppId(org.mockito.ArgumentMatchers.any());
         verify(toolRepository, never()).findAll();
     }
