@@ -68,11 +68,39 @@ public class ChatToolService {
         }
         List<ToolCallback> callbacks = new ArrayList<>();
         if (!toolIds.isEmpty()) {
-            for (AiTool t : toolRepository.findByIdInAndEnabledTrue(toolIds)) {
+            for (AiTool t : resolveTools(toolIds)) {
                 callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
             }
         }
         return new ToolBundle(markdowns, callbacks);
+    }
+
+    /**
+     * 按 id 集合解析工具：当前应用自有 ∪ 平台共享。
+     *
+     * <p>先查自有（filter-bound，天然只看得到本租户本应用的行），剩下没命中的 id 再去查平台
+     * 共享（native，钉死 {@code scope='PLATFORM'}）。同一个 id 不可能既是自有又是共享，
+     * 所以顺序只影响查询次数不影响结果；自有全部命中时省掉第二条查询——绝大多数租户没绑
+     * 共享工具，不该为此多打一次库。
+     *
+     * <p><b>安全</b>：别的租户的工具 id 在两条查询里都覆盖不到——自有查询有 @Filter 挡着，
+     * 共享查询有 {@code scope='PLATFORM'} 挡着。少任何一道都会变成跨租户越权调用。
+     *
+     * <p><b>这里拿到的必须是未脱敏的原始实体</b>：{@code HttpToolCallback} 要用 authHeader
+     * 真的发出站请求，绝不能在这条路径上套 {@code SharedCredentialMasker}。
+     */
+    private List<AiTool> resolveTools(Set<Long> toolIds) {
+        List<AiTool> tools = new ArrayList<>(toolRepository.findByIdInAndEnabledTrue(toolIds));
+        Set<Long> found = new LinkedHashSet<>();
+        for (AiTool t : tools) {
+            found.add(t.getId());
+        }
+        Set<Long> rest = new LinkedHashSet<>(toolIds);
+        rest.removeAll(found);
+        if (!rest.isEmpty()) {
+            tools.addAll(toolRepository.findSharedByIdInAndEnabledTrue(rest));
+        }
+        return tools;
     }
 
     // ===== AiTool CRUD =====
