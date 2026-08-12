@@ -25,6 +25,9 @@ import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.List;
+import java.util.Set;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -231,5 +234,71 @@ class SharedToolIT extends AbstractPostgresIT {
         boolean leaked = java.util.stream.StreamSupport.stream(body.spliterator(), false)
                 .anyMatch(n -> n.path("id").asLong() == saved.getId());
         assertThat(leaked).as("自封 PLATFORM 但带租户归属的行不该出现在别的租户列表里").isFalse();
+    }
+
+    /**
+     * 守 {@link AiToolRepository#findSharedByIdInAndEnabledTrue} 这条<b>运行时解析</b>查询。
+     *
+     * <p>⚠️ <b>比上面几条 list 侧的测试更要紧</b>：list 侧查询漏了守护，后果只是「租户在界面上
+     * 多看见/少看见一条工具」；这条查询漏了守护，后果是 {@code HttpToolCallback} 真的带着
+     * <b>查出来那一行的 authHeader</b> 对外发起真实 HTTP 请求——租户只要在自己的 skill 里填一个
+     * 不属于自己的工具 id，就能让平台或别的租户的凭据被自己的对话链路盗用。已实证：把这条查询
+     * 的 WHERE 简化成裸 {@code id IN (:ids)} 后，681 条单测 + 3 条既有 IT 全部照绿——它是这批
+     * 代码里唯一一条完全没有真库测试压着的高危查询。
+     *
+     * <p>不需要 MockMvc：本查询是 native SQL，不依赖 Hibernate {@code @Filter}，直接
+     * {@code @Autowired AiToolRepository} 调用即可复现，比走 HTTP 简单可靠。
+     */
+    @Test
+    void 解析查询只返回真正的平台共享工具() {
+        // 四行数据打四种情况——两个 WHERE 条件（scope='PLATFORM'、tenant_id IS NULL）
+        // 必须各自配一行「只靠这一个条件才被挡住」的数据，否则删掉某个条件时另一个条件
+        // 会顺带把泄漏挡住，变异验证测不出那个条件到底有没有在守。
+        // 1. 真正的平台共享工具——scope=PLATFORM 且 tenant_id/app_id 均为 null，理应命中
+        AiTool realShared = seedSharedTool("Bearer platform-secret-real");
+
+        // 2. 别的租户的私有工具——scope=TENANT 且 tenant_id 为真实租户，两个条件都会把它挡住，
+        //    留作「无论删哪个条件都不该泄漏」的基线对照
+        Application otherTenant = seedApp("RESOLVE_OTHER_TENANT", "http://localhost");
+        AiTool otherTenantPrivate = AiTool.builder()
+                .name("other_tenant_private").description("别的租户私有工具")
+                .urlTemplate("http://other.example.com/{q}")
+                .scope(OwnerScope.TENANT).enabled(true).build();
+        otherTenantPrivate.setAuthHeader("Bearer other-tenant-secret");
+        otherTenantPrivate.setTenantId(otherTenant.getTenant().getId());
+        otherTenantPrivate.setAppId(otherTenant.getId());
+        AiTool savedOtherTenantPrivate = toolRepository.saveAndFlush(otherTenantPrivate);
+
+        // 3. 「租户自封共享」留下的畸形行——scope=PLATFORM，但 tenant_id 非空。
+        //    只靠 tenant_id IS NULL 这一个条件挡住；删掉它，本行立刻泄漏。
+        Application selfDeclaredOwner = seedApp("RESOLVE_SELF_DECLARED", "http://localhost");
+        AiTool selfDeclared = AiTool.builder()
+                .name("resolve_self_declared").description("自封共享")
+                .urlTemplate("http://attacker.example.com/{q}")
+                .scope(OwnerScope.PLATFORM)
+                .enabled(true).build();
+        selfDeclared.setAuthHeader("Bearer attacker-secret");
+        selfDeclared.setTenantId(selfDeclaredOwner.getTenant().getId());
+        selfDeclared.setAppId(selfDeclaredOwner.getId());
+        AiTool savedSelfDeclared = toolRepository.saveAndFlush(selfDeclared);
+
+        // 4. 「TenantContext 未传递导致 tenant_id 静默落 null」这一 CLAUDE.md 反复点名的
+        //    bug 类的模拟——scope 仍是 TENANT，但 tenant_id/app_id 因上下文丢失而为 null。
+        //    只靠 scope='PLATFORM' 这一个条件挡住；删掉它，本行立刻泄漏。
+        AiTool orphanedTenantScoped = AiTool.builder()
+                .name("orphaned_tenant_scoped").description("上下文丢失后误落 null 租户的租户工具")
+                .urlTemplate("http://orphan.example.com/{q}")
+                .scope(OwnerScope.TENANT)
+                .enabled(true).build();
+        orphanedTenantScoped.setAuthHeader("Bearer orphaned-secret");
+        orphanedTenantScoped.setTenantId(null);
+        orphanedTenantScoped.setAppId(null);
+        AiTool savedOrphaned = toolRepository.saveAndFlush(orphanedTenantScoped);
+
+        List<AiTool> got = toolRepository.findSharedByIdInAndEnabledTrue(Set.of(
+                realShared.getId(), savedOtherTenantPrivate.getId(),
+                savedSelfDeclared.getId(), savedOrphaned.getId()));
+
+        assertThat(got).extracting(AiTool::getId).containsExactly(realShared.getId());
     }
 }
