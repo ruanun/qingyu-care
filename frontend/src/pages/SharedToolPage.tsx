@@ -265,7 +265,7 @@ const SharedToolPage: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>取消</Button>
+            <Button variant="outline" onClick={() => handleClose(false)}>取消</Button>
             <Button onClick={submit} disabled={isSaving}>
               {isSaving ? '保存中…' : '保存配置'}
             </Button>

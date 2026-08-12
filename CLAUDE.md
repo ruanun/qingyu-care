@@ -206,12 +206,18 @@ pnpm test    # vitest
 skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 markdown 注入每一轮系统提示，
 共享它等于静默改掉所有租户的回答行为。
 
-⚠️ 三条容易写错的地方：
+⚠️ 五条容易写错的地方：
 
-1. **两条 native 共享查询必须钉 `scope = 'PLATFORM'`**（`AiToolRepository`）。自有工具走的
-   `findByIdInAndEnabledTrue` 是 filter-bound 的，别的租户的 id 天然查不出来；共享查询是
-   native、不受 `@Filter` 保护，少了这个条件就变成任意 id 可绑 = **跨租户调用他人工具并用掉
-   他人的鉴权头**。
+1. **四条 native 共享查询必须同时钉 `scope = 'PLATFORM'` 和 `tenant_id IS NULL`**
+   （`AiToolRepository` 两条 + `AiModelConfigRepository` 两条，后者是同类既有漏洞、同批修的）。
+   自有工具走的 `findByIdInAndEnabledTrue` 是 filter-bound 的，别的租户的 id 天然查不出来；
+   共享查询是 native、不受 `@Filter` 保护，只判 `scope` 就变成任意 id 可绑 = **跨租户调用他人
+   工具并用掉他人的鉴权头**。⚠️ **`scope` 是客户端可控字段**——跟着 `@RequestBody` 进来，租户
+   POST `/v1/ai-tools` 时可在请求体里自封 `"scope":"PLATFORM"`（已真机复现：自封后落库
+   scope=PLATFORM + 自己的 tenant_id，随即出现在所有租户的共享列表里，带着攻击者的
+   authHeader 被别的租户绑进 skill 调用）。真正表示「平台所有」的是 `tenant_id IS NULL`，它
+   由服务层强制写入、请求体改不动——**只判 `scope` 等于让租户自己决定要不要被全平台挂载**。
+   写入侧：租户侧 `create` 强制 `setScope(TENANT)`，平台共享只能走 `/v1/platform/*`。
 2. **脱敏只能用在管理面 list 出口**（`listTools` / `getAllModels`），**绝不能碰运行时解析**
    （`resolveTools`）——`HttpToolCallback` 要用真 `authHeader` 发出站请求。误伤的症状是共享
    工具静默失效：第三方返 401，模型拿着错误响应继续编答案，全程无异常无日志。
@@ -220,6 +226,14 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    请求期间保持**受管**，直接 setter 置空会被脏检查刷回库——本意是防泄漏，结果是**把凭据真的
    删掉**。`SharedToolIT` 用真实 MockMvc 请求钉住这条（直调 service 时实体本来就是分离的，
    断言会静默退化成永真）。
+4. **共享工具应限于只读 / 幂等端点**。`HttpToolCallback` 的 POST body 由模型按租户 skill 的
+   提示词生成、服务端不校验（`inputSchema` 只是给模型的提示）。以前工具与凭据同属一租户，
+   参数乱填是自伤；现在凭据是平台的，租户能驱动模型往平台的第三方端点发任意 JSON body。URL
+   侧安全（`fillTemplate` 做了 `URLEncoder.encode`、host 由模板钉死），**只影响 POST**。
+5. **改动本链路后必须真机验证一次**：建一个平台共享工具（`authHeader` 设成可识别的值）→
+   租户建 skill 绑定它 → 发一句触发工具的对话 → **确认出站请求头里带着那个平台凭据**。理由：
+   脱敏若误伤运行时路径，症状是第三方返 401、模型拿着错误响应继续编答案、**全程无异常无
+   日志**，只有真机能发现。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。

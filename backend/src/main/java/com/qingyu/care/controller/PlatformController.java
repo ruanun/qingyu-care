@@ -26,7 +26,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 平台级管理（仅平台管理员）：共享模型池、系统概览 */
+/** 平台级管理（仅平台管理员）：共享模型池、共享工具池、系统概览 */
 @RestController
 @RequestMapping("/v1/platform")
 @RequiredArgsConstructor
