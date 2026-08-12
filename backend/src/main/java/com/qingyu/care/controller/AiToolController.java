@@ -3,6 +3,7 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.ChatToolService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -35,6 +36,10 @@ public class AiToolController {
     @PostMapping
     public ApiResponse<AiTool> create(@RequestBody AiTool tool) {
         tool.setId(null);
+        // 租户侧建的工具一律是租户级：scope 是客户端可控字段，不清掉的话租户可以在请求体里
+        // 自封 PLATFORM，让自己的工具（连同自己的 authHeader）出现在所有租户的列表里。
+        // 平台共享工具只能走 /v1/platform/tools（那边强制 tenantId=null）。
+        tool.setScope(OwnerScope.TENANT);
         return ApiResponse.success("工具已创建", chatToolService.saveTool(tool));
     }
 

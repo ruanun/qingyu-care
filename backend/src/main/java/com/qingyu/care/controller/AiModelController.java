@@ -3,6 +3,7 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.ModelRouterService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -42,6 +43,10 @@ public class AiModelController {
     @PostMapping
     public ApiResponse<AiModelConfig> createModel(@RequestBody AiModelConfig config) {
         config.setId(null); // 确保是新建
+        // 租户侧建的模型一律是租户级：scope 是客户端可控字段，不清掉的话租户可以在请求体里
+        // 自封 PLATFORM，把所有租户的对话流量导向自己的 endpoint。
+        // 平台共享模型只能走 /v1/platform/models（那边强制 tenantId=null）。
+        config.setScope(OwnerScope.TENANT);
         AiModelConfig saved = modelRouterService.saveModel(config);
         return ApiResponse.success("模型配置已创建", saved);
     }
