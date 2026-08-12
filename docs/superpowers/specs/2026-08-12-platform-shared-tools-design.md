@@ -108,10 +108,16 @@ skill 侧不变：仍是 `findByEnabledTrue()`，因为 skill 不共享。
  * 判据直接复用 TenantOwnershipGuard.mutableInCurrentContext——「能写它」与「能看它的凭据」
  * 是同一个权限边界，不新造概念。
  */
-public static <T> List<T> maskCredentials(List<T> list,
-                                          Function<T, Long> tenantIdGetter,
-                                          Function<T, Long> appIdGetter,
-                                          Consumer<T> credentialCleaner) { ... }
+@Component
+public class SharedCredentialMasker {
+    @PersistenceContext
+    private EntityManager em;
+
+    public <T> List<T> mask(List<T> list,
+                            Function<T, Long> tenantIdGetter,
+                            Function<T, Long> appIdGetter,
+                            Consumer<T> credentialCleaner) { ... }
+}
 ```
 
 调用点两处，**都是面向租户的 list**：
@@ -122,7 +128,25 @@ public static <T> List<T> maskCredentials(List<T> list,
 
 **写入侧不受影响**：`AiToolController.update` 与模型侧同款逻辑都已是「空值不覆盖原值」，脱敏后的对象回传保存不会抹掉真实凭据。
 
-⚠️ 脱敏必须作用在**从库里读出来的对象**上，而这些对象在同一个持久化上下文里可能是**受管实体**——直接 setter 置空会被 Hibernate 脏检查当成真实修改刷回库，**把凭据真的删掉**。因此脱敏路径必须在只读事务外，或对分离实体操作。本设计的调用点（`listTools` / `getAllModels`）都不带 `@Transactional`，查询完即分离，安全；**但实现时要在测试里钉住这一条**（见 §5）。
+### ⚠️ 脱敏前必须显式 detach
+
+脱敏作用在从库里读出来的对象上，而**这些对象是受管实体**——直接 setter 置空会被 Hibernate 脏检查当成真实修改，后续同一请求内任何事务提交都可能把 `null` 刷回库，**真把凭据删掉**。
+
+不能靠「调用点没带 `@Transactional` 所以已经分离」来免除这一步：本项目**未显式配置 `spring.jpa.open-in-view`，即 Spring Boot 默认的 `true`**，OSIV 让 EntityManager 在整个请求期间保持打开，查询结果一直是受管状态。这条曾经在本设计初稿里被判断成「安全」，是错的。
+
+因此脱敏助手必须先 `entityManager.detach(entity)` 再置空：
+
+```java
+// SharedCredentialMasker 持有 EntityManager（@PersistenceContext 注入），
+// 因此它是 @Component 而非静态工具类——与 TenantOwnershipGuard 的静态风格不同，
+// 这是被 detach 需求逼出来的，不是随意偏离。
+em.detach(t);
+credentialCleaner.accept(t);
+```
+
+detach 后该对象脱离持久化上下文，脏检查不再覆盖它，置空只影响将要序列化给前端的这份数据。
+
+**这条必须有测试钉住**（见 §5 第 8 条）：脱敏返回后重新查库，凭据仍在。变异验证方式——把 `em.detach` 那行删掉看测试是否转红。
 
 ### 3.5 管理面
 
@@ -174,7 +198,7 @@ public void deleteSharedTool(Long id)                  // 校验确是 PLATFORM 
 |------|------|
 | native 查询漏掉 `scope='PLATFORM'` → 跨租户越权 | §3.2 明确标注；单测 + IT 双重守护（§5） |
 | 脱敏做到运行时路径 → 共享工具静默失效 | §3.3 明确分离；手工验证兜底（§5） |
-| 脱敏 setter 触发脏检查把凭据刷回 null | §3.4 说明；测试钉住「脱敏后库里凭据仍在」 |
+| 脱敏 setter 触发脏检查把凭据刷回 null（**OSIV 默认开启，实体一直受管**） | 脱敏前显式 `em.detach`（§3.4）；IT 钉住「脱敏返回后重查库凭据仍在」，并用删掉 detach 的变异验证该测试有判别力 |
 | 存量 `ai_tool` 行 `scope` 为 NULL 撞 `nullable=false` | 配迁移 SQL 回填 `'TENANT'` |
 | 租户误以为能编辑平台工具 | 前端隐藏入口，后端守卫不动 |
 
@@ -192,7 +216,8 @@ public void deleteSharedTool(Long id)                  // 校验确是 PLATFORM 
 **集成测试（Failsafe，Testcontainers）**
 
 7. `SharedToolIT`：租户 A 建 skill 绑定「平台共享工具 id」→ 能解析；绑定「租户 B 的工具 id」→ 解析不到。走真实 MockMvc 请求——`@Filter` 只在真实请求流经 `TenantInterceptor` 时才生效，**这条只有 IT 能测**。
-8. 同 IT 内验证：脱敏返回后再查库，`auth_header` / `api_key` 仍在（守 §3.4 的脏检查风险）。
+8. 同 IT 内验证：以租户身份请求 list 端点拿到脱敏结果后，**重新查库**确认 `auth_header` / `api_key` 仍在（守 §3.4 的脏检查风险）。⚠️ 必须走**真实 MockMvc 请求**而非直接调 service——OSIV 只在真实请求里才生效，直调 service 时实体本来就是分离的，这条测试会**静默退化成永真**。
+   **变异验证**：删掉 `em.detach(t)` 那一行，本条必须转红；不转红说明测试没有判别力（多半是没走真实请求），要先修测试。
 
 **必须手工验证（自动化覆盖不到）**
 
