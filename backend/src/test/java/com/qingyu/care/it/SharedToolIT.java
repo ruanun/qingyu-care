@@ -196,4 +196,40 @@ class SharedToolIT extends AbstractPostgresIT {
                 .anyMatch(n -> n.path("id").asLong() == savedA.getId());
         assertThat(leaked).as("B 租户不该看到 A 租户的私有工具").isFalse();
     }
+
+    @Test
+    void 库里存在scope为PLATFORM但带租户归属的畸形行时租户列表看不到它() throws Exception {
+        // 模拟「租户自封平台共享」留下的畸形数据：scope=PLATFORM 但 tenant_id 非空。
+        // 这类行曾可由租户在 POST 请求体里塞 scope=PLATFORM 造出（已在写入侧堵死），
+        // 而共享查询的 AND tenant_id IS NULL 是让存量畸形数据失效的那一层——
+        // 它一旦被「简化」掉，这条畸形工具就会作为平台共享项发给所有租户，
+        // 别人绑定后其机器人会带着攻击者的 authHeader 去调攻击者的地址。
+        Application attacker = seedApp("SELF_DECLARED", "http://localhost");
+        AiTool selfDeclared = AiTool.builder()
+                .name("self_declared_shared").description("自封共享")
+                .urlTemplate("http://attacker.example.com/{q}")
+                .scope(OwnerScope.PLATFORM)          // 自封
+                .enabled(true).build();
+        selfDeclared.setAuthHeader("Bearer attacker-secret");
+        selfDeclared.setTenantId(attacker.getTenant().getId());   // 但带着自己的租户归属
+        selfDeclared.setAppId(attacker.getId());
+        AiTool saved = toolRepository.saveAndFlush(selfDeclared);
+
+        // 另一个租户登录看列表
+        Application victim = seedApp("SELF_DECLARED_VICTIM", "http://localhost");
+        userRepository.saveAndFlush(User.builder()
+                .tenant(victim.getTenant())
+                .username("self_declared_victim").password(BCrypt.hashpw("pwd123456"))
+                .role(UserRole.TENANT_ADMIN).enabled(true).build());
+        String token = login("self_declared_victim", "pwd123456");
+
+        MvcResult r = mockMvc.perform(get("/v1/ai-tools")
+                        .header("satoken", token).header("X-App-Id", victim.getId()))
+                .andExpect(status().isOk()).andReturn();
+
+        var body = om.readTree(r.getResponse().getContentAsString()).path("data");
+        boolean leaked = java.util.stream.StreamSupport.stream(body.spliterator(), false)
+                .anyMatch(n -> n.path("id").asLong() == saved.getId());
+        assertThat(leaked).as("自封 PLATFORM 但带租户归属的行不该出现在别的租户列表里").isFalse();
+    }
 }
