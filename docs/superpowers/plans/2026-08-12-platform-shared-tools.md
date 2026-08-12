@@ -497,15 +497,9 @@ class ChatToolServiceSharedTest {
     private HttpToolExecutor httpToolExecutor;
     @Mock
     private ObjectMapper objectMapper;
-    @Mock
-    private SharedCredentialMaskerHolder unusedHolder;   // 占位，见下方说明
 
     @InjectMocks
     private ChatToolService chatToolService;
-
-    /** 占位类型：若 ChatToolService 尚未持有该依赖，删掉上面的 @Mock 字段即可。 */
-    interface SharedCredentialMaskerHolder {
-    }
 
     private AiSkill skillBinding(Long... toolIds) {
         return AiSkill.builder()
@@ -573,7 +567,9 @@ class ChatToolServiceSharedTest {
 }
 ```
 
-> ⚠️ 上面的 `SharedCredentialMaskerHolder` 占位接口与对应 `@Mock` 字段是给 Task 5 用的：Task 5 会让 `ChatToolService` 持有 `SharedCredentialMasker`。**本任务实现时先删掉这两行**（`@Mock private SharedCredentialMaskerHolder unusedHolder;` 与 `interface SharedCredentialMaskerHolder {}`），Task 5 再把真实依赖加回来。`any` 与 `verify` 的 import 若有未使用的按编译提示清理。
+> ⚠️ Task 5 会给 `ChatToolService` 加一个 `SharedCredentialMasker` 构造参数，届时本文件要补一个对应的 `@Mock` 字段（Task 5 会说明）。**本任务不要预先加**——`@InjectMocks` 对当前的构造函数即可工作。
+>
+> import 按编译提示清理未使用的即可。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -582,30 +578,25 @@ Expected: 编译失败或 `能解析到平台共享工具` 红——`findSharedB
 
 - [ ] **Step 3: 改 resolve()**
 
-在 `ChatToolService.java` 中，把 `resolve()` 里这一段：
+在 `ChatToolService.java` 里做两处改动。
+
+**改动 A**：`resolve()` 方法体内，只改一行——把
 
 ```java
-        List<ToolCallback> callbacks = new ArrayList<>();
-        if (!toolIds.isEmpty()) {
             for (AiTool t : toolRepository.findByIdInAndEnabledTrue(toolIds)) {
-                callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
-            }
-        }
-        return new ToolBundle(markdowns, callbacks);
 ```
 
-替换为：
+改成
 
 ```java
-        List<ToolCallback> callbacks = new ArrayList<>();
-        if (!toolIds.isEmpty()) {
             for (AiTool t : resolveTools(toolIds)) {
-                callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
-            }
-        }
-        return new ToolBundle(markdowns, callbacks);
-    }
+```
 
+`resolve()` 的其余部分（含它的收尾 `}`）**保持不动**。
+
+**改动 B**：在 `resolve()` 方法**之后**、`// ===== AiTool CRUD =====` 注释**之前**，插入这个完整的新方法（含开头与结尾花括号，直接整段粘贴）：
+
+```java
     /**
      * 按 id 集合解析工具：当前应用自有 ∪ 平台共享。
      *
@@ -617,8 +608,8 @@ Expected: 编译失败或 `能解析到平台共享工具` 红——`findSharedB
      * <p><b>安全</b>：别的租户的工具 id 在两条查询里都覆盖不到——自有查询有 @Filter 挡着，
      * 共享查询有 {@code scope='PLATFORM'} 挡着。少任何一道都会变成跨租户越权调用。
      *
-     * <p><b>这里拿到的必须是未脱敏的原始实体</b>：{@link HttpToolCallback} 要用 authHeader
-     * 真的发出站请求。绝不能在这条路径上套 {@link SharedCredentialMasker}。
+     * <p><b>这里拿到的必须是未脱敏的原始实体</b>：{@code HttpToolCallback} 要用 authHeader
+     * 真的发出站请求，绝不能在这条路径上套 {@code SharedCredentialMasker}。
      */
     private List<AiTool> resolveTools(Set<Long> toolIds) {
         List<AiTool> tools = new ArrayList<>(toolRepository.findByIdInAndEnabledTrue(toolIds));
@@ -632,9 +623,10 @@ Expected: 编译失败或 `能解析到平台共享工具` 红——`findSharedB
             tools.addAll(toolRepository.findSharedByIdInAndEnabledTrue(rest));
         }
         return tools;
+    }
 ```
 
-（注意上面替换块自带了 `resolve()` 的收尾 `}` 与新方法的开头，最终 `resolveTools` 的收尾 `}` 沿用原本 `resolve()` 的那个。编译不过时按 IDE 提示补花括号。）
+`ChatToolService` 已经 import 了 `java.util.ArrayList` / `java.util.LinkedHashSet` / `java.util.List` / `java.util.Set`，无需新增 import。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -676,12 +668,14 @@ git commit -m "feat(tool): 运行时解析支持平台共享工具
 
 - [ ] **Step 1: 追加失败的测试**
 
-在 `ChatToolServiceSharedTest.java` 里追加（并把 Task 1 里那个占位 `SharedCredentialMaskerHolder` 换成真实依赖）：
+Task 5 给 `ChatToolService` 加了一个构造参数，所以先在 `ChatToolServiceSharedTest.java` 的 `@Mock` 字段区补上（放在 `@Mock private ObjectMapper objectMapper;` 之后、`@InjectMocks` 之前）：
 
 ```java
     @Mock
     private SharedCredentialMasker credentialMasker;
 ```
+
+然后追加下面三条测试：
 
 以及两条测试：
 
