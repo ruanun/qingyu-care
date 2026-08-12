@@ -18,10 +18,10 @@
 ---
 
 <p align="center">
-  <img src="./docs/images/15-widget-chat.png" alt="嵌入在客户网站上的 Widget 正在基于知识库回答问题" width="100%">
+  <img src="./docs/images/02-dashboard.png" alt="轻语管理后台的系统仪表盘" width="100%">
 </p>
 
-<p align="center"><i>一行 <code>&lt;script&gt;</code> 嵌进任意网站，访客提问由知识库检索增强作答，可随时转人工</i></p>
+<p align="center"><i>管理后台：多应用切换、知识库与策略配置、会话与效果分析</i></p>
 
 ## 这是什么
 
@@ -83,6 +83,12 @@
 | 效果分析 | 热点问题 |
 |---|---|
 | ![质量](./docs/images/12-analytics-quality.png) | ![热点](./docs/images/13-analytics-hot.png) |
+
+### 访客侧：嵌入客户网站的 Widget
+
+一行 `<script>` 嵌进任意网站，访客提问由知识库检索增强作答，可随时转人工。下图中的电商页面是**演示用的示例站点**，用来说明 Widget 嵌入后的样子：
+
+![Widget 实机](./docs/images/15-widget-chat.png)
 
 > 全部截图见 [`docs/images/`](./docs/images/)，均基于内置演示数据实拍。
 
