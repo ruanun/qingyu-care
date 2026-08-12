@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.enums.OwnerScope;
@@ -31,6 +32,7 @@ import static org.mockito.Mockito.when;
 class ModelRouterServiceListScopeTest {
 
     @Mock AiModelConfigRepository repository;
+    @Mock SharedCredentialMasker credentialMasker;
     @InjectMocks ModelRouterService service;
 
     @AfterEach
@@ -50,6 +52,8 @@ class ModelRouterServiceListScopeTest {
         AiModelConfig shared = model(2L, OwnerScope.PLATFORM);
         when(repository.findByAppIdOrderByScenarioAscPriorityAsc(10L)).thenReturn(List.of(own));
         when(repository.findAllSharedModels()).thenReturn(List.of(shared));
+        when(credentialMasker.mask(any(), any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
         List<AiModelConfig> result = service.getAllModels();
 
@@ -61,6 +65,8 @@ class ModelRouterServiceListScopeTest {
     void getAllModels_无appId_平台共享仍可见_自有查询不被调用() {
         AiModelConfig shared = model(2L, OwnerScope.PLATFORM);
         when(repository.findAllSharedModels()).thenReturn(List.of(shared));
+        when(credentialMasker.mask(any(), any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
         List<AiModelConfig> result = service.getAllModels();
 
@@ -76,6 +82,8 @@ class ModelRouterServiceListScopeTest {
         AiModelConfig dup = model(1L, OwnerScope.PLATFORM); // 同 id 极端场景，防御性去重
         when(repository.findByAppIdOrderByScenarioAscPriorityAsc(10L)).thenReturn(List.of(own));
         when(repository.findAllSharedModels()).thenReturn(List.of(dup));
+        when(credentialMasker.mask(any(), any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
         List<AiModelConfig> result = service.getAllModels();
 

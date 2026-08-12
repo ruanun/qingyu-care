@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.config.PlatformSeeder;
+import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
@@ -34,7 +35,8 @@ import java.util.function.Supplier;
 public class ModelRouterService {
 
     private final AiModelConfigRepository repository;
-    
+    private final SharedCredentialMasker credentialMasker;
+
     @Value("${spring.ai.openai.api-key:}")
     private String defaultApiKey;
     
@@ -80,7 +82,11 @@ public class ModelRouterService {
                 ? List.of()
                 : repository.findByAppIdOrderByScenarioAscPriorityAsc(appId);
         List<AiModelConfig> shared = repository.findAllSharedModels();
-        return mergeOwnAndSharedById(own, shared);
+        List<AiModelConfig> merged = mergeOwnAndSharedById(own, shared);
+        // 平台共享模型的 apiKey 是平台凭据，租户可用不可见。
+        // 这条此前缺失，导致租户管理员调 GET /v1/ai-models 能读到平台的明文 key。
+        return credentialMasker.mask(merged, AiModelConfig::getTenantId, AiModelConfig::getAppId,
+                m -> m.setApiKey(null));
     }
 
     private List<AiModelConfig> mergeOwnAndSharedById(List<AiModelConfig> own, List<AiModelConfig> shared) {

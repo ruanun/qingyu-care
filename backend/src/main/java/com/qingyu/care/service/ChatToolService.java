@@ -1,10 +1,12 @@
 package com.qingyu.care.service;
 
 import tools.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
@@ -35,6 +37,7 @@ public class ChatToolService {
     private final AiSkillRepository skillRepository;
     private final HttpToolExecutor httpToolExecutor;
     private final ObjectMapper objectMapper;
+    private final SharedCredentialMasker credentialMasker;
 
     /** 运行时解析包：待注入系统提示的 skill 正文 + 待挂载的工具回调。 */
     public record ToolBundle(List<String> skillMarkdowns, List<ToolCallback> toolCallbacks) {
@@ -106,12 +109,30 @@ public class ChatToolService {
     // ===== AiTool CRUD =====
 
     /**
-     * 按当前应用收窄的工具列表。TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，
-     * 裸 findAll 会让平台管理员跨应用读全平台工具；显式按 appId 收窄，无 appId（未选应用）返空。
+     * 按当前应用收窄的工具列表 ∪ 平台共享工具。
+     *
+     * <p>TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，裸 findAll 会让平台管理员
+     * 跨应用读全平台工具；显式按 appId 收窄，无 appId（未选应用）时自有部分为空，但平台共享
+     * 工具仍须可见——租户要能在 skill 里勾选它们。
+     *
+     * <p>返回前经 {@link SharedCredentialMasker} 脱敏：平台共享工具的 authHeader 是平台的
+     * 凭据，租户可以<b>使用</b>但不能<b>看到</b>。
      */
     public List<AiTool> listTools() {
         Long appId = TenantContext.getAppId();
-        return appId == null ? List.of() : toolRepository.findByAppId(appId);
+        List<AiTool> own = appId == null ? List.of() : toolRepository.findByAppId(appId);
+        List<AiTool> shared = toolRepository.findAllSharedTools();
+        List<AiTool> merged = mergeById(own, shared);
+        return credentialMasker.mask(merged, AiTool::getTenantId, AiTool::getAppId,
+                t -> t.setAuthHeader(null));
+    }
+
+    /** 自有优先、按 id 去重合并（范式同 ModelRouterService.mergeOwnAndSharedById）。 */
+    private List<AiTool> mergeById(List<AiTool> own, List<AiTool> shared) {
+        java.util.LinkedHashMap<Long, AiTool> byId = new java.util.LinkedHashMap<>();
+        for (AiTool t : own) byId.putIfAbsent(t.getId(), t);
+        for (AiTool t : shared) byId.putIfAbsent(t.getId(), t);
+        return new ArrayList<>(byId.values());
     }
 
     /**
@@ -135,6 +156,33 @@ public class ChatToolService {
     @Transactional
     public void deleteTool(Long id) {
         AiTool t = getTool(id);
+        toolRepository.delete(t);
+    }
+
+    // ===== 平台共享工具（仅平台管理员，端点侧已 requirePlatformAdmin） =====
+
+    /** 列出全部平台共享工具。不脱敏——本方法只被平台管理员调用，维护时必须能看到并回填凭据。 */
+    public List<AiTool> listSharedTools() {
+        return toolRepository.findAllSharedTools();
+    }
+
+    /** 保存平台共享工具（强制平台归属，避免被 TenantEntityListener 回填租户，也不信任请求体）。 */
+    @Transactional
+    public AiTool saveSharedTool(AiTool t) {
+        t.setScope(OwnerScope.PLATFORM);
+        t.setTenantId(null);
+        t.setAppId(null);
+        return toolRepository.save(t);
+    }
+
+    /** 删除平台共享工具。只允许删 PLATFORM 行，避免拿租户私有工具的 id 越权删除。 */
+    @Transactional
+    public void deleteSharedTool(Long id) {
+        AiTool t = toolRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("共享工具", id.toString()));
+        if (t.getScope() != OwnerScope.PLATFORM) {
+            throw new ResourceNotFoundException("共享工具", id.toString());
+        }
         toolRepository.delete(t);
     }
 

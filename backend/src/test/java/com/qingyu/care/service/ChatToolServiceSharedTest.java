@@ -1,8 +1,11 @@
 package com.qingyu.care.service;
 
 import tools.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.SharedCredentialMasker;
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
 import com.qingyu.care.service.tool.HttpToolExecutor;
@@ -16,6 +19,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -40,6 +44,8 @@ class ChatToolServiceSharedTest {
     private HttpToolExecutor httpToolExecutor;
     @Mock
     private ObjectMapper objectMapper;
+    @Mock
+    private SharedCredentialMasker credentialMasker;
 
     @InjectMocks
     private ChatToolService chatToolService;
@@ -106,5 +112,53 @@ class ChatToolServiceSharedTest {
         ChatToolService.ToolBundle bundle = chatToolService.resolve();
 
         assertThat(bundle.toolCallbacks()).hasSize(2);
+    }
+
+    @Test
+    void 管理面列表把自有与平台共享合并() {
+        TenantContext.setAppId(3L);
+        try {
+            when(toolRepository.findByAppId(3L)).thenReturn(List.of(tool(1L, "own")));
+            when(toolRepository.findAllSharedTools()).thenReturn(List.of(tool(9L, "shared")));
+            when(credentialMasker.mask(any(), any(), any(), any()))
+                    .thenAnswer(inv -> inv.getArgument(0));
+
+            List<AiTool> list = chatToolService.listTools();
+
+            assertThat(list).extracting(AiTool::getId).containsExactly(1L, 9L);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void 管理面列表经过脱敏助手() {
+        TenantContext.setAppId(3L);
+        try {
+            when(toolRepository.findByAppId(3L)).thenReturn(List.of());
+            when(toolRepository.findAllSharedTools()).thenReturn(List.of(tool(9L, "shared")));
+            when(credentialMasker.mask(any(), any(), any(), any()))
+                    .thenAnswer(inv -> inv.getArgument(0));
+
+            chatToolService.listTools();
+
+            verify(credentialMasker).mask(any(), any(), any(), any());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void 保存共享工具强制平台归属() {
+        AiTool t = tool(null, "shared_new");
+        t.setTenantId(7L);          // 请求体里带了租户归属，必须被覆盖
+        t.setAppId(3L);
+        when(toolRepository.save(any(AiTool.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AiTool saved = chatToolService.saveSharedTool(t);
+
+        assertThat(saved.getScope()).isEqualTo(OwnerScope.PLATFORM);
+        assertThat(saved.getTenantId()).isNull();
+        assertThat(saved.getAppId()).isNull();
     }
 }

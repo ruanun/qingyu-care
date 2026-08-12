@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import tools.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.repository.AiSkillRepository;
@@ -21,10 +22,11 @@ class ChatToolServiceResolveTest {
 
     @Mock AiToolRepository toolRepository;
     @Mock AiSkillRepository skillRepository;
+    @Mock SharedCredentialMasker credentialMasker;
 
     private ChatToolService service() {
         return new ChatToolService(toolRepository, skillRepository,
-                (m, u, a, b, t) -> "", new ObjectMapper());
+                (m, u, a, b, t) -> "", new ObjectMapper(), credentialMasker);
     }
 
     @Test

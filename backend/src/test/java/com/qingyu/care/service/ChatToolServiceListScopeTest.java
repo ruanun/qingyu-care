@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import tools.jackson.databind.ObjectMapper;
+import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +33,7 @@ class ChatToolServiceListScopeTest {
 
     @Mock AiToolRepository toolRepository;
     @Mock AiSkillRepository skillRepository;
+    @Mock SharedCredentialMasker credentialMasker;
 
     @AfterEach
     void clear() {
@@ -39,7 +42,7 @@ class ChatToolServiceListScopeTest {
 
     private ChatToolService service() {
         return new ChatToolService(toolRepository, skillRepository,
-                (m, u, a, b, t) -> "", new ObjectMapper());
+                (m, u, a, b, t) -> "", new ObjectMapper(), credentialMasker);
     }
 
     @Test
@@ -47,6 +50,8 @@ class ChatToolServiceListScopeTest {
         TenantContext.setAppId(10L);
         AiTool tool = AiTool.builder().id(1L).name("t").build();
         when(toolRepository.findByAppId(10L)).thenReturn(List.of(tool));
+        when(credentialMasker.mask(any(), any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
         List<AiTool> result = service().listTools();
 
@@ -56,6 +61,9 @@ class ChatToolServiceListScopeTest {
 
     @Test
     void listTools_无appId_返空且不查库() {
+        when(credentialMasker.mask(any(), any(), any(), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
         List<AiTool> result = service().listTools();
 
         assertThat(result).isEmpty();
