@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.enums.OwnerScope;
@@ -56,7 +57,7 @@ public class AiModelController {
      */
     @AuditLog(action = "MODEL_UPDATE", targetType = "AiModelConfig")
     @PutMapping("/{id}")
-    public ApiResponse<AiModelConfig> updateModel(@PathVariable Long id, @RequestBody AiModelConfig config) {
+    public ApiResponse<AiModelConfig> updateModel(@PathVariable Long id, @RequestBody AiModelConfigUpdateRequest config) {
         AiModelConfig existing = modelRouterService.getById(id);
         
         // 更新字段

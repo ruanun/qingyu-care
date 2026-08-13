@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AiToolUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.enums.OwnerScope;
@@ -45,7 +46,7 @@ public class AiToolController {
 
     @AuditLog(action = "TOOL_UPDATE", targetType = "AiTool")
     @PutMapping("/{id}")
-    public ApiResponse<AiTool> update(@PathVariable Long id, @RequestBody AiTool tool) {
+    public ApiResponse<AiTool> update(@PathVariable Long id, @RequestBody AiToolUpdateRequest tool) {
         AiTool existing = chatToolService.getTool(id);
         if (tool.getName() != null) existing.setName(tool.getName());
         if (tool.getDescription() != null) existing.setDescription(tool.getDescription());
