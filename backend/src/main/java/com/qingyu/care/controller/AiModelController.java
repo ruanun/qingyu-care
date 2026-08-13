@@ -65,7 +65,8 @@ public class AiModelController {
         if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
         if (config.getEndpoint() != null) existing.setEndpoint(config.getEndpoint());
-        if (config.getApiKey() != null && !config.getApiKey().isEmpty()) existing.setApiKey(config.getApiKey());
+        // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
+        if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());
         if (config.getScenario() != null) existing.setScenario(config.getScenario());
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());

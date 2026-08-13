@@ -82,7 +82,10 @@ public class UserController {
         String phone = (String) request.get("phone");
         String roleStr = (String) request.getOrDefault("role", "TENANT_MEMBER");
 
-        if (username == null || password == null) {
+        // ⚠️ 必须判 isBlank 而非只判 null：全空格密码（如粘贴带尾随空格）一路穿过
+        // BCrypt.hashpw(" ") 落库，与空串同一后果——旧密码登不上、空白密码又被
+        // LoginRequest 的 @NotBlank 拒绝，账号从创建那一刻起就永久锁死且毫无提示。
+        if (username == null || username.isBlank() || password == null || password.isBlank()) {
             return ApiResponse.error("用户名和密码不能为空");
         }
 
@@ -166,12 +169,15 @@ public class UserController {
                         }
                         user.setRole(newRole);
                     }
-                    // ⚠️ 必须同时判空串，不能只判 null：前端编辑弹窗把 password 初始化为空串
+                    // ⚠️ 必须判 isBlank 而非只判空串：前端编辑弹窗把 password 初始化为空串
                     // （注释写着「编辑时不显示/修改密码除非输入」）却在提交时一起发出。原先用
                     // containsKey("password") 判断，空串同样成立 → BCrypt.hashpw("")，后果是
                     // 管理员改一下昵称，该用户密码被静默重置成空串哈希：旧密码登不上，空密码
-                    // 又被 LoginRequest 的 @NotBlank 拒掉，用户被彻底锁死且毫无提示。
-                    if (request.getPassword() != null && !request.getPassword().isEmpty()) {
+                    // 又被 LoginRequest 的 @NotBlank 拒掉，用户被彻底锁死且毫无提示。仅判
+                    // isEmpty 挡不住全空格密码（"   "）——JS/Java 都认为它「非空」，同样一路
+                    // 穿到 BCrypt.hashpw("   ")，后果与空串完全一致，只是构造方式换成粘贴带
+                    // 尾随空格，比空串更容易无意间触发。
+                    if (request.getPassword() != null && !request.getPassword().isBlank()) {
                         user.setPassword(BCrypt.hashpw(request.getPassword()));
                     }
                     User savedUser = userRepository.save(user);
