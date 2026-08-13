@@ -2,6 +2,7 @@ package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.TenantUpdateRequest;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
@@ -64,7 +65,7 @@ public class TenantController {
      */
     @AuditLog(action = "TENANT_UPDATE", targetType = "Tenant")
     @PutMapping("/{id}")
-    public ApiResponse<Tenant> update(@PathVariable Long id, @RequestBody Tenant tenant) {
+    public ApiResponse<Tenant> update(@PathVariable Long id, @RequestBody TenantUpdateRequest tenant) {
         checkPlatformAdmin();
         Tenant existing = tenantRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("租户", id.toString()));
