@@ -5,6 +5,7 @@ import cn.dev33.satoken.secure.BCrypt;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.UserUpdateRequest;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.UserRole;
@@ -135,38 +136,43 @@ public class UserController {
      */
     @AuditLog(action = "USER_UPDATE", targetType = "User")
     @PutMapping("/{id}")
-    public ApiResponse<User> updateUser(@PathVariable Long id, @RequestBody Map<String, Object> request) {
+    public ApiResponse<User> updateUser(@PathVariable Long id, @RequestBody UserUpdateRequest request) {
         return userRepository.findById(id)
                 .filter(this::canAccessUser)
                 .map(user -> {
-                    if (request.containsKey("nickname")) {
-                        user.setNickname((String) request.get("nickname"));
+                    if (request.getNickname() != null) {
+                        user.setNickname(request.getNickname());
                     }
-                    if (request.containsKey("email")) {
-                        user.setEmail((String) request.get("email"));
+                    if (request.getEmail() != null) {
+                        user.setEmail(request.getEmail());
                     }
-                    if (request.containsKey("phone")) {
-                        user.setPhone((String) request.get("phone"));
+                    if (request.getPhone() != null) {
+                        user.setPhone(request.getPhone());
                     }
-                    if (request.containsKey("avatar")) {
-                        user.setAvatar((String) request.get("avatar"));
+                    if (request.getAvatar() != null) {
+                        user.setAvatar(request.getAvatar());
                     }
-                    if (request.containsKey("enabled")) {
+                    if (request.getEnabled() != null) {
                         // 只有管理员可以启用/禁用用户
                         if (isPlatformAdmin() || isTenantAdmin()) {
-                            user.setEnabled((Boolean) request.get("enabled"));
+                            user.setEnabled(request.getEnabled());
                         }
                     }
-                    if (request.containsKey("role") && (isPlatformAdmin() || isTenantAdmin())) {
-                        UserRole newRole = UserRole.valueOf((String) request.get("role"));
+                    if (request.getRole() != null && (isPlatformAdmin() || isTenantAdmin())) {
+                        UserRole newRole = request.getRole();
                         // 非平台管理员不能将用户提升为平台管理员
                         if (newRole == UserRole.PLATFORM_ADMIN && !isPlatformAdmin()) {
                             return ApiResponse.<User>error("无权设置为平台管理员");
                         }
                         user.setRole(newRole);
                     }
-                    if (request.containsKey("password")) {
-                        user.setPassword(BCrypt.hashpw((String) request.get("password")));
+                    // ⚠️ 必须同时判空串，不能只判 null：前端编辑弹窗把 password 初始化为空串
+                    // （注释写着「编辑时不显示/修改密码除非输入」）却在提交时一起发出。原先用
+                    // containsKey("password") 判断，空串同样成立 → BCrypt.hashpw("")，后果是
+                    // 管理员改一下昵称，该用户密码被静默重置成空串哈希：旧密码登不上，空密码
+                    // 又被 LoginRequest 的 @NotBlank 拒掉，用户被彻底锁死且毫无提示。
+                    if (request.getPassword() != null && !request.getPassword().isEmpty()) {
+                        user.setPassword(BCrypt.hashpw(request.getPassword()));
                     }
                     User savedUser = userRepository.save(user);
                     return ApiResponse.success("用户更新成功", savedUser);
