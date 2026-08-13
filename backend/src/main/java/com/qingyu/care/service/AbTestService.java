@@ -3,6 +3,7 @@ package com.qingyu.care.service;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.dto.AbTestReportDTO;
+import com.qingyu.care.dto.AbTestUpdateRequest;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
 import com.qingyu.care.entity.ChatStrategy;
@@ -79,7 +80,7 @@ public class AbTestService {
 
     /** 编辑：仅 DRAFT 可改（RUNNING 后变体锁定） */
     @Transactional
-    public AbExperiment update(Long id, AbExperiment patch) {
+    public AbExperiment update(Long id, AbTestUpdateRequest patch) {
         AbExperiment existing = getById(id);
         if (existing.getStatus() != ExperimentStatus.DRAFT) {
             throw new BusinessException("仅草稿状态的实验可编辑");

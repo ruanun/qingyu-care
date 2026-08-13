@@ -2,6 +2,7 @@ package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AbTestReportDTO;
+import com.qingyu.care.dto.AbTestUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.service.AbTestService;
@@ -42,8 +43,8 @@ public class AbTestController {
     @PutMapping("/{id}")
     @AuditLog(action = "ABTEST_UPDATE", targetType = "AbExperiment")
     public ApiResponse<AbExperiment> update(@PathVariable Long id,
-                                            @RequestBody AbExperiment experiment) {
-        return ApiResponse.success("实验已更新", abTestService.update(id, experiment));
+                                            @RequestBody AbTestUpdateRequest request) {
+        return ApiResponse.success("实验已更新", abTestService.update(id, request));
     }
 
     @PostMapping("/{id}/start")

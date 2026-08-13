@@ -1,6 +1,7 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.dto.AbTestUpdateRequest;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
 import com.qingyu.care.entity.ChatStrategy;
@@ -223,13 +224,40 @@ class AbTestServiceTest {
         assertThatThrownBy(() -> service.end(1L)).isInstanceOf(BusinessException.class);
     }
 
+    private AbTestUpdateRequest patch(String name) {
+        AbTestUpdateRequest req = new AbTestUpdateRequest();
+        req.setName(name);
+        return req;
+    }
+
     @Test
     void update_非草稿_拒绝() {
         AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
         exp.setStatus(ExperimentStatus.RUNNING);
         when(repository.findById(1L)).thenReturn(Optional.of(exp));
-        assertThatThrownBy(() -> service.update(1L, AbExperiment.builder().name("改名").build()))
+        assertThatThrownBy(() -> service.update(1L, patch("改名")))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("草稿");
+    }
+
+    /**
+     * 守的是 {@code AbTestUpdateRequest} 的javadoc 点名的那条前车之鉴：改用专用 DTO 前，
+     * {@code update} 直收 {@code AbExperiment} 实体虽然「无害纯属侥幸」（variants 的初始化器
+     * 恰好被一个 {@code !isEmpty()} 挡住），但那不是设计出来的安全网。这条测试钉住行为本身：
+     * 只传 name 时，description 与 variants 都不该被清空。
+     */
+    @Test
+    void update_只传name_不清空description和variants() {
+        AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
+        exp.setDescription("原描述");
+        when(repository.findById(1L)).thenReturn(Optional.of(exp));
+        when(repository.save(any(AbExperiment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AbExperiment updated = service.update(1L, patch("新名称"));
+
+        assertThat(updated.getName()).isEqualTo("新名称");
+        assertThat(updated.getDescription()).isEqualTo("原描述");
+        assertThat(updated.getVariants()).extracting(AbVariant::getName)
+                .containsExactlyInAnyOrder("A", "B");
     }
 
     @Test
