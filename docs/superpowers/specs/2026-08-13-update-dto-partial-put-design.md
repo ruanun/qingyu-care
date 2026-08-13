@@ -73,11 +73,13 @@ if (req.getX() != null) existing.setX(req.getX());
 
 `AiTool` / `AiModelConfig` 的 update DTO **不含 `scope` 字段**。这让「租户不能自封平台共享」从「我们记得不拷贝」变成**结构上不可能**，把 2026-08-12 那批修的提权漏洞又加固一层。
 
-### 3.4 密码与凭据用 `!= null && !isEmpty()`
+### 3.4 密码与凭据用 `!= null && !isBlank()`
 
 三个字段：`UserUpdateRequest.password`、`AiToolUpdateRequest.authHeader`、`AiModelConfigUpdateRequest.apiKey`。语义是「前端不回显、留空表示不修改」，空串必须与 null 同等对待。
 
 `authHeader` / `apiKey` 现有代码已经是这个写法，保持；`password` 是本次新修的（§2）。
+
+⚠️ **2026-08-13 全分支终审订正**：原稿三处都写的是 `!isEmpty()`，全空格值（如 `"   "`）在 JS 和 Java 里都判「非空」，一路穿过 `BCrypt.hashpw("   ")` 落库，与空串同一后果——终局是用户被永久锁死、零提示。三处已改判 `!isBlank()`；`UserController.createUser` 原先只判 `password == null`（连空串都不挡），同一批订正一并加了 `isBlank` 判断。`PlatformController` 的 `updateSharedModel`/`updateSharedTool` 两处同款判断本次终审**未纳入范围**（技术债清单第 13 项已记零测试守护，未来改动一并订正）。
 
 ### 3.5 `UserController` 从 `Map` 改成 DTO
 
@@ -88,6 +90,8 @@ if (req.getX() != null) existing.setX(req.getX());
 - 「非平台管理员不能把用户提升为 `PLATFORM_ADMIN`」这条校验
 
 ⚠️ **语义变化**：`containsKey` 支持「显式传 `null` 清空字段」，`!= null` 不支持。已核实前端不依赖此能力——`UserListPage` 的表单用空串 `''` 而非 `null`（`nickname: user.nickname || ''`），清空文本框发的是 `""`，两种写法行为一致。
+
+⚠️ **2026-08-13 全分支终审订正**：「仓库里只留一种范式」这句在本条做完时并不成立——`AbTestController.update` 当时仍直收 `AbExperiment` 实体（终审当场核实为「唯一幸存」，见同批新增的 `AbTestUpdateRequest`），且 `UserController.createUser` 本身仍收 `Map`（本节只覆盖了 `update`，没覆盖 `create`），`PlatformConfigController`/`TenantConfigController` 也收 `Map<String,String>`（那是键值包，本属正当用法，不算例外）。终审已把 `AbTestController.update` 一并 DTO 化，此刻 update 端点才真的只剩 `*UpdateRequest` 这一种范式；`createUser` 收 `Map` 与两个 `*ConfigController` 收 `Map<String,String>` 是仍然存在、且刻意保留的例外。
 
 ### 3.6 范围
 

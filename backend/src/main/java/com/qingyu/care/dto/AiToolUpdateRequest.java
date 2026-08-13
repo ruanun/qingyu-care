@@ -22,6 +22,12 @@ import lombok.Data;
  * = true;} 却<b>没有</b> {@code @Builder.Default}，{@code new KnowledgeBaseRequest().getEnabled()}
  * 依然是 {@code true}（它现在没出事只因为前端建/改知识库都发整份对象，不代表这条路径安全）。
  *
+ * <p>⚠️ <b>反过来，{@code AiTool} 实体上那些初始化器不能被删掉</b>：{@code create} 端点
+ * （{@code AiToolController.create}）仍然直接收实体作为请求体，依赖这些初始化器在字段缺省时
+ * 提供默认值——{@code RequestBodyDeserializationTest.aiTool_缺省字段保留调用护栏默认值}
+ * 正向断言它们存活，删掉会让该测试转红。本类要解决的只是「局部更新不该沿用同一份默认值」，
+ * 不是「实体的默认值本身不该存在」。
+ *
  * <p>⚠️ <b>刻意不含 {@code scope} 字段</b>：{@code scope} 是客户端可控字段，租户曾可在请求体里
  * 自封 {@code PLATFORM} 让自己的工具（连同自己的鉴权头）出现在所有租户列表里。不放进 DTO 让这条
  * 路径在结构上不可能，而不是依赖「我们记得不拷贝」。平台共享工具只能走 {@code /v1/platform/tools}。

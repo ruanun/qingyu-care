@@ -23,6 +23,12 @@ import lombok.Data;
  * {@code new KnowledgeBaseRequest().getEnabled()} 依然是 {@code true}（它现在没出事只因为
  * 前端建/改知识库都发整份对象，不代表这条路径安全）。
  *
+ * <p>⚠️ <b>反过来，{@code Application} 实体上那些初始化器不能被删掉</b>：{@code create} 端点
+ * （{@code ApplicationController.create}）仍然直接收实体作为请求体，依赖这些初始化器在字段
+ * 缺省时提供默认值——{@code RequestBodyDeserializationTest.application_缺省字段保留BuilderDefault初值}
+ * 正向断言它们存活，删掉会让该测试转红。本类要解决的只是「局部更新不该沿用同一份默认值」，
+ * 不是「实体的默认值本身不该存在」。
+ *
  * @author ruan
  */
 @Data

@@ -27,6 +27,14 @@ import java.util.Set;
  * = true;} 却<b>没有</b> {@code @Builder.Default}，{@code new KnowledgeBaseRequest().getEnabled()}
  * 依然是 {@code true}（它现在没出事只因为前端建/改知识库都发整份对象，不代表这条路径安全）。
  *
+ * <p>⚠️ <b>反过来，{@code AiSkill} 实体上 {@code toolIds} 的初始化器不能被删掉</b>：
+ * {@code AiSkillController.create} 仍然直接收 {@code AiSkill} 实体作为请求体，请求体不带
+ * {@code toolIds} 时依赖这个初始化器给出空集合而非 {@code null}。{@code RequestBodyDeserializationTest}
+ * 目前没有覆盖 {@code AiSkill} 这条（只覆盖了 Application/ChatStrategy/AiModelConfig/AiTool/Tenant
+ * 五个），但风险同源：删掉会让新建 skill 时 {@code toolIds} 变成 {@code null}，任何后续
+ * {@code .add(...)}/{@code .contains(...)} 都会 NPE。本类要解决的只是「局部更新不该沿用同一份
+ * 默认值」，不是「实体的默认值本身不该存在」。
+ *
  * @author ruan
  */
 @Data

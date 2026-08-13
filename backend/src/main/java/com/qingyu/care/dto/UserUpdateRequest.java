@@ -31,6 +31,12 @@ import lombok.Data;
  * = true;} 却<b>没有</b> {@code @Builder.Default}，{@code new KnowledgeBaseRequest().getEnabled()}
  * 依然是 {@code true}（它现在没出事只因为前端建/改知识库都发整份对象，不代表这条路径安全）。
  *
+ * <p>⚠️ <b>与本批其余 DTO 不同，{@code User} 不适用「实体初始化器在 create 路径承重」这条
+ * 反向提醒</b>：{@code UserController.createUser} 收的是 {@code Map<String,Object>} 而非
+ * {@code User} 实体本身（手工取字段、显式 {@code .enabled(true)} 落 builder），从未经 Jackson
+ * 直接反序列化到 {@code User}，故 {@code enabled} 的 {@code @Builder.Default} 初始化器在
+ * create 路径上不承担任何职责——这条铁律在本类上没有例外要留意。
+ *
  * @author ruan
  */
 @Data
