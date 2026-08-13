@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.ChatStrategyUpdateRequest;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.service.ChatStrategyService;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +36,7 @@ public class ChatStrategyController {
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<ChatStrategy> update(@PathVariable Long id, @RequestBody ChatStrategy strategy) {
+    public ApiResponse<ChatStrategy> update(@PathVariable Long id, @RequestBody ChatStrategyUpdateRequest strategy) {
         ChatStrategy existing = strategyService.getById(id);
         
         if (strategy.getName() != null) existing.setName(strategy.getName());

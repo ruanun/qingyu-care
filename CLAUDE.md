@@ -287,6 +287,17 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - 定时任务：`scheduler/SessionTimeoutScheduler`（`@Scheduled` 扫描超时会话）；Webhook 重投的 `WebhookRetryScheduler` 在 `service/webhook/`。
 - **未使用 MapStruct**（pom 里虽引入，但实际用静态工厂如 `OpenChatResponse.from(...)` 手动转换 DTO）。
 - 统一响应包 `dto/ApiResponse`，分页 `dto/PageDTO`，全局异常在 `exception/GlobalExceptionHandler`（业务异常 `BusinessException`/`ResourceNotFoundException`/`OpenApiException` 等）。
+- **新增 update 端点一律用专用 `*UpdateRequest` DTO 收请求体，字段不写初始化器**：直接用实体收
+  局部更新请求体是本仓库踩过的一类真实缺陷——实体字段的初始化器（含 `@Builder.Default`）在
+  Jackson 走无参构造反序列化时照样生效，请求体没给的字段会拿到类默认值而非 `null`，
+  `if (x != null)` 恒真，局部 PUT 时把库里的值静默覆盖回默认值（真实案例：点一下工具启用/停用
+  开关，`httpMethod`/`timeoutMs` 被打回默认值，见 `docs/技术债清单.md` 第 11 项）。凭据类字段
+  （密码/`apiKey`/`authHeader`）额外判 `!= null && !isBlank()`——前端不回显凭据、编辑弹窗把
+  该字段初始化为空串（或粘贴带来的全空格）却照样提交，只判 `!= null` 挡不住。反过来，**实体
+  上的初始化器不能因此被清理掉**：`create` 端点仍然直接收实体作为请求体，这些初始化器在
+  create 路径上是承重的（`RequestBodyDeserializationTest` 正向要求它们存活）。
+  `UpdateRequestNoInitializerTest` 反射扫描 `dto` 包下所有 `*UpdateRequest` 类，强制每个字段
+  在无参构造后必须是 `null`——新增 DTO、或给现有 DTO 加一个带初始化器的新字段，都会被它拦住。
 
 ### 前端结构（frontend/src/）
 - **HTTP** `api/client.ts`：单例 axios。请求拦截器从 localStorage 注入 `satoken`（key `qingyu-auth`）与 `X-App-Id`（key `qingyu-current-app`）；响应拦截器返回 `response.data`（即后端那整个 `ApiResponse`，**不是**再往里取一层 `.data`——调用方拿到的是 `{code, message, data}`），401 清登录态并跳 `/login`。各领域 service（`api/*.ts`）都走这个实例。

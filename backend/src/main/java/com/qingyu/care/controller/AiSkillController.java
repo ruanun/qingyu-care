@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AiSkillUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.service.ChatToolService;
@@ -40,7 +41,7 @@ public class AiSkillController {
 
     @AuditLog(action = "SKILL_UPDATE", targetType = "AiSkill")
     @PutMapping("/{id}")
-    public ApiResponse<AiSkill> update(@PathVariable Long id, @RequestBody AiSkill skill) {
+    public ApiResponse<AiSkill> update(@PathVariable Long id, @RequestBody AiSkillUpdateRequest skill) {
         AiSkill existing = chatToolService.getSkill(id);
         if (skill.getName() != null) existing.setName(skill.getName());
         if (skill.getDescription() != null) existing.setDescription(skill.getDescription());

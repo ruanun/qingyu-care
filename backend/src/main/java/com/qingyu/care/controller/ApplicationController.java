@@ -3,6 +3,7 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.ApplicationUpdateRequest;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.exception.InvalidOperationException;
@@ -104,7 +105,7 @@ public class ApplicationController {
      */
     @AuditLog(action = "APP_UPDATE", targetType = "Application")
     @PutMapping("/{id}")
-    public ApiResponse<Application> update(@PathVariable Long id, @RequestBody Application application) {
+    public ApiResponse<Application> update(@PathVariable Long id, @RequestBody ApplicationUpdateRequest application) {
         Application existing = applicationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("应用", id.toString()));
         checkAppAccess(existing);

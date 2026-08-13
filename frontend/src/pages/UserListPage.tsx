@@ -123,7 +123,14 @@ const UserListPage: React.FC = () => {
         try {
             const { tenantId, ...rest } = formData;
             if (editingUser) {
-                const response = await userService.update(editingUser.id, rest);
+                // 编辑时不提交空密码：这里本就无意修改密码（见 handleOpenDialog 把
+                // password 初始化为空串的注释），不该把这个字段发出去。
+                // ⚠️ 后端 UserController 已用 `!= null && !isEmpty()` 兜底，这道前端过滤
+                // 不能替代它——两道互为兜底，后端要防的是任何调用方（第三方 API 调用、
+                // 其他前端页面），不只是这一个页面，去掉后端那道会让别的入口失守。
+                const { password, ...withoutPassword } = rest;
+                const payload = password ? rest : withoutPassword;
+                const response = await userService.update(editingUser.id, payload);
                 throwIfFailed(response);
                 toast({ title: "更新成功" });
                 fetchUsers();

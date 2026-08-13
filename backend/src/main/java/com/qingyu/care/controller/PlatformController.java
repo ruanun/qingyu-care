@@ -1,6 +1,8 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AiModelConfigUpdateRequest;
+import com.qingyu.care.dto.AiToolUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.PlatformOverviewDTO;
 import com.qingyu.care.entity.AiModelConfig;
@@ -57,7 +59,7 @@ public class PlatformController {
 
     @AuditLog(action = "SHARED_MODEL_UPDATE", targetType = "AiModelConfig")
     @PutMapping("/models/{id}")
-    public ApiResponse<AiModelConfig> updateSharedModel(@PathVariable Long id, @RequestBody AiModelConfig config) {
+    public ApiResponse<AiModelConfig> updateSharedModel(@PathVariable Long id, @RequestBody AiModelConfigUpdateRequest config) {
         SecurityUtil.requirePlatformAdmin();
         AiModelConfig existing = modelRouterService.getById(id);
         // 防越权：只允许操作平台共享模型，避免用租户私有模型的 id 越权提升/篡改
@@ -107,7 +109,7 @@ public class PlatformController {
 
     @AuditLog(action = "SHARED_TOOL_UPDATE", targetType = "AiTool")
     @PutMapping("/tools/{id}")
-    public ApiResponse<AiTool> updateSharedTool(@PathVariable Long id, @RequestBody AiTool tool) {
+    public ApiResponse<AiTool> updateSharedTool(@PathVariable Long id, @RequestBody AiToolUpdateRequest tool) {
         SecurityUtil.requirePlatformAdmin();
         AiTool existing = chatToolService.getTool(id);
         // 防越权：只允许操作平台共享工具，避免用租户私有工具的 id 越权提升/篡改

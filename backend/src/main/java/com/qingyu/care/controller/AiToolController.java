@@ -1,6 +1,7 @@
 package com.qingyu.care.controller;
 
 import com.qingyu.care.annotation.AuditLog;
+import com.qingyu.care.dto.AiToolUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.enums.OwnerScope;
@@ -45,14 +46,15 @@ public class AiToolController {
 
     @AuditLog(action = "TOOL_UPDATE", targetType = "AiTool")
     @PutMapping("/{id}")
-    public ApiResponse<AiTool> update(@PathVariable Long id, @RequestBody AiTool tool) {
+    public ApiResponse<AiTool> update(@PathVariable Long id, @RequestBody AiToolUpdateRequest tool) {
         AiTool existing = chatToolService.getTool(id);
         if (tool.getName() != null) existing.setName(tool.getName());
         if (tool.getDescription() != null) existing.setDescription(tool.getDescription());
         if (tool.getInputSchema() != null) existing.setInputSchema(tool.getInputSchema());
         if (tool.getHttpMethod() != null) existing.setHttpMethod(tool.getHttpMethod());
         if (tool.getUrlTemplate() != null) existing.setUrlTemplate(tool.getUrlTemplate());
-        if (tool.getAuthHeader() != null && !tool.getAuthHeader().isEmpty()) existing.setAuthHeader(tool.getAuthHeader());
+        // isBlank 而非 isEmpty：全空格鉴权头同样无意义，不该被当成「有意修改」写入
+        if (tool.getAuthHeader() != null && !tool.getAuthHeader().isBlank()) existing.setAuthHeader(tool.getAuthHeader());
         if (tool.getTimeoutMs() != null) existing.setTimeoutMs(tool.getTimeoutMs());
         if (tool.getMaxResponseChars() != null) existing.setMaxResponseChars(tool.getMaxResponseChars());
         if (tool.getEnabled() != null) existing.setEnabled(tool.getEnabled());
