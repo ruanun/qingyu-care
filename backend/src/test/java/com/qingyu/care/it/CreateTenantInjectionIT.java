@@ -25,8 +25,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>⚠️ 必须走真实 MockMvc 而不是直调 service 或手工 {@code ObjectMapper}：
  * <ul>
  *   <li>手工 mapper 可能与 Spring 实际配置的那个不一致，断言会<b>静默失去意义</b>；
- *   <li>{@code TenantContext} 只在请求流经 {@code TenantInterceptor} 时才有值，
- *       而这条测试的核心正是「回填用的是上下文、不是请求体」。
+ *   <li>本测试所走的管理端路径上，{@code TenantContext} 由 {@code TenantInterceptor} 写入
+ *       （开放 API 另有 {@code OpenApiAuthInterceptor}，{@code DemoDataSeeder} 则是手工 set，
+ *       都不是这条测试要覆盖的路径），而这条测试的核心正是「回填用的是上下文、不是请求体」。
  * </ul>
  *
  * <p>注：越权尝试<b>不报错</b>，行会正常建进发起方自己的租户（见 spec §5，
