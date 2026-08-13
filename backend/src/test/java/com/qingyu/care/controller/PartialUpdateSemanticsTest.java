@@ -7,14 +7,12 @@ import com.qingyu.care.dto.ApplicationUpdateRequest;
 import com.qingyu.care.dto.ChatStrategyUpdateRequest;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
 import com.qingyu.care.dto.TenantUpdateRequest;
-import com.qingyu.care.dto.UserUpdateRequest;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.Tenant;
-import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.repository.ApplicationRepository;
@@ -62,8 +60,11 @@ import static org.mockito.Mockito.when;
  *
  * <p>下列涉及控制器的测试优先直调真实控制器方法（{@code @InjectMocks}）而非在测试里复刻映射
  * 逻辑——复刻的两份代码会漂移，删掉控制器里的 {@code if (x != null)} 不会让复刻版测试变红。
- * 只有 {@code UserController} 因权限判断依赖登录态、mock 成本明显更高，仍保留复刻形态，见该
- * 测试方法上的说明。
+ * {@code UserController} 的密码判空曾因「权限判断依赖登录态、mock 成本更高」而留在这里以复刻
+ * 形态覆盖；全分支终审指出这条测试对生产代码零守护（把控制器里的判断改回只判
+ * {@code != null} 不会转红），已改用 {@code mockStatic(StpUtil.class)} 直调真实控制器，
+ * 挪到 {@link UserControllerTest}（一并补了提权守卫与 {@code enabled}/{@code role} 管理员
+ * 门禁两条此前零覆盖的分支），本类不再重复。
  *
  * @author ruan
  */
@@ -225,35 +226,5 @@ class PartialUpdateSemanticsTest {
 
         assertThat(existing.getSimilarityThreshold()).isEqualTo(0.68);
         assertThat(existing.getEnabled()).isFalse();
-    }
-
-    /**
-     * ⚠️ 本测试复刻了 {@code UserController.updateUser} 密码分支的映射逻辑（
-     * {@code if (request.getPassword() != null && !request.getPassword().isEmpty())}），
-     * 没有直调真实控制器——{@code UserController} 的更新路径依赖 {@code StpUtil.getSession()}
-     * 读取登录态判断管理员权限，mock 成本明显高于 Skill/Tenant/AiModel/Application/ChatStrategy
-     * 那几条（它们的控制器只依赖可直接注入的 service/repository）。
-     *
-     * <p>两份代码会漂移：改动 {@code UserController.updateUser} 第 174 行那个判断时，必须同步
-     * 改这里，否则本测试会静默失去判别力（继续绿，但守不住真实控制器里的退化）。
-     */
-    @Test
-    void 编辑用户时传空串密码不改动密码哈希() {
-        User existing = User.builder().id(1L).username("zhangsan").build();
-        existing.setPassword("$2a$10$OLD_HASH_PLACEHOLDER");
-        existing.setNickname("旧昵称");
-
-        UserUpdateRequest req = new UserUpdateRequest();
-        req.setNickname("新昵称");
-        req.setPassword("");   // 前端编辑弹窗把 password 初始化为空串并照样提交
-
-        if (req.getNickname() != null) existing.setNickname(req.getNickname());
-        // 与 UserController 里一致：必须同时判空串
-        if (req.getPassword() != null && !req.getPassword().isEmpty()) {
-            existing.setPassword("HASHED_" + req.getPassword());
-        }
-
-        assertThat(existing.getNickname()).isEqualTo("新昵称");
-        assertThat(existing.getPassword()).isEqualTo("$2a$10$OLD_HASH_PLACEHOLDER");
     }
 }
