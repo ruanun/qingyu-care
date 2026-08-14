@@ -274,6 +274,31 @@ class PartialUpdateSemanticsTest {
     }
 
     @Test
+    void 问答策略局部更新_三个混合检索参数各自传入时都真的生效() {
+        // 上一条测试只传 hybridEnabled，keywordTopK/rrfK 那两行赋值的「生效」分支从未被执行过
+        // ——删掉其中任一行，全量单测原本无一转红。本条三个字段同时传新值，逐一断言到具体值，
+        // 保证删掉三行赋值中的任意一行都会让对应那条断言精确转红。
+        ChatStrategy existing = ChatStrategy.builder().id(1L).name("默认策略").scenario("default").build();
+        existing.setHybridEnabled(true);
+        existing.setKeywordTopK(10);
+        existing.setRrfK(60);
+
+        when(chatStrategyService.getById(1L)).thenReturn(existing);
+        when(chatStrategyService.saveStrategy(any(ChatStrategy.class))).thenReturn(existing);
+
+        ChatStrategyUpdateRequest req = new ChatStrategyUpdateRequest();
+        req.setHybridEnabled(false);
+        req.setKeywordTopK(20);
+        req.setRrfK(30);
+
+        chatStrategyController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        assertThat(existing.getHybridEnabled()).isFalse();
+        assertThat(existing.getKeywordTopK()).isEqualTo(20);
+        assertThat(existing.getRrfK()).isEqualTo(30);
+    }
+
+    @Test
     void 平台共享模型_传空白apiKey不覆盖既有凭据() {
         AiModelConfig existing = AiModelConfig.builder()
                 .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
