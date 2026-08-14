@@ -13,21 +13,27 @@ import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.repository.ApplicationRepository;
+import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.TenantRepository;
+import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.webhook.WebhookPayloadBuilder;
 import com.qingyu.care.service.webhook.WebhookSender;
+import com.qingyu.care.util.SecurityUtil;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -35,6 +41,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 /**
@@ -101,6 +108,17 @@ class PartialUpdateSemanticsTest {
     ChatStrategyService chatStrategyService;
     @InjectMocks
     ChatStrategyController chatStrategyController;
+
+    // PlatformController 的构造参数里，modelRouterService/tenantRepository/applicationRepository/
+    // chatToolService 复用上面已声明的 @Mock 字段（同类型只有一份，Mockito 按类型注入不冲突）。
+    @Mock
+    UserRepository userRepository;
+    @Mock
+    ChatSessionRepository chatSessionRepository;
+    @Mock
+    HealthEndpoint healthEndpoint;
+    @InjectMocks
+    PlatformController platformController;
 
     @Test
     void DTO未赋值的字段一律为null_工具() {
@@ -226,5 +244,57 @@ class PartialUpdateSemanticsTest {
 
         assertThat(existing.getSimilarityThreshold()).isEqualTo(0.68);
         assertThat(existing.getEnabled()).isFalse();
+    }
+
+    @Test
+    void 平台共享模型_传空白apiKey不覆盖既有凭据() {
+        AiModelConfig existing = AiModelConfig.builder()
+                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
+                .scope(OwnerScope.PLATFORM).build();
+        existing.setApiKey("sk-platform-real-key");
+
+        when(modelRouterService.getById(1L)).thenReturn(existing);
+        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
+
+        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
+        req.setName("改个名字");
+        req.setApiKey("   ");   // 前端不回显凭据，编辑弹窗初始化为空串；粘贴还可能带来全空格
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getApiKey())
+                .as("空白 apiKey 必须被当作「不修改」，否则平台共享模型的凭据被抹掉，"
+                        + "所有绑定它的租户静默失效——第三方返 401，模型拿着错误响应继续编答案")
+                .isEqualTo("sk-platform-real-key");
+        assertThat(existing.getName()).isEqualTo("改个名字");
+    }
+
+    @Test
+    void 平台共享工具_传空白authHeader不覆盖既有凭据() {
+        AiTool existing = AiTool.builder()
+                .id(1L).name("shared_tool").scope(OwnerScope.PLATFORM).build();
+        existing.setAuthHeader("Bearer platform-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveSharedTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setName("改个名字");
+        req.setAuthHeader("   ");
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedTool(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getAuthHeader())
+                .as("空白 authHeader 必须被当作「不修改」")
+                .isEqualTo("Bearer platform-real-token");
+        assertThat(existing.getName()).isEqualTo("改个名字");
     }
 }

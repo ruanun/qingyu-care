@@ -70,7 +70,9 @@ public class PlatformController {
         if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
         if (config.getEndpoint() != null) existing.setEndpoint(config.getEndpoint());
-        if (config.getApiKey() != null && !config.getApiKey().isEmpty()) existing.setApiKey(config.getApiKey());
+        // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
+        // （与 AiModelController.updateModel 的同款判断口径一致）
+        if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());
         if (config.getScenario() != null) existing.setScenario(config.getScenario());
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());
@@ -122,7 +124,9 @@ public class PlatformController {
         if (tool.getHttpMethod() != null) existing.setHttpMethod(tool.getHttpMethod());
         if (tool.getUrlTemplate() != null) existing.setUrlTemplate(tool.getUrlTemplate());
         // 空值不覆盖：前端不回显凭据，提交时该字段为空表示「不修改」
-        if (tool.getAuthHeader() != null && !tool.getAuthHeader().isEmpty()) {
+        // isBlank 而非 isEmpty：全空格鉴权头同样无意义，不该被当成「有意修改」写入
+        // （与 AiToolController.update 的同款判断口径一致）
+        if (tool.getAuthHeader() != null && !tool.getAuthHeader().isBlank()) {
             existing.setAuthHeader(tool.getAuthHeader());
         }
         if (tool.getTimeoutMs() != null) existing.setTimeoutMs(tool.getTimeoutMs());
