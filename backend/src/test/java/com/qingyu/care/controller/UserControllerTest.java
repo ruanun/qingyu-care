@@ -104,6 +104,33 @@ class UserControllerTest {
     }
 
     /**
+     * 反向断言：上一条只钉「空白不覆盖」是空转的——若有人把第 180-182 行整个 if 连同
+     * {@code user.setPassword(...)} 一起删掉，上一条测试照样绿（密码本来就没变过）。
+     * 本条钉住另一半：传真实新密码必须真的生效。断言哈希「变了」而非等于某个具体值——
+     * {@code BCrypt.hashpw} 每次加盐结果不同，写死期望值必红。
+     */
+    @Test
+    void 传真实新密码会更新密码哈希() {
+        User existing = existingUser(2L);
+        String oldHash = existing.getPassword();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        TenantContext.setTenantId(2L);
+
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setPassword("NewRealPassword123");   // 真实新密码，而非空白
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
+            ApiResponse<User> resp = controller.updateUser(1L, req);
+
+            assertThat(resp.getCode()).isEqualTo(200);
+            assertThat(resp.getData().getPassword())
+                    .as("传入真实新密码必须真的生效，否则「空白不覆盖」的判空退化成「永不写入」")
+                    .isNotEqualTo(oldHash);
+        }
+    }
+
+    /**
      * 变异实验：把第 164 行 {@code newRole == PLATFORM_ADMIN && !isPlatformAdmin()} 的判断
      * 删掉（即不做提权校验），本条必须转红——非平台管理员会成功把普通用户提升为
      * {@code PLATFORM_ADMIN}。

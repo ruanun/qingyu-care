@@ -82,6 +82,10 @@ class PartialUpdateSemanticsTest {
     ChatToolService chatToolService;
     @InjectMocks
     AiSkillController aiSkillController;
+    // AiToolController 的唯一依赖 chatToolService 复用上面这份 @Mock（同类型只有一份，
+    // Mockito 按类型注入不冲突，同 PlatformController 那条注释里说明的规则）。
+    @InjectMocks
+    AiToolController aiToolController;
 
     @Mock
     TenantRepository tenantRepository;
@@ -206,6 +210,28 @@ class PartialUpdateSemanticsTest {
 
         assertThat(existing.getApiKey()).isEqualTo("sk-OLD_KEY_PLACEHOLDER");
         assertThat(existing.getEnabled()).isFalse();
+    }
+
+    // 反向断言：上一条只钉「空串不覆盖」是空转的——若有人把整个 if 连同赋值一起删掉，
+    // 上面那条测试照样绿（apiKey 本来就没变过）。本条钉住另一半：传真实新凭据必须真的
+    // 被写入，两个方向合起来才是完整的判空语义（同下方平台共享模型那一对的形状）。
+    @Test
+    void 编辑AI模型配置时传真实apiKey会写入新凭据() {
+        AiModelConfig existing = AiModelConfig.builder()
+                .id(1L).name("通义千问").provider("dashscope").modelId("qwen-max").build();
+        existing.setApiKey("sk-OLD_KEY_PLACEHOLDER");
+
+        when(modelRouterService.getById(1L)).thenReturn(existing);
+        when(modelRouterService.saveModel(any(AiModelConfig.class))).thenReturn(existing);
+
+        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
+        req.setApiKey("sk-tenant-rotated-key");   // 真实轮换凭据，而非空串
+
+        aiModelController.updateModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        assertThat(existing.getApiKey())
+                .as("传入真实新凭据必须真的被写入，否则「空串不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("sk-tenant-rotated-key");
     }
 
     @Test
@@ -399,5 +425,47 @@ class PartialUpdateSemanticsTest {
         assertThat(existing.getAuthHeader())
                 .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
                 .isEqualTo("Bearer platform-rotated-token");
+    }
+
+    // 上面两对守的是 PlatformController（平台共享工具/模型）。租户侧的孪生体
+    // AiToolController.update 此前全仓零测试调用——下面这对补上租户自己工具的 authHeader
+    // 判空，形状与平台共享工具那一对一致。
+
+    @Test
+    void 工具局部更新_传空白authHeader不覆盖既有凭据_且普通字段照常生效() {
+        AiTool existing = AiTool.builder().id(1L).name("旧工具名").build();
+        existing.setAuthHeader("Bearer tenant-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setName("改个名字");   // 证明请求整体生效、不是被整体拒绝
+        req.setAuthHeader("   ");   // 全空格，非空串但同样无意义
+
+        aiToolController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        assertThat(existing.getAuthHeader())
+                .as("空白 authHeader 必须被当作「不修改」")
+                .isEqualTo("Bearer tenant-real-token");
+        assertThat(existing.getName()).isEqualTo("改个名字");
+    }
+
+    @Test
+    void 工具局部更新_传真实authHeader会写入新凭据() {
+        AiTool existing = AiTool.builder().id(1L).name("旧工具名").build();
+        existing.setAuthHeader("Bearer tenant-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setAuthHeader("Bearer tenant-rotated-token");   // 真实轮换凭据，而非空白
+
+        aiToolController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        assertThat(existing.getAuthHeader())
+                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("Bearer tenant-rotated-token");
     }
 }
