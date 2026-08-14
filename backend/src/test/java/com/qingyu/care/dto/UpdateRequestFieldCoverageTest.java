@@ -41,8 +41,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>故本类实现的是修正后的规则：<b>差集里的每个字段必须在 {@link #EXCLUSION_WHITELIST} 里被
  * 显式声明并写明理由</b>。目标不是「不许漏」，而是把 <b>静默遗漏</b> 变成 <b>刻意排除</b>——
- * 第 12 项的病根正是「实体加了字段，DTO 没跟上，且没人发现」。新增 {@code *UpdateRequest}、或给
- * 现有实体加一个新的可变字段，本类都会红，除非显式补 DTO 字段或白名单条目。
+ * 第 12 项的病根正是「实体加了字段，DTO 没跟上，且没人发现」。新增一个类名以 {@code UpdateRequest}
+ * 结尾的 DTO 并在 {@link #DTO_TO_ENTITY} 登记对应实体、或给 {@link #DTO_TO_ENTITY} 里已登记的
+ * 那 8 个实体之一加一个新的可变字段，本类都会红，除非显式补 DTO 字段或白名单条目。
+ *
+ * <p>⚠️ <b>覆盖边界是类名后缀约定 + 显式登记，不是「任何实体」</b>：只有类名以
+ * {@code UpdateRequest} 结尾、且在 {@link #DTO_TO_ENTITY} 里显式登记过对应实体的类才在扫描
+ * 范围内。{@code KnowledgeBase}/{@code CrawlSite}/{@code QaPair} 等没有对应 {@code *UpdateRequest}
+ * DTO（或走别的命名/收参方式）的实体，本类完全不管——加字段不会红，也不代表安全，只是不在
+ * 本条守护的覆盖范围里。
  *
  * <p>白名单本身也不能腐烂：{@link #whitelist条目必须仍然对得上实体与DTO的真实差集()} 反向断言
  * 白名单里的每条声明现在依然成立（字段确实在实体上、确实不在 DTO 上）——否则它会变成一张没人
@@ -86,7 +93,8 @@ class UpdateRequestFieldCoverageTest {
         Map<String, Map<String, String>> whitelist = new HashMap<>();
 
         Map<String, String> application = new HashMap<>();
-        application.put("appKey", "应用身份标识，创建时生成、全仓无任何 setAppKey 调用，事实上不可变");
+        application.put("appKey", "应用身份标识，仅在 ApplicationController.create 创建时生成一次"
+                + "（ApplicationController.java:97），无任何更新路径调用");
         application.put("appSecret", "凭据，专用端点 POST /{id}/regenerate-secret 重置（ApplicationController:144-145）");
         application.put("webhookSecret", "凭据，专用端点 POST /{id}/regenerate-webhook-secret 重置（ApplicationController:158-159）");
         application.put("tenant", "归属关系，客户端可设=跨租户写入（技术债第14项刚堵掉的那类洞）");
@@ -169,8 +177,11 @@ class UpdateRequestFieldCoverageTest {
                 .isEmpty();
     }
 
+    /** 白名单理由的最小长度：挡不住「随手编个理由」，但挡得住留空/占位符这种最偷懒的情况。 */
+    private static final int MIN_REASON_LENGTH = 8;
+
     @Test
-    @DisplayName("白名单条目必须仍然对得上实体与 DTO 的真实差集，否则说明白名单过时了")
+    @DisplayName("白名单条目必须仍然对得上实体与 DTO 的真实差集、且理由非空达标，否则说明白名单过时或摆设")
     void whitelist条目必须仍然对得上实体与DTO的真实差集() {
         List<Class<?>> classes = scanUpdateRequestClasses();
 
@@ -184,12 +195,12 @@ class UpdateRequestFieldCoverageTest {
             dtoBySimpleName.put(dtoClass.getSimpleName(), dtoClass);
         }
 
-        List<String> staleEntries = new ArrayList<>();
+        List<String> invalidEntries = new ArrayList<>();
         for (Map.Entry<String, Map<String, String>> dtoEntry : EXCLUSION_WHITELIST.entrySet()) {
             String dtoSimpleName = dtoEntry.getKey();
             Class<?> dtoClass = dtoBySimpleName.get(dtoSimpleName);
             if (dtoClass == null) {
-                staleEntries.add("白名单里的 " + dtoSimpleName + " 已不在 dto 包扫描结果中，该整条应删除");
+                invalidEntries.add("白名单里的 " + dtoSimpleName + " 已不在 dto 包扫描结果中，该整条应删除");
                 continue;
             }
 
@@ -198,20 +209,27 @@ class UpdateRequestFieldCoverageTest {
             Set<String> entityFields =
                     entityClass == null ? Set.of() : fieldNames(entityClass, Object.class);
 
-            for (String field : dtoEntry.getValue().keySet()) {
+            for (Map.Entry<String, String> fieldEntry : dtoEntry.getValue().entrySet()) {
+                String field = fieldEntry.getKey();
+                String reason = fieldEntry.getValue();
+
+                if (reason == null || reason.isBlank() || reason.trim().length() < MIN_REASON_LENGTH) {
+                    invalidEntries.add(dtoSimpleName + "." + field + " 的排除理由为空或过短（少于 "
+                            + MIN_REASON_LENGTH + " 个字符）——白名单的理由是给人读的，不能留空/占位符");
+                }
                 if (dtoFields.contains(field)) {
-                    staleEntries.add(dtoSimpleName + "." + field
+                    invalidEntries.add(dtoSimpleName + "." + field
                             + " 已经进了 DTO，白名单条目已过时，应删除");
                 } else if (!entityFields.contains(field)) {
-                    staleEntries.add((entityClass == null ? "?" : entityClass.getSimpleName()) + "." + field
+                    invalidEntries.add((entityClass == null ? "?" : entityClass.getSimpleName()) + "." + field
                             + " 在实体上已不存在，" + dtoSimpleName + " 的白名单条目已过时，应删除");
                 }
             }
         }
 
-        assertThat(staleEntries)
-                .as("以下白名单条目已经名不副实（字段已补进 DTO，或实体上已经没有这个字段），"
-                        + "白名单会因此越积越多变成死名单——请删除对应条目")
+        assertThat(invalidEntries)
+                .as("以下白名单条目已经名不副实（字段已补进 DTO、实体上已经没有这个字段，或理由为空/过短），"
+                        + "白名单会因此越积越多变成死名单，或退化成没人读的摆设——请修正或删除对应条目")
                 .isEmpty();
     }
 
