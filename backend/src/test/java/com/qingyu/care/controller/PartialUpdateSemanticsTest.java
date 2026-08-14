@@ -297,4 +297,55 @@ class PartialUpdateSemanticsTest {
                 .isEqualTo("Bearer platform-real-token");
         assertThat(existing.getName()).isEqualTo("改个名字");
     }
+
+    // 反向断言：只钉「空白不覆盖」是空转的——若有人把整个 if 连同赋值一起删掉，
+    // 上面两条测试照样绿（apiKey/authHeader 本来就没变过）。下面两条钉住另一半：
+    // 传真实新凭据必须真的被写入，两个方向合起来才是完整的判空语义。
+
+    @Test
+    void 平台共享模型_传真实apiKey会写入新凭据() {
+        AiModelConfig existing = AiModelConfig.builder()
+                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
+                .scope(OwnerScope.PLATFORM).build();
+        existing.setApiKey("sk-platform-real-key");
+
+        when(modelRouterService.getById(1L)).thenReturn(existing);
+        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
+
+        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
+        req.setApiKey("sk-platform-rotated-key");   // 真实轮换凭据，而非空白
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getApiKey())
+                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("sk-platform-rotated-key");
+    }
+
+    @Test
+    void 平台共享工具_传真实authHeader会写入新凭据() {
+        AiTool existing = AiTool.builder()
+                .id(1L).name("shared_tool").scope(OwnerScope.PLATFORM).build();
+        existing.setAuthHeader("Bearer platform-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveSharedTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setAuthHeader("Bearer platform-rotated-token");   // 真实轮换凭据，而非空白
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedTool(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getAuthHeader())
+                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("Bearer platform-rotated-token");
+    }
 }
