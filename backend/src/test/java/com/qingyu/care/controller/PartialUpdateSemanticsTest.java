@@ -247,6 +247,33 @@ class PartialUpdateSemanticsTest {
     }
 
     @Test
+    void 问答策略局部更新不改动未传的混合检索参数_且传了的会真的生效() {
+        ChatStrategy existing = ChatStrategy.builder().id(1L).name("默认策略").scenario("default").build();
+        existing.setTopK(5);
+        existing.setSimilarityThreshold(0.68);
+        existing.setKeywordTopK(10);
+        existing.setRrfK(60);
+        existing.setHybridEnabled(true);
+
+        when(chatStrategyService.getById(1L)).thenReturn(existing);
+        when(chatStrategyService.saveStrategy(any(ChatStrategy.class))).thenReturn(existing);
+
+        ChatStrategyUpdateRequest req = new ChatStrategyUpdateRequest();
+        req.setHybridEnabled(false);   // 只传混合检索开关，模拟前端点关闭该开关
+
+        chatStrategyController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        // 方向一：没传的字段纹丝不动
+        assertThat(existing.getTopK()).isEqualTo(5);
+        assertThat(existing.getSimilarityThreshold()).isEqualTo(0.68);
+        assertThat(existing.getKeywordTopK()).isEqualTo(10);
+        assertThat(existing.getRrfK()).isEqualTo(60);
+        assertThat(existing.getName()).isEqualTo("默认策略");
+        // 方向二：传了的字段真的生效——只断言方向一是空转的，删掉赋值这条测试照样绿
+        assertThat(existing.getHybridEnabled()).isFalse();
+    }
+
+    @Test
     void 平台共享模型_传空白apiKey不覆盖既有凭据() {
         AiModelConfig existing = AiModelConfig.builder()
                 .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")

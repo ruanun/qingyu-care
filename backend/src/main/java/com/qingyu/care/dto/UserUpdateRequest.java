@@ -15,12 +15,13 @@ import lombok.Data;
  * 与 Jackson 走的无参构造无关，删掉它不会修好这个缺陷（证据见本类末段引用的
  * {@code KnowledgeBaseRequest} 反例）。
  *
- * <p>⚠️ <b>{@code password} 必须用 {@code != null && !isEmpty()} 判断，不能只判
+ * <p>⚠️ <b>{@code password} 必须用 {@code != null && !isBlank()} 判断，不能只判
  * null</b>。{@code UserListPage} 的编辑弹窗把 {@code password} 初始化为空串（注释写着「编辑时
  * 不显示/修改密码除非输入」）却在提交时一起发出，原先后端用 {@code containsKey("password")}
  * 判断，空串同样成立 → {@code BCrypt.hashpw("")}。后果是管理员改一下昵称，该用户密码被静默重置成
  * 空串哈希：旧密码登不上，空密码又被 {@code LoginRequest} 的 {@code @NotBlank} 拒掉，用户被彻底
- * 锁死且毫无提示。
+ * 锁死且毫无提示。仅判 {@code isEmpty} 挡不住全空格密码（{@code "   "}），同样一路穿到
+ * {@code BCrypt.hashpw("   ")}，故须用 {@code isBlank}。
  *
  * <p>⚠️ <b>本类所有字段一律不写初始化器</b>——这才是真正的铁律，{@code null} 必须真正表示
  * 「请求体没给这个字段」。<b>删掉 {@code @Builder.Default} 或不加 {@code @Builder} 都不能替代

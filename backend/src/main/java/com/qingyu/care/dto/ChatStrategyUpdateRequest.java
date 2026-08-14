@@ -45,4 +45,13 @@ public class ChatStrategyUpdateRequest {
     private Long promptTemplateId;
     private Boolean enabled;
     private Boolean isDefault;
+
+    /** 是否启用混合检索（向量 + 关键词） */
+    private Boolean hybridEnabled;
+
+    /** 关键词路取回条数 */
+    private Integer keywordTopK;
+
+    /** RRF 融合常数 k */
+    private Integer rrfK;
 }

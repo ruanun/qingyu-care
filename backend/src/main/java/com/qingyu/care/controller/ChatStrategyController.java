@@ -48,7 +48,10 @@ public class ChatStrategyController {
         if (strategy.getPromptTemplateId() != null) existing.setPromptTemplateId(strategy.getPromptTemplateId());
         if (strategy.getEnabled() != null) existing.setEnabled(strategy.getEnabled());
         if (strategy.getIsDefault() != null) existing.setIsDefault(strategy.getIsDefault());
-        
+        if (strategy.getHybridEnabled() != null) existing.setHybridEnabled(strategy.getHybridEnabled());
+        if (strategy.getKeywordTopK() != null) existing.setKeywordTopK(strategy.getKeywordTopK());
+        if (strategy.getRrfK() != null) existing.setRrfK(strategy.getRrfK());
+
         return ApiResponse.success("策略已更新", strategyService.saveStrategy(existing));
     }
 
