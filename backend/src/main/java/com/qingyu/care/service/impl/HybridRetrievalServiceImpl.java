@@ -37,7 +37,10 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
         int keywordTopK = strategy.getKeywordTopK() != null ? strategy.getKeywordTopK() : 10;
         int rrfK = strategy.getRrfK() != null ? strategy.getRrfK() : 60;
-        double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
+        // 0.45：与 ChatServiceImpl 的兜底一致（0.7 已被实测标定推翻，见该类注释）。列
+        // similarity_threshold 是 nullable=false，这条兜底实际不可达，同样只是避免留一颗
+        // 用已推翻的值做的哑弹。
+        double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.45;
 
         // 向量路（fail-soft：异常则空列表 → 融合退化为关键词/空）
         List<RrfFuser.Item> vectorItems = new ArrayList<>();

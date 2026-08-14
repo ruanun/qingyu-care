@@ -13,21 +13,27 @@ import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.repository.ApplicationRepository;
+import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.TenantRepository;
+import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.webhook.WebhookPayloadBuilder;
 import com.qingyu.care.service.webhook.WebhookSender;
+import com.qingyu.care.util.SecurityUtil;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -35,6 +41,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 /**
@@ -101,6 +108,17 @@ class PartialUpdateSemanticsTest {
     ChatStrategyService chatStrategyService;
     @InjectMocks
     ChatStrategyController chatStrategyController;
+
+    // PlatformController 的构造参数里，modelRouterService/tenantRepository/applicationRepository/
+    // chatToolService 复用上面已声明的 @Mock 字段（同类型只有一份，Mockito 按类型注入不冲突）。
+    @Mock
+    UserRepository userRepository;
+    @Mock
+    ChatSessionRepository chatSessionRepository;
+    @Mock
+    HealthEndpoint healthEndpoint;
+    @InjectMocks
+    PlatformController platformController;
 
     @Test
     void DTO未赋值的字段一律为null_工具() {
@@ -226,5 +244,160 @@ class PartialUpdateSemanticsTest {
 
         assertThat(existing.getSimilarityThreshold()).isEqualTo(0.68);
         assertThat(existing.getEnabled()).isFalse();
+    }
+
+    @Test
+    void 问答策略局部更新不改动未传的混合检索参数_且传了的会真的生效() {
+        ChatStrategy existing = ChatStrategy.builder().id(1L).name("默认策略").scenario("default").build();
+        existing.setTopK(5);
+        existing.setSimilarityThreshold(0.68);
+        existing.setKeywordTopK(10);
+        existing.setRrfK(60);
+        existing.setHybridEnabled(true);
+
+        when(chatStrategyService.getById(1L)).thenReturn(existing);
+        when(chatStrategyService.saveStrategy(any(ChatStrategy.class))).thenReturn(existing);
+
+        ChatStrategyUpdateRequest req = new ChatStrategyUpdateRequest();
+        req.setHybridEnabled(false);   // 只传混合检索开关，模拟前端点关闭该开关
+
+        chatStrategyController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        // 方向一：没传的字段纹丝不动
+        assertThat(existing.getTopK()).isEqualTo(5);
+        assertThat(existing.getSimilarityThreshold()).isEqualTo(0.68);
+        assertThat(existing.getKeywordTopK()).isEqualTo(10);
+        assertThat(existing.getRrfK()).isEqualTo(60);
+        assertThat(existing.getName()).isEqualTo("默认策略");
+        // 方向二：传了的字段真的生效——只断言方向一是空转的，删掉赋值这条测试照样绿
+        assertThat(existing.getHybridEnabled()).isFalse();
+    }
+
+    @Test
+    void 问答策略局部更新_三个混合检索参数各自传入时都真的生效() {
+        // 上一条测试只传 hybridEnabled，keywordTopK/rrfK 那两行赋值的「生效」分支从未被执行过
+        // ——删掉其中任一行，全量单测原本无一转红。本条三个字段同时传新值，逐一断言到具体值，
+        // 保证删掉三行赋值中的任意一行都会让对应那条断言精确转红。
+        ChatStrategy existing = ChatStrategy.builder().id(1L).name("默认策略").scenario("default").build();
+        existing.setHybridEnabled(true);
+        existing.setKeywordTopK(10);
+        existing.setRrfK(60);
+
+        when(chatStrategyService.getById(1L)).thenReturn(existing);
+        when(chatStrategyService.saveStrategy(any(ChatStrategy.class))).thenReturn(existing);
+
+        ChatStrategyUpdateRequest req = new ChatStrategyUpdateRequest();
+        req.setHybridEnabled(false);
+        req.setKeywordTopK(20);
+        req.setRrfK(30);
+
+        chatStrategyController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+
+        assertThat(existing.getHybridEnabled()).isFalse();
+        assertThat(existing.getKeywordTopK()).isEqualTo(20);
+        assertThat(existing.getRrfK()).isEqualTo(30);
+    }
+
+    @Test
+    void 平台共享模型_传空白apiKey不覆盖既有凭据() {
+        AiModelConfig existing = AiModelConfig.builder()
+                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
+                .scope(OwnerScope.PLATFORM).build();
+        existing.setApiKey("sk-platform-real-key");
+
+        when(modelRouterService.getById(1L)).thenReturn(existing);
+        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
+
+        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
+        req.setName("改个名字");
+        req.setApiKey("   ");   // 前端不回显凭据，编辑弹窗初始化为空串；粘贴还可能带来全空格
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getApiKey())
+                .as("空白 apiKey 必须被当作「不修改」，否则平台共享模型的凭据被抹掉，"
+                        + "所有绑定它的租户静默失效——第三方返 401，模型拿着错误响应继续编答案")
+                .isEqualTo("sk-platform-real-key");
+        assertThat(existing.getName()).isEqualTo("改个名字");
+    }
+
+    @Test
+    void 平台共享工具_传空白authHeader不覆盖既有凭据() {
+        AiTool existing = AiTool.builder()
+                .id(1L).name("shared_tool").scope(OwnerScope.PLATFORM).build();
+        existing.setAuthHeader("Bearer platform-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveSharedTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setName("改个名字");
+        req.setAuthHeader("   ");
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedTool(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getAuthHeader())
+                .as("空白 authHeader 必须被当作「不修改」")
+                .isEqualTo("Bearer platform-real-token");
+        assertThat(existing.getName()).isEqualTo("改个名字");
+    }
+
+    // 反向断言：只钉「空白不覆盖」是空转的——若有人把整个 if 连同赋值一起删掉，
+    // 上面两条测试照样绿（apiKey/authHeader 本来就没变过）。下面两条钉住另一半：
+    // 传真实新凭据必须真的被写入，两个方向合起来才是完整的判空语义。
+
+    @Test
+    void 平台共享模型_传真实apiKey会写入新凭据() {
+        AiModelConfig existing = AiModelConfig.builder()
+                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
+                .scope(OwnerScope.PLATFORM).build();
+        existing.setApiKey("sk-platform-real-key");
+
+        when(modelRouterService.getById(1L)).thenReturn(existing);
+        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
+
+        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
+        req.setApiKey("sk-platform-rotated-key");   // 真实轮换凭据，而非空白
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getApiKey())
+                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("sk-platform-rotated-key");
+    }
+
+    @Test
+    void 平台共享工具_传真实authHeader会写入新凭据() {
+        AiTool existing = AiTool.builder()
+                .id(1L).name("shared_tool").scope(OwnerScope.PLATFORM).build();
+        existing.setAuthHeader("Bearer platform-real-token");
+
+        when(chatToolService.getTool(1L)).thenReturn(existing);
+        when(chatToolService.saveSharedTool(any(AiTool.class))).thenReturn(existing);
+
+        AiToolUpdateRequest req = new AiToolUpdateRequest();
+        req.setAuthHeader("Bearer platform-rotated-token");   // 真实轮换凭据，而非空白
+
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
+
+            platformController.updateSharedTool(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
+
+        assertThat(existing.getAuthHeader())
+                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
+                .isEqualTo("Bearer platform-rotated-token");
     }
 }

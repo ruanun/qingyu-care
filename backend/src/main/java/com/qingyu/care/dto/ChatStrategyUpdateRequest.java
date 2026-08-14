@@ -45,4 +45,22 @@ public class ChatStrategyUpdateRequest {
     private Long promptTemplateId;
     private Boolean enabled;
     private Boolean isDefault;
+
+    /**
+     * 是否启用混合检索（向量 + 关键词）。
+     *
+     * <p>⚠️ 这里的 {@code null} 与本类其它字段的 {@code null}（「请求体没给这个字段，局部更新
+     * 不覆盖」）含义不同——它同时还要与 {@code ChatServiceImpl.searchKnowledge} 的
+     * {@code !Boolean.FALSE.equals(strategy.getHybridEnabled())} 契约保持一致：库里的
+     * {@code null}（含全部历史存量行，从未 backfill 过这一列）在**运行时**被视为「开启」。
+     * 两层 null 语义叠在同一个字段上：局部更新层面「没传」与业务层面「未配置＝默认开启」
+     * 恰好都指向"不覆盖/不改变现状"，因此不冲突，但改这个字段前务必想清楚这一点。
+     */
+    private Boolean hybridEnabled;
+
+    /** 关键词路取回条数 */
+    private Integer keywordTopK;
+
+    /** RRF 融合常数 k */
+    private Integer rrfK;
 }

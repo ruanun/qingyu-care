@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS chat_strategy (
     name VARCHAR(100) NOT NULL,
     scenario VARCHAR(50) NOT NULL,                 -- default / complaint / faq ...
     top_k INTEGER NOT NULL DEFAULT 5,
-    similarity_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    similarity_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.45,
     allow_no_knowledge BOOLEAN NOT NULL DEFAULT TRUE,
     fallback_message VARCHAR(500),
     prompt_template_id BIGINT,

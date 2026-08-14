@@ -917,7 +917,10 @@ public class ChatServiceImpl implements ChatService {
             }
 
             int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
-            double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.7;
+            // 0.45：与本类顶部及 ChatStrategyService 的实测标定一致（0.7 已被证实几乎滤掉全部
+            // 真实相关命中）。列 similarity_threshold 是 nullable=false，这条兜底实际不可达，
+            // 但留着一个用已推翻的值做的哑弹只会误导下一个读代码的人。
+            double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.45;
             SearchRequest searchRequest = SearchRequest.builder()
                     .query(query)
                     .topK(topK)
