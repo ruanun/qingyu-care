@@ -104,7 +104,11 @@ const StrategyConfigPage: React.FC = () => {
             name: '',
             scenario: 'default',
             topK: 5,
-            similarityThreshold: 0.7,
+            // 0.45 而非直觉上的 0.7：ChatStrategyService 注释里的实测数据显示真实相关命中
+            // 落在 0.57~0.73、噪声落在 0.25~0.30，0.7 恰好卡在命中带顶端，几乎把真实相关的
+            // 匹配全滤掉（症状是「知识库明明有、问什么都答不知道」）。平台默认已重标定为
+            // 0.45，这里必须跟平台默认保持一致，别凭直觉改回 0.7。
+            similarityThreshold: 0.45,
             allowNoKnowledge: true,
             fallbackMessage: '抱歉，我无法回答该问题。',
             enabled: true,
@@ -262,16 +266,63 @@ const StrategyConfigPage: React.FC = () => {
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-bold flex items-center gap-2">
                                     <Sliders className="w-4 h-4 text-primary" />
-                                    相似度阈值: {((editingStrategy?.similarityThreshold || 0.7) * 100).toFixed(0)}%
+                                    相似度阈值: {((editingStrategy?.similarityThreshold || 0.45) * 100).toFixed(0)}%
                                 </label>
                                 <span className="text-xs text-muted-foreground">调高可减少误报，调低可扩大回答范围</span>
                             </div>
                             <Slider
-                                value={[(editingStrategy?.similarityThreshold || 0.7) * 100]}
+                                value={[(editingStrategy?.similarityThreshold || 0.45) * 100]}
                                 min={0} max={100} step={1}
                                 onValueChange={([val]) => setEditingStrategy({ ...editingStrategy, similarityThreshold: val / 100 })}
                             />
                         </div>
+
+                        <div className="flex items-center justify-between p-4 border rounded-lg">
+                            <div className="space-y-0.5">
+                                <label className="text-sm font-bold">混合检索（向量 + 关键词）</label>
+                                <p className="text-xs text-muted-foreground">开启后叠加 zhparser 关键词检索并做 RRF 融合，对专有名词/单据号等强字面匹配场景更友好</p>
+                            </div>
+                            <Switch
+                                aria-label="混合检索"
+                                checked={editingStrategy?.hybridEnabled || false}
+                                onCheckedChange={c => setEditingStrategy({ ...editingStrategy, hybridEnabled: c })}
+                            />
+                        </div>
+
+                        {/* 混合检索关闭时这两个参数无意义，只在开启时渲染，避免用户调无效参数 */}
+                        {editingStrategy?.hybridEnabled && (
+                            <>
+                                <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-bold flex items-center gap-2">
+                                            <Target className="w-4 h-4 text-primary" />
+                                            关键词取回条数: {editingStrategy?.keywordTopK ?? 10}
+                                        </label>
+                                        <span className="text-xs text-muted-foreground">关键词路取回多少条参与融合，越大召回越宽但越可能引入噪声</span>
+                                    </div>
+                                    <Slider
+                                        value={[editingStrategy?.keywordTopK ?? 10]}
+                                        min={1} max={30} step={1}
+                                        onValueChange={([val]) => setEditingStrategy({ ...editingStrategy, keywordTopK: val })}
+                                    />
+                                </div>
+
+                                <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-bold flex items-center gap-2">
+                                            <Sliders className="w-4 h-4 text-primary" />
+                                            RRF 融合常数 k: {editingStrategy?.rrfK ?? 60}
+                                        </label>
+                                        <span className="text-xs text-muted-foreground">融合排名的平滑常数，越大越平均</span>
+                                    </div>
+                                    <Slider
+                                        value={[editingStrategy?.rrfK ?? 60]}
+                                        min={1} max={100} step={1}
+                                        onValueChange={([val]) => setEditingStrategy({ ...editingStrategy, rrfK: val })}
+                                    />
+                                </div>
+                            </>
+                        )}
 
                         <div className="flex items-center justify-between p-4 border rounded-lg">
                             <div className="space-y-0.5">

@@ -12,6 +12,10 @@ export interface ChatStrategy {
     promptTemplateId: number | null;
     enabled: boolean;
     isDefault: boolean;
+    // 可选：存量策略行这三个字段可能为 null，接口返回里就没有它们
+    hybridEnabled?: boolean;
+    keywordTopK?: number;
+    rrfK?: number;
     createdAt: string;
     updatedAt: string;
 }
