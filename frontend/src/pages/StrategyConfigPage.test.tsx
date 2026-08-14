@@ -109,6 +109,11 @@ const strategy1: ChatStrategy = {
     promptTemplateId: null,
     enabled: true,
     isDefault: true,
+    // 显式 false（而不是留空靠 undefined）：混合检索开关对 null/undefined 显示为「开」
+    // （与后端 `!Boolean.FALSE.equals(...)` 契约对齐，见 StrategyConfigPage.tsx 里那段
+    // 注释），留空会让下面点击开关这条测试变成「从已经是开的状态点一下变成关」，
+    // 断言就要反过来写，判别力不如显式从「关」点到「开」这条更贴近真实编辑场景。
+    hybridEnabled: false,
     createdAt: '2026-08-14T00:00:00',
     updatedAt: '2026-08-14T00:00:00',
 };
@@ -178,5 +183,40 @@ describe('StrategyConfigPage 混合检索开关接线', () => {
         const [id, payload] = vi.mocked(chatStrategyService.update).mock.calls[0];
         expect(id).toBe(strategy1.id);
         expect(payload).toHaveProperty('hybridEnabled', true);
+    });
+
+    /**
+     * 钉住终审揪出的语义错位：后端 `ChatServiceImpl.searchKnowledge` 的
+     * `!Boolean.FALSE.equals(strategy.getHybridEnabled())` 把 hybridEnabled 为
+     * null（含全部存量行——库里目前没有一行 backfill 过这一列）视为「开启」。
+     * 管理面必须显示成一致的状态，否则想关掉混合检索的管理员打开编辑框看到的已经是
+     * 「关」，什么都不做，而后端其实仍在跑混合检索。
+     *
+     * 变异实验：把 Switch 的 `checked={editingStrategy?.hybridEnabled ?? true}`
+     * 改回 `|| false`，本条必须转红（初始 aria-checked 从 true 变 false，两个调参
+     * Slider 也不再可见）。上面那条「开关接线」测试因为 fixture 显式给了
+     * `hybridEnabled: false`，覆盖不到这个 null/undefined 分支，需要单独一条。
+     */
+    it('hybridEnabled 未配置的存量策略，编辑弹窗初始显示为开、两个调参可见', async () => {
+        const legacyStrategy: ChatStrategy = { ...strategy1, hybridEnabled: undefined };
+        vi.mocked(chatStrategyService.getAll).mockResolvedValue(ok([legacyStrategy]));
+        vi.mocked(chatStrategyService.update).mockResolvedValue(ok(legacyStrategy));
+
+        await renderPage();
+        fireEvent.click(screen.getByRole('button', { name: /编辑策略/ }));
+        await flush();
+
+        const toggle = screen.getByRole('switch', { name: '混合检索' });
+        expect(toggle).toHaveAttribute('aria-checked', 'true');
+        expect(screen.getByText(/关键词取回条数/)).toBeInTheDocument();
+        expect(screen.getByText(/RRF 融合常数 k/)).toBeInTheDocument();
+
+        fireEvent.click(toggle);
+        fireEvent.click(screen.getByRole('button', { name: /保存策略/ }));
+        await flush();
+
+        expect(chatStrategyService.update).toHaveBeenCalledTimes(1);
+        const [, payload] = vi.mocked(chatStrategyService.update).mock.calls[0];
+        expect(payload).toHaveProperty('hybridEnabled', false);
     });
 });

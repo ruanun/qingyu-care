@@ -284,13 +284,21 @@ const StrategyConfigPage: React.FC = () => {
                             </div>
                             <Switch
                                 aria-label="混合检索"
-                                checked={editingStrategy?.hybridEnabled || false}
+                                // 与后端契约（ChatServiceImpl.searchKnowledge 的
+                                // `!Boolean.FALSE.equals(strategy.getHybridEnabled())`）逐字对齐：
+                                // false 显关、true 显开、null/undefined（含全部存量行，历史上从未
+                                // backfill 过这一列）显开。写成 `|| false` 会把 null 反向显示成
+                                // 「关」，用户看着已关就什么都不做，而后端其实仍在跑混合检索。
+                                checked={editingStrategy?.hybridEnabled ?? true}
                                 onCheckedChange={c => setEditingStrategy({ ...editingStrategy, hybridEnabled: c })}
                             />
                         </div>
 
-                        {/* 混合检索关闭时这两个参数无意义，只在开启时渲染，避免用户调无效参数 */}
-                        {editingStrategy?.hybridEnabled && (
+                        {/* 混合检索关闭时这两个参数无意义，只在开启时渲染，避免用户调无效参数；
+                            门控条件必须与上面 Switch 的 `checked` 同一套语义（null 视为开启），
+                            否则「正在使用混合检索的存量行」（hybridEnabled 为 null）打开编辑框
+                            反而看不到这两个参数——第 12 项本该解决的问题只兑现了一半。 */}
+                        {editingStrategy?.hybridEnabled !== false && (
                             <>
                                 <div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-100">
                                     <div className="flex items-center justify-between">
