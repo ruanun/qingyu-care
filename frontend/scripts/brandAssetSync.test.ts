@@ -30,8 +30,11 @@ const COPIES: Record<string, string> = {
 /** 带渐变的四处；widget 是单色 currentColor，不参与色值比对。 */
 const GRADIENT_COPIES = Object.entries(COPIES).filter(([, p]) => !p.startsWith('widget/'));
 
-/** 图形共 7 条路径：气泡外形 1 + 「轻」字骨架 6（车字旁 3 + 「工」3）。 */
-const EXPECTED_PATH_COUNT = 7;
+/**
+ * 图形共 3 条路径，且顺序固定：大泡填充、小泡填充、小泡描边（那道描边就是两泡之间
+ * 的切缝）。小泡的路径数据出现两次是设计使然，不是复制错误。
+ */
+const EXPECTED_PATH_COUNT = 3;
 
 /** 渐变两个色标：靛蓝 → 紫。 */
 const EXPECTED_STOP_COUNT = 2;
