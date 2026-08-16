@@ -3,8 +3,10 @@
     轻语标准锁定形式（图标 + 字标），README banner 用。
 
     ⚠️ 文字颜色刻意不用管理端那个近黑 slate：GitHub 暗色主题下背景是 #0d1117，
-    深色字几乎不可见。靛蓝 #6366f1 与 slate-500 #64748b 在白底和暗底上都达标，
-    因此一份文件通吃两种主题，不必做 <picture> 双套资产。
+    深色字几乎不可见。字标用 teal-700 #0f766e（白底 5.5:1、暗底 3.4:1，30px 粗体
+    属大字级，两边都过），副标题 slate-500 #64748b 同样两边都过——因此一份文件通吃
+    两种主题，不必做 <picture> 双套资产。
+    ⚠️ 字标不能直接用渐变那两个色：teal-500 #14b8a6 在白底上只有 2.5:1，会糊掉。
 
     ⚠️ 字标用系统字体渲染，跨平台字形会有差异（SVG 里的 text 取阅读者本机字体）。
     这是 banner 的常规取舍；要完全一致得把字转成路径，中文字形无法手工编写。
@@ -14,8 +16,8 @@
   -->
   <defs>
     <linearGradient id="qyLockupGradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6366f1"/>
-      <stop offset="1" stop-color="#8b5cf6"/>
+      <stop offset="0" stop-color="#0d9488"/>
+      <stop offset="1" stop-color="#14b8a6"/>
     </linearGradient>
     <mask id="qyLockupMask">
       <path d="M4.5 7h8a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H7.5L3.5 20.8V17a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3z" fill="#fff"/>
@@ -29,7 +31,7 @@
   </g>
 
   <g font-family="&quot;PingFang SC&quot;,&quot;Hiragino Sans GB&quot;,&quot;Microsoft YaHei&quot;,&quot;Noto Sans SC&quot;,&quot;Source Han Sans SC&quot;,sans-serif">
-    <text x="86" y="48" font-size="30" font-weight="700" fill="#6366f1">轻语 QingYu Care</text>
+    <text x="86" y="48" font-size="30" font-weight="700" fill="#0f766e">轻语 QingYu Care</text>
     <text x="88" y="72" font-size="14" fill="#64748b">AI 智能客服 SaaS 平台</text>
   </g>
 </svg>

@@ -74,7 +74,7 @@ public class Application {
      */
     @Column(length = 20)
     @Builder.Default
-    private String themeColor = "#6366f1";
+    private String themeColor = "#0d9488";
 
     /**
      * 是否启用

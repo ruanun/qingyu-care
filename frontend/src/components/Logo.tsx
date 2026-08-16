@@ -33,8 +33,8 @@ const Logo: React.FC<{
         >
             <defs>
                 <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="#6366f1" />
-                    <stop offset="1" stopColor="#8b5cf6" />
+                    <stop offset="0" stopColor="#0d9488" />
+                    <stop offset="1" stopColor="#14b8a6" />
                 </linearGradient>
                 <mask id={maskId}>
                     <path

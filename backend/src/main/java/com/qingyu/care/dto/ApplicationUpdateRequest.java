@@ -6,10 +6,10 @@ import lombok.Data;
  * 应用局部更新请求。
  *
  * <p><b>为什么不直接用 {@code Application} 实体收请求体</b>：实体字段写了初始化器（如
- * {@code private String themeColor = "#6366f1";}），Jackson 反序列化用的无参构造会原样执行
+ * {@code private String themeColor = "#0d9488";}），Jackson 反序列化用的无参构造会原样执行
  * 这些初始化器——于是请求体里<b>没给</b>的字段拿到的是类默认值而非 {@code null}，
  * {@code if (x != null)} 恒真，把库里的值覆盖掉。前端点一下启用开关（只发
- * {@code {"enabled": false}}）就会把 themeColor 打回 {@code "#6366f1"}。实体上
+ * {@code {"enabled": false}}）就会把 themeColor 打回 {@code "#0d9488"}。实体上
  * {@code themeColor}/{@code enabled} 还额外标了 {@code @Builder.Default}，但<b>真正起效的是
  * 字段初始化器本身，不是 {@code @Builder.Default} 注解</b>——见下一段。
  *

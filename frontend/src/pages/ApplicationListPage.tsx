@@ -37,7 +37,7 @@ const ApplicationListPage: React.FC = () => {
         name: '',
         description: '',
         welcomeMessage: '',
-        themeColor: '#6366f1',
+        themeColor: '#0d9488',
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { toast } = useToast();
@@ -67,7 +67,7 @@ const ApplicationListPage: React.FC = () => {
                 name: app.name,
                 description: app.description || '',
                 welcomeMessage: app.welcomeMessage || '',
-                themeColor: app.themeColor || '#6366f1',
+                themeColor: app.themeColor || '#0d9488',
             });
         } else {
             setEditingApp(null);
@@ -75,7 +75,7 @@ const ApplicationListPage: React.FC = () => {
                 name: '',
                 description: '',
                 welcomeMessage: '您好！我是您的智能助理，很高兴为您服务。',
-                themeColor: '#6366f1',
+                themeColor: '#0d9488',
             });
         }
         setIsDialogOpen(true);

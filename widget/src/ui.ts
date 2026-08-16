@@ -63,7 +63,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   const root = host.attachShadow({ mode: 'open' });
 
   const style = document.createElement('style');
-  style.textContent = buildStyles(brand.themeColor || '#6366f1');
+  style.textContent = buildStyles(brand.themeColor || '#0d9488');
   root.appendChild(style);
 
   const bubble = document.createElement('button');
