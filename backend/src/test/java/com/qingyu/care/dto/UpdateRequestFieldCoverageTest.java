@@ -27,9 +27,9 @@ import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 扫描式守护「{@code *UpdateRequest} 字段覆盖」，技术债清单第 16 项。
+ * 扫描式守护「{@code *UpdateRequest} 字段覆盖」。
  *
- * <p>⚠️ <b>第 16 项原描述的规则（DTO 字段集 ⊇ 实体可变字段集）照字面实现是错的</b>：实测有 6 个
+ * <p>⚠️ <b>直觉上的规则（DTO 字段集 ⊇ 实体可变字段集）照字面实现是错的</b>：实测有 6 个
  * DTO 会红（{@code ApplicationUpdateRequest}/{@code TenantUpdateRequest}/
  * {@code UserUpdateRequest}/{@code AbTestUpdateRequest}/{@code AiModelConfigUpdateRequest}/
  * {@code AiToolUpdateRequest}），而每一处「遗漏」都是有意且正确的——凭据字段（{@code appSecret}/
@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>故本类实现的是修正后的规则：<b>差集里的每个字段必须在 {@link #EXCLUSION_WHITELIST} 里被
  * 显式声明并写明理由</b>。目标不是「不许漏」，而是把 <b>静默遗漏</b> 变成 <b>刻意排除</b>——
- * 第 12 项的病根正是「实体加了字段，DTO 没跟上，且没人发现」。新增一个类名以 {@code UpdateRequest}
+ * 这类缺陷的病根正是「实体加了字段，DTO 没跟上，且没人发现」。新增一个类名以 {@code UpdateRequest}
  * 结尾的 DTO 并在 {@link #DTO_TO_ENTITY} 登记对应实体、或给 {@link #DTO_TO_ENTITY} 里已登记的
  * 那 8 个实体之一加一个新的可变字段，本类都会红，除非显式补 DTO 字段或白名单条目。
  *
@@ -50,6 +50,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 范围内。{@code KnowledgeBase}/{@code CrawlSite}/{@code QaPair} 等没有对应 {@code *UpdateRequest}
  * DTO（或走别的命名/收参方式）的实体，本类完全不管——加字段不会红，也不代表安全，只是不在
  * 本条守护的覆盖范围里。
+ * ⚠️ 这也是本类<b>最现实的绕过方式</b>：不必往白名单里编造理由，只要把新 DTO 起个不以
+ * {@code UpdateRequest} 结尾的名字就完全绕开了（{@code KnowledgeBaseRequest}、
+ * {@code CrawlSiteRequest}、{@code QaPairRequest}、{@code UpdateRuleRequest} 这四条 update
+ * 路径现在就在边界外）。要根治得换成「每个有 PUT 端点、请求体是专用 DTO 的实体都必须登记」，
+ * 而不是靠类名后缀去发现。
+ *
+ * <p>⚠️ <b>本类只守住了「实体 → DTO」这一跳，「DTO → 控制器赋值」那一跳零守护</b>：
+ * 给实体和 DTO 都加了字段、却漏掉控制器里那行 {@code if (x != null) existing.setX(...)}，
+ * 本类全绿而症状完全静默——与它要防的那类缺陷一字不差。2026-08-15 逐个核过 8 个 DTO 的映射
+ * 代码，当前全部字段都已映射、无存量缺陷，所以这是结构缺口而非现行 bug。真要补，是给这 8 个
+ * DTO 写一条通用「全字段传播」测试：反射把每个 DTO 字段设成非默认值，调控制器，断言实体对应
+ * 字段全部变了。
  *
  * <p>白名单本身也不能腐烂：{@link #whitelist条目必须仍然对得上实体与DTO的真实差集()} 反向断言
  * 白名单里的每条声明现在依然成立（字段确实在实体上、确实不在 DTO 上）——否则它会变成一张没人

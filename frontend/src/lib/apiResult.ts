@@ -5,7 +5,7 @@
  * `ApiResponse`（`{code, message, data}`）resolve 给调用方——**axios 不会 reject
  * 业务异常**（后端 `BusinessException` 是 HTTP 200 + `code` 400）。所以每个调用方
  * 都必须自己判 `code`，判漏了就把后端的业务错误静默吞掉：用户点按钮毫无反应、
- * 也没有任何报错。技术债清单第 9 项记的就是这个，一度有 36 处写操作是这个形态。
+ * 也没有任何报错。2026-08-11 收敛前，仓库里一度有 36 处写操作是这个形态。
  *
  * @author ruan
  */

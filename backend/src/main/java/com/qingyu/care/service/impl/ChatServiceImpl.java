@@ -557,7 +557,7 @@ public class ChatServiceImpl implements ChatService {
      * 若某 chunk 无 usage 信息（非末尾 chunk），tokens 保持上次设值（最终为末尾值）。
      *
      * <p>⚠️ <b>这里的 {@code set} 是刻意的，不要"顺手"改成累加</b>（2026-08-11 核对
-     * Spring AI 2.0 源码确认，技术债清单第 2 项原先的描述是错的）：
+     * Spring AI 2.0 源码确认；此前一直有个"存在少计、应改成累加"的说法，是错的）：
      * <ul>
      *   <li>{@code OpenAiChatModel.internalCall} 在工具调用多轮之间会把上一轮的 usage
      *       传进递归、经 {@code UsageCalculator.getCumulativeUsage} <b>逐项相加</b>——
