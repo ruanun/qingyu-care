@@ -4,6 +4,7 @@ import { LogIn, User, Lock, Building2, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import Logo from '@/components/Logo';
 import { authService } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/hooks/use-toast';
@@ -91,9 +92,8 @@ const LoginPage: React.FC = () => {
 
                     <div className="relative z-10">
                         <div className="flex items-center gap-2 mb-12">
-                            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center font-bold text-xl shadow-lg ring-4 ring-primary/20">
-                                轻
-                            </div>
+                            {/* 深色卡片上用单色版：挖空的笔画透出卡片底色 */}
+                            <Logo variant="mono" className="h-10 w-10 text-white" />
                             <span className="text-2xl font-bold tracking-tight">QingYu AI</span>
                         </div>
 
@@ -121,9 +121,8 @@ const LoginPage: React.FC = () => {
                 {/* 右侧：登录/注册表单区 */}
                 <div className="p-8 lg:p-16 flex flex-col justify-center bg-white">
                     <div className="mb-8 lg:hidden flex justify-center">
-                        <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center font-bold text-xl text-white shadow-lg">
-                            轻
-                        </div>
+                        {/* 移动端这处是白底，必须用渐变版——单色白贴白底会整个消失 */}
+                        <Logo className="h-12 w-12" />
                     </div>
 
                     <div className="text-center lg:text-left mb-8">

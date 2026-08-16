@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAppStore } from '@/stores/appStore';
 import { platformService } from '@/api/platform';
 import AppSwitcher from '@/components/AppSwitcher';
+import Logo from '@/components/Logo';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -150,7 +151,8 @@ const MainLayout: React.FC = () => {
         <div className="flex h-screen w-screen bg-background text-foreground overflow-hidden">
             {/* Sidebar */}
             <aside className="w-64 border-r bg-muted/30 flex flex-col">
-                <div className="p-6 border-b">
+                <div className="p-6 border-b flex items-center gap-2.5">
+                    <Logo className="h-8 w-8 shrink-0" />
                     <h1 className="text-xl font-bold bg-linear-to-r from-primary to-primary/60 bg-clip-text text-transparent">
                         轻语 - QingYu
                     </h1>

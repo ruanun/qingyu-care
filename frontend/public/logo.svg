@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="轻语 QingYu Care">
+  <!--
+    轻语品牌图标：对话气泡（尖角左下）+「轻」字骨架（车字旁两笔 + 右侧两道横）。
+    实心气泡 + mask 挖空笔画，好处是深浅背景通吃：换个 fill 就能用，
+    笔画处透出的是背景本身，不必知道背景是什么颜色。
+
+    ⚠️ 这份路径数据是基准，另有三处副本必须同步：
+       frontend/src/components/Logo.tsx（管理端侧边栏与登录页）
+       widget/src/logo.ts（悬浮球）
+       docs/images/logo.svg（README 的字标锁定形式）
+    三个独立构建目标 + 一份文档资产，无法共享。刻意不加防漂移哨兵——logo 走形是
+    肉眼可见的外观问题，不属于本仓库那类「静默失效」，加哨兵是过度工程。
+  -->
+  <defs>
+    <linearGradient id="qyLogoGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <mask id="qyLogoMask">
+      <path d="M5 3h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9.5L5 20.8V17a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z" fill="#fff"/>
+      <!--
+        左三笔＝车字旁（竖 + 两横），右三笔＝圣简化成「工」（横竖横）。
+        ⚠️ 右侧最初只画两横，实测整个图形读作「+=」——一个客服产品的 logo 里
+        嵌进编程运算符是意外语义。中间那一竖是专门用来打断等号读法的，别删。
+      -->
+      <g stroke="#000" stroke-width="1.4" stroke-linecap="round">
+        <path d="M8 7.4V13.4"/>
+        <path d="M6.3 9.4H9.7"/>
+        <path d="M6.3 11.9H9.7"/>
+        <path d="M12.4 8.6H17.6"/>
+        <path d="M15 8.6V12.6"/>
+        <path d="M12.4 12.6H17.6"/>
+      </g>
+    </mask>
+  </defs>
+  <rect width="24" height="24" fill="url(#qyLogoGradient)" mask="url(#qyLogoMask)"/>
+</svg>

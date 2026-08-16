@@ -1,4 +1,5 @@
 import { buildStyles } from './styles';
+import { BUBBLE_LOGO_SVG } from './logo';
 import { renderNode } from './render';
 import type { WidgetBrand, UiPart, UiNode } from './api';
 import { renderAttachments, type WidgetAttachment, type ResolveAttachmentUrl } from './attachments';
@@ -67,7 +68,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
 
   const bubble = document.createElement('button');
   bubble.className = 'qy-bubble';
-  bubble.textContent = '💬';
+  bubble.innerHTML = BUBBLE_LOGO_SVG; // 模块内常量、无用户输入，同下方 panel 的用法
   bubble.setAttribute('aria-label', '打开客服');
 
   const panel = document.createElement('div');
