@@ -9,10 +9,8 @@
     ⚠️ 字标用系统字体渲染，跨平台字形会有差异（SVG 里的 text 取阅读者本机字体）。
     这是 banner 的常规取舍；要完全一致得把字转成路径，中文字形无法手工编写。
 
-    ⚠️ 图标路径数据另有三处副本，改形状必须四处同步：
-       frontend/public/logo.svg（favicon，**基准**）
-       frontend/src/components/Logo.tsx（管理端）
-       widget/src/logo.ts（悬浮球）
+    ⚠️ 图标路径数据是 brand/logo-mark.svg 的内联副本，全仓共五处同源副本，
+    由 frontend/scripts/brandAssetSync.test.ts 守护。改动步骤见 brand/README.md。
   -->
   <defs>
     <linearGradient id="qyLockupGradient" x1="0" y1="0" x2="1" y2="1">

@@ -316,4 +316,5 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - `docs/使用手册.md`：面向租户管理员的功能操作指南（配截图）。改了界面行为要同步。
 - `docs/部署文档.md`：部署、容器化、备份恢复、监控与**故障手册**——本文件里那些「不报错只静默异常」的坑，运维视角的版本在那儿。
 - `SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）的详细任务与接口设计。
+- `brand/README.md`：logo 与品牌色。⚠️ 图形的路径数据在仓库里存了**五份**（favicon / 管理端组件 / widget 常量 / 字标 / 基准），三个独立构建目标之间没有共享模块的通道。`frontend/scripts/brandAssetSync.test.ts` 守着五处同源，改一处漏其它即红；**改了 `widget/src/logo.ts` 还必须重新 build 并提交 `widget.js`**。
 - `docs/superpowers/` 下为各子功能的 spec 与实现计划（开发过程存档，刻意不迁走：本文件有若干带章节号的指针指向具体 spec，且它是写 spec 的默认路径）。

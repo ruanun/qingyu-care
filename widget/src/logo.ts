@@ -8,12 +8,9 @@
  * 常量字符串、无任何用户输入，故 `innerHTML` 注入是安全的（同 ui.ts 里 panel 的用法）。
  * 图标位于 Shadow DOM 内，mask 的 id 不会与宿主页面冲突。
  *
- * ⚠️ 同一份路径数据另有三处副本，改形状必须四处同步：
- *    frontend/public/logo.svg（favicon，**基准**）
- *    frontend/src/components/Logo.tsx（管理端）
- *    docs/images/logo.svg（README 的字标锁定形式）
- * 三个独立构建目标 + 一份文档资产，无法共享。刻意不加防漂移哨兵——logo 走形是肉眼
- * 可见的外观问题。
+ * ⚠️ 下面的路径数据是 `brand/logo-mark.svg` 的内联副本，全仓共五处同源副本，
+ * 由 `frontend/scripts/brandAssetSync.test.ts` 守护——改一处漏其它即红。
+ * 别在这里单独调形状，改动步骤见 `brand/README.md`（本文件改完还要重新 build widget）。
  */
 export const BUBBLE_LOGO_SVG = `<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
   <defs>

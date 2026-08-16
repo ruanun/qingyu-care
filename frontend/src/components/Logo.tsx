@@ -1,19 +1,16 @@
 import React, { useId } from 'react';
 
 /**
- * 轻语品牌图标
- * 对话气泡（尖角左下）+「轻」字骨架（车字旁两笔 + 右侧两道横）。
+ * 轻语品牌图标（管理端）
+ * 对话气泡（尖角左下）+「轻」字骨架（左＝车字旁三笔，右＝圣简化成「工」三笔）。
  *
  * 实心气泡 + mask 挖空笔画：笔画处透出的是背景本身，因此同一份图形深浅背景通吃，
  * 换 fill 即可——`gradient` 用于浅色背景（侧边栏），`mono` 用于深色背景（登录页），
  * 后者取 currentColor，由父元素的文字色驱动。
  *
- * ⚠️ 同一份路径数据另有三处副本，改形状必须四处同步：
- *    frontend/public/logo.svg（favicon，**基准**）
- *    widget/src/logo.ts（悬浮球）
- *    docs/images/logo.svg（README 的字标锁定形式）
- * 三个独立构建目标 + 一份文档资产，无法共享。刻意不加防漂移哨兵——logo 走形是肉眼
- * 可见的外观问题，不属于本仓库那类「静默失效」，加哨兵是过度工程。
+ * ⚠️ 下面的路径数据是 `brand/logo-mark.svg` 的内联副本，全仓共五处同源副本，
+ * 由 `scripts/brandAssetSync.test.ts` 守护——改一处漏其它即红。
+ * 别在这里单独调形状，改动步骤见 `brand/README.md`。
  */
 const Logo: React.FC<{
     /** gradient=靛蓝渐变实心（浅底）；mono=currentColor（深底） */
@@ -43,11 +40,7 @@ const Logo: React.FC<{
                         d="M5 3h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9.5L5 20.8V17a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z"
                         fill="#fff"
                     />
-                    {/*
-                      左三笔＝车字旁（竖 + 两横），右三笔＝圣简化成「工」（横竖横）。
-                      ⚠️ 右侧最初只画两横，实测整个图形读作「+=」。中间那一竖是专门用来
-                      打断等号读法的，别删。
-                    */}
+                    {/* ⚠️ 右侧那一竖不是装饰：去掉后整个图形读作「+=」。详见 brand/README.md */}
                     <g stroke="#000" strokeWidth="1.4" strokeLinecap="round">
                         <path d="M8 7.4V13.4" />
                         <path d="M6.3 9.4H9.7" />
