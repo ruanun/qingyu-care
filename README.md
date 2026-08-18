@@ -1,7 +1,7 @@
 # 轻语 (QingYu Care)
 
 <p align="center">
-  <strong>🤖 面向企业的 AI 智能客服 SaaS 平台</strong>
+  <img src="./brand/logo-lockup.svg" alt="轻语 QingYu Care · AI 智能客服 SaaS 平台" width="380">
 </p>
 
 <p align="center">

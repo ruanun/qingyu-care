@@ -2,10 +2,13 @@ export function buildStyles(themeColor: string): string {
   return `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    /* ⚠️ color 不是装饰：球内 logo 用 fill="currentColor"，靠这行取到白色，
+       而 logo 挖空的笔画处透出的正是 background 的 themeColor。改这两行前先看 logo.ts。 */
     .qy-bubble {
       position: fixed; right: 20px; bottom: 20px; width: 56px; height: 56px;
       border-radius: 50%; background: ${themeColor}; color: #fff; border: none;
-      cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.2); font-size: 24px; z-index: 2147483000;
+      cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 2147483000;
+      display: flex; align-items: center; justify-content: center; padding: 0;
     }
     .qy-panel {
       position: fixed; right: 20px; bottom: 88px; width: 360px; height: 520px;

@@ -438,7 +438,7 @@ public class DemoDataSeeder implements ApplicationRunner {
                 .appSecret(appSecret)
                 .description(name + "（演示应用，appKey/appSecret 为固定演示值，生产必须重新生成）")
                 .welcomeMessage(welcomeMessage)
-                .themeColor("#6366f1")
+                .themeColor("#0d9488")
                 .enabled(true)
                 .rateLimitPerMinute(60)
                 .allowedOrigins("http://localhost:5173,http://localhost:3000")

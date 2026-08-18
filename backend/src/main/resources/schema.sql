@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS sys_application (
     description TEXT,
     avatar VARCHAR(255),
     welcome_message TEXT,
-    theme_color VARCHAR(20) DEFAULT '#6366f1',
+    theme_color VARCHAR(20) DEFAULT '#0d9488',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

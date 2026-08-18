@@ -59,7 +59,7 @@ class RequestBodyDeserializationTest {
 
         assertThat(app.getName()).isEqualTo("冒烟应用");
         assertThat(app.getEnabled()).isTrue();
-        assertThat(app.getThemeColor()).isEqualTo("#6366f1");
+        assertThat(app.getThemeColor()).isEqualTo("#0d9488");
     }
 
     @Test
