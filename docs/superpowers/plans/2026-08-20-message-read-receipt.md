@@ -1389,16 +1389,18 @@ public class AgentSessionDao {
 
 ```java
     @Override
-    public List<AgentSessionDTO> getMySessions(int page, int size) {
+    public List<AgentSessionDTO> getMySessions(Long agentId, int page, int size) {
         Long tenantId = TenantContext.getTenantId();
         if (tenantId == null) {
             return List.of();   // 平台管理员无租户上下文，返空而非裸查（同 getWaitingAgentSessions）
         }
-        Long agentId = SecurityUtil.getCurrentUserId();
         return agentSessionDao.findMySessions(
                 tenantId, TenantContext.getAppId(), agentId, size, page * size);
     }
 ```
+
+⚠️ 同 Task 3：`agentId` **由控制器取好传入**，service 层不碰 Sa-Token
+（`SecurityUtil` 没有取 user id 的方法）。
 
 `ChatController`：
 
@@ -1409,7 +1411,8 @@ public class AgentSessionDao {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         SecurityUtil.requireAgent();
-        return ApiResponse.success(chatService.getMySessions(page, size));
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(chatService.getMySessions(agentId, page, size));
     }
 ```
 
@@ -2088,7 +2091,7 @@ fail-soft；§8 → Task 11。§2 全部是决策依据，已分散进各任务�
 
 **留给实施者的适配点**（都标了 ⚠️，共 5 处）：这些是「写计划时无法确定、但实施时一跑就知道」
 的细节，每处都写明了**允许调整什么、不允许改什么**：
-1. Task 3 —— `ChatServiceImpl` 的 19 个依赖清单、`SecurityUtil.getCurrentUserId()` 的真实取法；
+1. Task 3 —— `ChatServiceImpl` 的 19 个依赖清单（上面只声明了测试路径用得到的）；
 2. Task 6 —— `chat_session` / `chat_message` 的非空列（播种 SQL 要补齐）；
 3. Task 8/9 —— 怎么把 SSE 事件喂进 `AgentPage`（真人坐席那两条流走的是 `fetch` +
    `ReadableStream`，不是 `EventSource`）；
