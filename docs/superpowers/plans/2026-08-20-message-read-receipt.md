@@ -572,8 +572,16 @@ markRead 返回生效后的水位线而非传入值——并发下别的标签�
 - Consumes: Task 2 的 `ReadReceiptService.markRead(...)`；`ReaderType.AGENT`
 - Produces:
   - `class ReadReceiptRequest { private Long upToMessageId; }`（**不写字段初始化器**）
-  - `long ChatService.markAgentRead(String sessionId, Long upToMessageId)` — 返回生效后的水位线
+  - `long ChatService.markAgentRead(String sessionId, Long agentId, Long upToMessageId)` — 返回生效后的水位线
   - `POST /v1/chat/session/{sessionId}/read` → `ApiResponse<Long>`
+
+⚠️ **当前坐席 id 由控制器取好传进来，service 层不自己取**。这是仓库既有范式：
+`ChatController.acceptSession`（`ChatController.java:150-153`）就是 `SecurityUtil.requireAgent()` +
+`StpUtil.getLoginIdAsLong()` 取到 `agentId`，再调用两参的
+`chatService.acceptSession(sessionId, agentId)`。
+`SecurityUtil` 只有角色判断方法（`getRole`/`isPlatformAdmin`/`isTenantAdmin`/`isTenantMember`/
+三个 `requireXxx`），**没有取 user id 的方法**，不要去调一个不存在的 `getCurrentUserId()`。
+好处之一：service 层不碰 `StpUtil`，本任务的单测因此**不需要任何静态桩**。
 
 - [ ] **Step 1: 建请求 DTO**
 
@@ -602,8 +610,6 @@ public class ReadReceiptRequest {
 ```java
 package com.qingyu.care.service;
 
-import cn.dev33.satoken.session.SaSession;
-import cn.dev33.satoken.stp.StpUtil;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatMessage;
@@ -621,7 +627,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -632,10 +637,6 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -672,25 +673,12 @@ class AgentReadReceiptTest {
     @Mock ReadReceiptService readReceiptService;
     @InjectMocks ChatServiceImpl chatService;
 
+    /** 当前坐席的 user id。由控制器取好传进来，service 层不碰 StpUtil，故无需任何静态桩。 */
     private static final Long ME = 100L;
 
     @AfterEach
     void clear() {
         TenantContext.clear();
-    }
-
-    /**
-     * 桩当前登录坐席。⚠️ 必须同时桩 isLogin 与 getSession：SecurityUtil.getRole 先问
-     * StpUtil.isLogin()，不桩它会走进 catch 返回 null。
-     */
-    private static MockedStatic<StpUtil> stubAgent(Long userId) {
-        SaSession session = mock(SaSession.class);
-        when(session.get("role")).thenReturn("TENANT_MEMBER");
-        MockedStatic<StpUtil> stp = mockStatic(StpUtil.class);
-        stp.when(StpUtil::isLogin).thenReturn(true);
-        stp.when(StpUtil::getSession).thenReturn(session);
-        stp.when(StpUtil::getLoginIdAsLong).thenReturn(userId);
-        return stp;
     }
 
     private ChatSession session(Long agentId, SessionStatus status) {
@@ -706,10 +694,8 @@ class AgentReadReceiptTest {
     void 拒绝给别人的会话写水位线() {
         session(999L, SessionStatus.AGENT_PROCESSING);   // 别人接管的
 
-        try (MockedStatic<StpUtil> ignored = stubAgent(ME)) {
-            assertThatThrownBy(() -> chatService.markAgentRead("sess-1", 42L))
-                    .isInstanceOf(InvalidOperationException.class);
-        }
+        assertThatThrownBy(() -> chatService.markAgentRead("sess-1", ME, 42L))
+                .isInstanceOf(InvalidOperationException.class);
         verify(readReceiptService, never()).markRead(any(), any(), any(), any());
     }
 
@@ -719,9 +705,7 @@ class AgentReadReceiptTest {
         ChatSession s = session(ME, SessionStatus.AGENT_PROCESSING);
         when(readReceiptService.markRead(s.getId(), ReaderType.AGENT, ME, 42L)).thenReturn(42L);
 
-        try (MockedStatic<StpUtil> ignored = stubAgent(ME)) {
-            chatService.markAgentRead("sess-1", 42L);
-        }
+        chatService.markAgentRead("sess-1", ME, 42L);
 
         verify(readReceiptService).markRead(s.getId(), ReaderType.AGENT, ME, 42L);
         verify(realtimeNotifier).readReceiptToUser("sess-1", 42L);
@@ -732,10 +716,8 @@ class AgentReadReceiptTest {
     void 会话结束后拒绝回执() {
         session(ME, SessionStatus.ENDED);
 
-        try (MockedStatic<StpUtil> ignored = stubAgent(ME)) {
-            assertThatThrownBy(() -> chatService.markAgentRead("sess-1", 42L))
-                    .isInstanceOf(InvalidOperationException.class);
-        }
+        assertThatThrownBy(() -> chatService.markAgentRead("sess-1", ME, 42L))
+                .isInstanceOf(InvalidOperationException.class);
         verify(readReceiptService, never()).markRead(any(), any(), any(), any());
     }
 
@@ -746,9 +728,7 @@ class AgentReadReceiptTest {
         // 并发下另一个标签页已推到 88，本次传 42 不回退
         when(readReceiptService.markRead(s.getId(), ReaderType.AGENT, ME, 42L)).thenReturn(88L);
 
-        try (MockedStatic<StpUtil> ignored = stubAgent(ME)) {
-            chatService.markAgentRead("sess-1", 42L);
-        }
+        chatService.markAgentRead("sess-1", ME, 42L);
 
         verify(realtimeNotifier).readReceiptToUser("sess-1", 88L);
     }
@@ -761,19 +741,16 @@ class AgentReadReceiptTest {
         when(messageRepository.findTopBySessionIdOrderByIdDesc(s.getId()))
                 .thenReturn(Optional.of(ChatMessage.builder().id(77L).build()));
 
-        try (MockedStatic<StpUtil> ignored = stubAgent(ME)) {
-            chatService.acceptSession("sess-1");
-        }
+        chatService.acceptSession("sess-1", ME);   // 既有签名就是两参
 
         verify(readReceiptService).markRead(s.getId(), ReaderType.AGENT, ME, 77L);
     }
 }
 ```
 
-⚠️ **实施时先跑一次确认装配可用**：`ChatServiceImpl` 的依赖列表可能与写计划时不同（它有 19 个
-`private final`）。若 `@InjectMocks` 注入失败或 `acceptSession` 走到未 mock 的依赖上抛 NPE，
-按报错补 `@Mock`——**不要改测试意图**。当前登录坐席的取法若与 `SecurityUtil.getCurrentUserId()`
-的实现不符（本计划假设它走 `StpUtil.getLoginIdAsLong`），以实现为准调整 `stubAgent`。
+⚠️ **实施时先跑一次确认装配可用**：`ChatServiceImpl` 有 19 个 `private final` 依赖，上面只声明了
+测试路径用得到的。若 `@InjectMocks` 注入失败或 `acceptSession` 走到未 mock 的依赖上抛 NPE，
+按报错补 `@Mock`——**不要改测试意图**。
 
 - [ ] **Step 3: 跑测试确认失败**
 
@@ -788,22 +765,24 @@ Expected: 编译失败或断言失败（`markAgentRead` 不存在）。
     /**
      * 坐席上报已读水位线。
      *
+     * @param agentId       当前坐席的 user id，<b>由控制器取好传入</b>（同 {@code acceptSession}
+     *                      的既有范式：`StpUtil.getLoginIdAsLong()` 在控制器层取）。service 层
+     *                      不碰 Sa-Token，单测因此不需要静态桩。
      * @param upToMessageId 坐席端当前<b>已渲染</b>的最新一条消息 id。服务端不替客户端推断
      *                      「最新是哪条」——坐席实际看到的截止位置只有客户端知道，服务端若取库里
      *                      最新的一条，会把「消息刚到、还没渲染出来」也算成已读。
      * @return 生效后的水位线
      */
-    long markAgentRead(String sessionId, Long upToMessageId);
+    long markAgentRead(String sessionId, Long agentId, Long upToMessageId);
 ```
 
 在 `ChatServiceImpl` 实现：
 
 ```java
     @Override
-    public long markAgentRead(String sessionId, Long upToMessageId) {
+    public long markAgentRead(String sessionId, Long agentId, Long upToMessageId) {
         ChatSession session = sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话不存在: " + sessionId));
-        Long agentId = SecurityUtil.getCurrentUserId();
 
         // 安全边界：不校验就能靠遍历 sessionId 给别人接管的会话写水位线，
         // 进而伪造一条发给那个访客的「已读」
@@ -825,7 +804,8 @@ Expected: 编译失败或断言失败（`markAgentRead` 不存在）。
 ⚠️ Task 5 尚未实现 `readReceiptToUser`，本任务先**注释掉这一行**并留 `// TODO(Task 5)` 标记，
 Task 5 里放开。（这是任务间唯一允许的临时占位，因为两个任务都要动这个方法。）
 
-在 `acceptSession` 内、`sessionRepository.save(session)` 之后加：
+在 `acceptSession(String sessionId, Long agentId)` 内、`sessionRepository.save(session)` 之后加
+（`agentId` 直接用它已有的方法参数）：
 
 ```java
         // 接管瞬间视为读完全部历史：坐席界面此刻就会加载整个会话，
@@ -835,8 +815,9 @@ Task 5 里放开。（这是任务间唯一允许的临时占位，因为两个�
                         session.getId(), ReaderType.AGENT, agentId, latest.getId()));
 ```
 
-⚠️ 若 `ChatMessageRepository` 没有 `findTopBySessionIdOrderByIdDesc`，本任务顺带加上（Spring Data
-方法名派生，无需写 SQL）。
+⚠️ `ChatMessageRepository` **确认没有** `findTopBySessionIdOrderByIdDesc`（只有
+`findTop20BySessionIdOrderByCreatedAtDesc`），本任务顺带加上——Spring Data 方法名派生，
+返回 `Optional<ChatMessage>`，无需写 SQL。
 
 - [ ] **Step 5: 加控制器端点**
 
@@ -848,7 +829,10 @@ Task 5 里放开。（这是任务间唯一允许的临时占位，因为两个�
     public ApiResponse<Long> markAgentRead(@PathVariable String sessionId,
                                            @RequestBody ReadReceiptRequest request) {
         SecurityUtil.requireAgent();
-        return ApiResponse.success(chatService.markAgentRead(sessionId, request.getUpToMessageId()));
+        // 取当前坐席 id 的方式与同文件的 acceptSession 完全一致
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(
+                chatService.markAgentRead(sessionId, agentId, request.getUpToMessageId()));
     }
 ```
 
