@@ -213,6 +213,28 @@ class StreamChatEventPipelineTest {
                 .verifyComplete();
     }
 
+    /**
+     * 契约补齐（Task 7）：主问答路径（检索命中/允许无知识）此刻拿不到真实落库 userMessageId
+     * ——该路径的用户消息与 AI 回复整轮一起延迟到流结束才落库（见 persistStreamedMessages
+     * 的 rawResponse.isEmpty() 判断），是「停止生成不落库」契约的一部分（见上方两条用例：
+     * 客户端取消订阅/模型流失败均不落库）。提前单独落库用户消息来换取这里的真实 id，
+     * 会把这两条已钉住的行为一并打破，故本路径的 START 明确记录为已知限制，不是遗漏。
+     */
+    @Test
+    void 主问答路径的START事件userMessageId为null_已知限制() {
+        stubPipelineSession("s10");
+        stubTransactionPassThrough();
+        stubSaveWithIdSequence();
+        when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
+                Flux.just(SpringAiResponses.of("你好", 5)));
+
+        StepVerifier.create(service.streamChat(
+                        ChatRequest.builder().sessionId("s10").message("在吗").build(), tokens -> { }, tokens -> { }))
+                .assertNext(e -> assertThat(((ChatStreamEvent.Start) e.payload()).userMessageId()).isNull())
+                .thenConsumeWhile(e -> true)
+                .verifyComplete();
+    }
+
     @Test
     void 客户端取消订阅_落库Mono不被订阅_不落库() {
         stubPipelineSession("s6");

@@ -49,7 +49,7 @@ class ChatStreamEventIT extends AbstractPostgresIT {
 
         Mockito.when(chatService.streamChat(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
                 .thenReturn(Flux.just(
-                        ChatStreamEvent.start("s_it", true, List.of()),
+                        ChatStreamEvent.start("s_it", true, List.of(), 7L),
                         ChatStreamEvent.delta("你好\n世界"),
                         ChatStreamEvent.card(Map.of("type", "card")),
                         ChatStreamEvent.done(42L)));
@@ -67,6 +67,7 @@ class ChatStreamEventIT extends AbstractPostgresIT {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(body).contains("event:start").contains("\"sessionId\":\"s_it\"")
+                .contains("\"userMessageId\":7")
                 .contains("event:delta")
                 .contains("event:card").contains("\"node\":{\"type\":\"card\"}")
                 .contains("event:done").contains("\"messageId\":42");

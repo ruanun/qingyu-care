@@ -225,10 +225,12 @@ class StreamChatHandoverTest {
             return m;
         });
 
-        chatService.streamChat(ChatRequest.builder().sessionId("s1").message("图在这")
+        List<ChatStreamEvent> events = chatService.streamChat(ChatRequest.builder().sessionId("s1").message("图在这")
                 .attachmentIds(List.of(9L)).build()).collectList().block();
 
         verify(chatAttachmentService).attachToMessage(eq(List.of(9L)), eq("s1"), eq(55L));
+        // 契约补齐（Task 7）：人工接管静默分支的用户消息在构造 START 前已经落库，START 携带真实 id
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).userMessageId()).isEqualTo(55L);
     }
 
     /**
@@ -249,10 +251,12 @@ class StreamChatHandoverTest {
         });
         when(handoverRuleService.checkKeywordTrigger("人工")).thenReturn(true);
 
-        chatService.streamChat(ChatRequest.builder().sessionId("s2").message("人工")
+        List<ChatStreamEvent> events = chatService.streamChat(ChatRequest.builder().sessionId("s2").message("人工")
                 .attachmentIds(List.of(11L)).build()).collectList().block();
 
         verify(chatAttachmentService).attachToMessage(eq(List.of(11L)), eq("s2"), eq(66L));
+        // 契约补齐（Task 7）：关键词触发转人工分支的用户消息在构造 START 前已经落库，START 携带真实 id
+        assertThat(((ChatStreamEvent.Start) events.get(0).payload()).userMessageId()).isEqualTo(66L);
     }
 
     /**

@@ -161,10 +161,12 @@ public class ChatServiceImpl implements ChatService {
         if (isAgentControlled(session)) {
             // attachFailSoft=false：chat() 全程 @Transactional，附件关联失败按硬约束 3
             // 直接传播，让整个事务干净回滚、调用方拿到明确错误（与 saveMessages 的两处调用同语义）
-            persistUserMessageDuringHandover(session, request.getMessage(), request.getAttachmentIds(), false);
+            Long userMsgId = persistUserMessageDuringHandover(
+                    session, request.getMessage(), request.getAttachmentIds(), false);
 
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
+                    .userMessageId(userMsgId)
                     .content("[会话已转接人工客服，请等待回复]")
                     .confidenceScore(0.0)
                     .suggestHandover(false)
@@ -173,9 +175,12 @@ public class ChatServiceImpl implements ChatService {
         }
 
         // 检查关键词触发转人工（attachFailSoft=false，理由同上）
-        if (triggerKeywordHandoverIfHit(session, request.getMessage(), request.getAttachmentIds(), false)) {
+        KeywordHandoverResult keywordResult =
+                triggerKeywordHandoverIfHit(session, request.getMessage(), request.getAttachmentIds(), false);
+        if (keywordResult.triggered()) {
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
+                    .userMessageId(keywordResult.userMessageId())
                     .content("正在为您转接人工客服，请稍候...")
                     .confidenceScore(0.0)
                     .suggestHandover(true)
@@ -217,12 +222,13 @@ public class ChatServiceImpl implements ChatService {
 
         // 如果知识库未命中且不允许自由发挥（兜底回复也落库：fallback 标记 + messageId 回传）
         if (relevantDocs.isEmpty() && Boolean.FALSE.equals(strategy.getAllowNoKnowledge())) {
-            ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
+            SavedMessageIds fallbackIds = saveMessages(session, request.getMessage(),
                     strategy.getFallbackMessage(), 0.0, null, null, true, null,
                     request.getAttachmentIds(), false);
             return ChatResponse.builder()
                     .sessionId(session.getSessionId())
-                    .messageId(fallbackMsg.getId())
+                    .messageId(fallbackIds.aiMessageId())
+                    .userMessageId(fallbackIds.userMessageId())
                     .content(strategy.getFallbackMessage())
                     .confidenceScore(0.0)
                     .suggestHandover(noHitStreakHandover)
@@ -272,13 +278,14 @@ public class ChatServiceImpl implements ChatService {
 
         // 保存消息（埋点：命中文档 + token 用量 + 卡片 JSON）
         String hitDocumentIds = extractHitDocumentIds(relevantDocs);
-        ChatMessage aiMsg = saveMessages(session, request.getMessage(), plainText, maxScore,
+        SavedMessageIds ids = saveMessages(session, request.getMessage(), plainText, maxScore,
                 hitDocumentIds, tokenUsage, false, uiSpecJson, request.getAttachmentIds(), false);
 
         // 构建响应（tokenUsage 由开放控制器用于计量；内部对话同样填入供前端展示）
         return ChatResponse.builder()
                 .sessionId(session.getSessionId())
-                .messageId(aiMsg.getId())
+                .messageId(ids.aiMessageId())
+                .userMessageId(ids.userMessageId())
                 .content(plainText)
                 .uiParts(parsed.uiParts())
                 .confidenceScore(maxScore)
@@ -325,15 +332,18 @@ public class ChatServiceImpl implements ChatService {
         if (isAgentControlled(session)) {
             // attachFailSoft=true：streamChat 无 @Transactional，附件关联失败不能让已经
             // 提交的会话状态/消息变成半成品（I-3），降级为 fail-soft
-            persistUserMessageDuringHandover(session, request.getMessage(), request.getAttachmentIds(), true);
+            Long userMsgId = persistUserMessageDuringHandover(
+                    session, request.getMessage(), request.getAttachmentIds(), true);
             onTokensUsed.accept(0);
             // 会话已在人工流程中，再提示"建议转人工"是噪声
-            return earlyReturn(session, "[会话已转接人工客服，请等待回复]", false);
+            return earlyReturn(session, "[会话已转接人工客服，请等待回复]", false, userMsgId);
         }
-        if (triggerKeywordHandoverIfHit(session, request.getMessage(), request.getAttachmentIds(), true)) {
+        KeywordHandoverResult keywordResult =
+                triggerKeywordHandoverIfHit(session, request.getMessage(), request.getAttachmentIds(), true);
+        if (keywordResult.triggered()) {
             onTokensUsed.accept(0);
             // 与 chat() 的关键词分支同语义：suggestHandover=true，否则管理端转人工提示条不出现
-            return earlyReturn(session, "正在为您转接人工客服，请稍候...", true);
+            return earlyReturn(session, "正在为您转接人工客服，请稍候...", true, keywordResult.userMessageId());
         }
 
         ChatStrategy strategy = resolveStrategy(session);
@@ -364,13 +374,14 @@ public class ChatServiceImpl implements ChatService {
             // attachFailSoft=false：本分支在 Flux.defer 之前同步执行（仍在请求线程），
             // 附件关联失败会直接从 streamChat() 同步抛出（同 requireTenantContext/
             // validateAttachable 的既有模式），是非静默的可见错误，不落入 C-1 的射程
-            ChatMessage fallbackMsg = saveMessages(session, request.getMessage(),
+            SavedMessageIds fallbackIds = saveMessages(session, request.getMessage(),
                     strategy.getFallbackMessage(), 0.0, null, null, true, null,
                     request.getAttachmentIds(), false);
             return Flux.just(
-                    ChatStreamEvent.start(session.getSessionId(), noHitStreakHandover, List.of()),
+                    ChatStreamEvent.start(session.getSessionId(), noHitStreakHandover, List.of(),
+                            fallbackIds.userMessageId()),
                     ChatStreamEvent.delta(strategy.getFallbackMessage()),
-                    ChatStreamEvent.done(fallbackMsg.getId()));
+                    ChatStreamEvent.done(fallbackIds.aiMessageId()));
         }
 
         String context = buildContext(relevantDocs);
@@ -404,8 +415,16 @@ public class ChatServiceImpl implements ChatService {
                     return spec.stream().chatResponse();
                 });
 
+        // ⚠️ userMessageId 此处为 null：本路径的用户消息与 AI 回复整轮一起延迟到流结束才落库
+        // （ChatMessage 用 IDENTITY 生成策略，真实 id 只在 INSERT 时产生），是「停止生成不落库」
+        // 契约的一部分——客户端在 AI 尚未产出任何内容前取消/模型报错时，连用户自己这条消息也不落库
+        // （StreamChatEventPipelineTest 的「客户端取消订阅」「模型流失败」两条用例已钉住这个行为）。
+        // 提前把用户消息单独落库来换取这里的真实 id，会把这条已测试的取舍连带打破，
+        // 已知限制：widget 在「检索命中/允许无知识」这条最常见路径下暂时拿不到 userMessageId，
+        // 与人工接管静默 / 关键词触发转人工 / 知识库未命中兜底三个早退分支不同（那三支用户消息
+        // 在构造 START 前已经落库，均为真实 id）。
         ChatStreamEvent startEvent =
-                ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits);
+                ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits, null);
 
         // 请求线程内捕获（Reactor 线程无 ThreadLocal 上下文，回退分支要手动搬运）
         final Long tenantIdForFallback = TenantContext.getTenantId();
@@ -518,10 +537,14 @@ public class ChatServiceImpl implements ChatService {
      * <p>suggestHandover 由调用方按分支语义传入，与 chat() 的对应分支保持同语义：人工接管态传 false
      * （会话已在人工流程中，再提示「建议转人工」是噪声）；关键词命中传 true（首次触发，管理端需要
      * 出现转人工提示条），否则相对非流式 chat() 会是行为回退。
+     * <p>userMessageId 由调用方传入：这两条路的用户消息在调用本方法前已经落库
+     * （{@code persistUserMessageDuringHandover}/{@code triggerKeywordHandoverIfHit}），
+     * 与主问答路径（此刻拿不到真实 id，见 {@code streamChat} 构造 startEvent 处）不同。
      */
-    private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text, boolean suggestHandover) {
+    private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text, boolean suggestHandover,
+                                              Long userMessageId) {
         return Flux.just(
-                ChatStreamEvent.start(session.getSessionId(), suggestHandover, List.of()),
+                ChatStreamEvent.start(session.getSessionId(), suggestHandover, List.of(), userMessageId),
                 ChatStreamEvent.delta(text),
                 ChatStreamEvent.done(null));
     }
@@ -648,10 +671,10 @@ public class ChatServiceImpl implements ChatService {
                     TenantContext.setAccessLevel(accessLevel);
                 }
                 try {
-                    ChatMessage aiMsg = transactionTemplate.execute(status ->
+                    SavedMessageIds ids = transactionTemplate.execute(status ->
                             saveMessages(session, userMessage, parsed.plainText(), confidence,
                                     hitDocumentIds, null, false, uiSpecJson, attachmentIds, true));
-                    savedId = aiMsg.getId();
+                    savedId = ids.aiMessageId();
                 } finally {
                     if (needsContext) {
                         // 恢复原值而非 clear()：见上方 M-2 javadoc
@@ -984,10 +1007,10 @@ public class ChatServiceImpl implements ChatService {
      * {@code chat()} 调用传 {@code attachFailSoft=false}：它整体在 {@code @Transactional} 内，
      * 顺序对原子性无影响，附件失败仍应让事务整体回滚、异常可见（硬约束 3）。
      */
-    private boolean triggerKeywordHandoverIfHit(ChatSession session, String message, List<Long> attachmentIds,
-                                                boolean attachFailSoft) {
+    private KeywordHandoverResult triggerKeywordHandoverIfHit(ChatSession session, String message,
+                                                              List<Long> attachmentIds, boolean attachFailSoft) {
         if (!handoverRuleService.checkKeywordTrigger(message)) {
-            return false;
+            return KeywordHandoverResult.NOT_TRIGGERED;
         }
         session.setStatus(SessionStatus.WAITING_AGENT);
         sessionRepository.save(session);
@@ -1000,11 +1023,23 @@ public class ChatServiceImpl implements ChatService {
         messageRepository.save(userMsg);
         realtimeNotifier.newWaitingToTenantAgents(session.getTenantId(), session);
         attachIfPresent(attachmentIds, session, userMsg.getId(), attachFailSoft);
-        return true;
+        return new KeywordHandoverResult(true, userMsg.getId());
     }
 
     /**
-     * 人工掌控态：存用户消息、关联附件；若已被坐席接管则实时推给该坐席。
+     * {@link #triggerKeywordHandoverIfHit} 的结果：是否命中，与命中时落库的用户消息 id。
+     * ⚠️ 两者刻意分开、不能只靠 {@code userMessageId != null} 判断是否命中——单测里
+     * {@code messageRepository.save} 的桩常常不显式赋 id（只关心其它断言），此时 id 天然是
+     * null，若把「命中」揉进「id 非空」，一条本该触发转人工的用例会被误判成未触发，进而落进
+     * 后续分支撞上未桩的依赖而 NPE（本仓库已实测复现过一次，见 StreamChatHandoverTest）。
+     */
+    private record KeywordHandoverResult(boolean triggered, Long userMessageId) {
+        static final KeywordHandoverResult NOT_TRIGGERED = new KeywordHandoverResult(false, null);
+    }
+
+    /**
+     * 人工掌控态：存用户消息、关联附件；若已被坐席接管则实时推给该坐席。返回落库的用户消息
+     * id（供响应/START 事件回传 userMessageId）。
      * <p>I-3 复核修正：附件关联挪回 {@code toAgentMessage} 通知**之前**（回到原始顺序）。
      * 挪到通知之后是多余的——{@code attachFailSoft} 本身已经用 try/catch 兜住失败、
      * 不会向外传播，无论附件关联放在通知前后，通知都保证会执行到；反而挪到通知之后会让
@@ -1012,7 +1047,7 @@ public class ChatServiceImpl implements ChatService {
      * 还没来得及回填，坐席收到的这条推送 attachments 恒为空——用户发的图实时推送里
      * 看不见，只能等刷新历史才有，这正是 Step 4 存在的理由。
      */
-    private void persistUserMessageDuringHandover(ChatSession session, String message, List<Long> attachmentIds,
+    private Long persistUserMessageDuringHandover(ChatSession session, String message, List<Long> attachmentIds,
                                                    boolean attachFailSoft) {
         ChatMessage userMsg = ChatMessage.builder().session(session)
                 .role(MessageRole.USER).content(message).build();
@@ -1021,6 +1056,7 @@ public class ChatServiceImpl implements ChatService {
         if (session.getStatus() == SessionStatus.AGENT_PROCESSING && session.getAgentId() != null) {
             realtimeNotifier.toAgentMessage(session.getTenantId(), session.getAgentId(), userMsg);
         }
+        return userMsg.getId();
     }
 
     /**
@@ -1103,7 +1139,7 @@ public class ChatServiceImpl implements ChatService {
     }
     
     /**
-     * 保存一轮问答（用户消息 + AI 回复），返回 AI 消息（供响应回传 messageId）。
+     * 保存一轮问答（用户消息 + AI 回复），返回两者的 id（供响应回传 messageId/userMessageId）。
      * fallback 只在兜底时置 TRUE（其余 null 避免 FALSE 噪声；rollup 按 = TRUE 统计）。
      * uiSpec 为结构化卡片 uiParts 的 JSON——chat() 主路与流式主路（经 persistStreamedMessages
      * 回落此方法）均可能非空；两条未命中兜底路径（chat()/streamChat() 各自的 fallback 分支）恒传 null。
@@ -1117,7 +1153,7 @@ public class ChatServiceImpl implements ChatService {
      * fail-soft 大 catch 之内）只记 warn，让本轮问答仍正常落库——这是有意识地把附件关联
      * 降级为该路径下的 fail-soft，理由见 persistStreamedMessages 的 javadoc，不是对硬约束的违反。
      */
-    private ChatMessage saveMessages(ChatSession session, String userMessage, String aiResponse,
+    private SavedMessageIds saveMessages(ChatSession session, String userMessage, String aiResponse,
                                      double confidence, String hitDocumentIds,
                                      Integer tokenUsage, boolean fallback, String uiSpec,
                                      List<Long> attachmentIds, boolean attachFailSoft) {
@@ -1156,8 +1192,15 @@ public class ChatServiceImpl implements ChatService {
                 .fallback(fallback ? Boolean.TRUE : null)
                 .uiSpec(uiSpec)
                 .build();
-        return messageRepository.save(aiMsg);
+        ChatMessage savedAiMsg = messageRepository.save(aiMsg);
+        return new SavedMessageIds(userMsg.getId(), savedAiMsg.getId());
     }
+
+    /**
+     * {@link #saveMessages} 的落库结果：访客消息与 AI 回复各自的自增 id。两者都在同一次调用中
+     * 落库，故一并返回，避免调用方还要另外查一次。
+     */
+    private record SavedMessageIds(Long userMessageId, Long aiMessageId) {}
 
     /**
      * uiParts 只含单个 text 片段（无卡片，即模型回复未使用 ```spec 围栏）时返回 null，

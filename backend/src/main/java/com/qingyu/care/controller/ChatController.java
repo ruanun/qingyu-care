@@ -11,10 +11,12 @@ import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.PageDTO;
 import com.qingyu.care.dto.ReadReceiptRequest;
+import com.qingyu.care.dto.SessionMessagesResponse;
 import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
+import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -23,6 +25,7 @@ import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.ChatStreamSseMapper;
 import com.qingyu.care.service.FileService;
+import com.qingyu.care.service.ReadReceiptService;
 import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -59,6 +62,7 @@ public class ChatController {
     private final ChatAttachmentService chatAttachmentService;
     private final ChatAttachmentRepository chatAttachmentRepository;
     private final FileService fileService;
+    private final ReadReceiptService readReceiptService;
 
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
@@ -188,10 +192,11 @@ public class ChatController {
     }
 
     @GetMapping("/session/{sessionId}/messages")
-    @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息")
-    public ApiResponse<List<ChatMessageDTO>> getSessionMessages(
+    @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息及访客的已读水位线")
+    public ApiResponse<SessionMessagesResponse> getSessionMessages(
             @PathVariable String sessionId) {
         SecurityUtil.requireAgent();
+        ChatSession session = chatService.getSession(sessionId);
         List<ChatMessage> messages = chatService.getSessionMessages(sessionId);
         List<Long> messageIds = messages.stream().map(ChatMessage::getId).toList();
         // 一次查完全部消息的附件，按 messageId 分组塞回去——不在循环里逐条查，避免 N+1
@@ -203,7 +208,14 @@ public class ChatController {
         List<ChatMessageDTO> dtos = messages.stream()
                 .map(m -> ChatMessageDTO.of(m, attachmentsByMessageId.getOrDefault(m.getId(), List.of())))
                 .toList();
-        return ApiResponse.success(dtos);
+        // 只带对方（访客）的已读水位线，不带坐席自己的——见 SessionMessagesResponse 的字段注释。
+        // readerId 按 §3.2.1 恒为 chat_session.id（一个会话只有一个访客），故不判空直接查
+        Long visitorReadUpToMessageId = readReceiptService.currentWatermark(
+                session.getId(), ReaderType.VISITOR, session.getId());
+        return ApiResponse.success(SessionMessagesResponse.builder()
+                .messages(dtos)
+                .visitorReadUpToMessageId(visitorReadUpToMessageId)
+                .build());
     }
 
     @PostMapping("/session/{sessionId}/return-to-ai")

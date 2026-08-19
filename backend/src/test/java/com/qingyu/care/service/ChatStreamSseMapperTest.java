@@ -39,12 +39,13 @@ class ChatStreamSseMapperTest {
     @Test
     void start携带会话与转人工建议与知识命中() {
         ServerSentEvent<String> sse = mapper.toSse(
-                ChatStreamEvent.start("s_abc", true, List.of()));
+                ChatStreamEvent.start("s_abc", true, List.of(), 5L));
 
         assertThat(sse.event()).isEqualTo("start");
         assertThat(sse.data()).contains("\"sessionId\":\"s_abc\"")
                 .contains("\"suggestHandover\":true")
-                .contains("\"knowledgeHits\":[]");
+                .contains("\"knowledgeHits\":[]")
+                .contains("\"userMessageId\":5");
     }
 
     @Test

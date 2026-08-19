@@ -7,8 +7,10 @@ import com.qingyu.care.dto.open.OpenSessionResponse;
 import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
+import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.repository.ChatAttachmentRepository;
 import com.qingyu.care.service.ChatService;
+import com.qingyu.care.service.ReadReceiptService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
@@ -45,11 +47,15 @@ public class OpenSessionController {
     private final RealtimeNotifier realtimeNotifier;
     private final ObjectMapper objectMapper;
     private final ChatAttachmentRepository chatAttachmentRepository;
+    private final ReadReceiptService readReceiptService;
 
     /**
-     * 查询会话详情（含消息历史 + 每条消息的附件）。
+     * 查询会话详情（含消息历史 + 每条消息的附件 + 坐席的已读水位线）。
      * 附件按 messageId 一次性批量查出分组塞回去（同 {@code ChatController#getSessionMessages}
      * 的做法），不在循环里逐条查，避免 N+1。
+     * <p>agentReadUpToMessageId 只带对方（坐席）的水位线，不带访客自己的——见
+     * {@link OpenSessionResponse#getAgentReadUpToMessageId()}。会话尚无坐席接管
+     * （{@code agentId} 为 null）时不查、直接为 null。
      * GET /open/v1/sessions/{sessionId}
      */
     @GetMapping("/{sessionId}")
@@ -62,7 +68,11 @@ public class OpenSessionController {
                 : chatAttachmentRepository.findByMessageIdInOrderById(messageIds).stream()
                         .collect(Collectors.groupingBy(ChatAttachment::getMessageId,
                                 Collectors.mapping(AttachmentDTO::of, Collectors.toList())));
-        return OpenSessionResponse.of(session, messages, objectMapper, attachmentsByMessageId);
+        Long agentReadUpToMessageId = session.getAgentId() != null
+                ? readReceiptService.currentWatermark(session.getId(), ReaderType.AGENT, session.getAgentId())
+                : null;
+        return OpenSessionResponse.of(session, messages, objectMapper, attachmentsByMessageId,
+                agentReadUpToMessageId);
     }
 
     /**
