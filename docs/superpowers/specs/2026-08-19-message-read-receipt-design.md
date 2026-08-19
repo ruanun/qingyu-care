@@ -12,13 +12,15 @@
 **目标**：
 
 - **A** 访客能看到自己发出的消息被人工坐席读过（只在人工接管阶段）。
+- **B** 坐席能看到自己发出的消息被访客读过。与 A 对称，复用同一套水位线机制。
 - **C1** 坐席工作台能同时持有多个已接管会话并自由切换。
 - **C2** 每个已接管会话显示未读消息数，跨刷新、跨设备、跨下线期间都准确。
 
 **非目标**（均为本轮明确砍掉，不是遗漏）：
 
 - **送达（delivered）状态** —— 见 §2.2。
-- **访客侧已读回执**（让坐席知道访客读没读） —— 见 §2.3。数据模型为它留了结构位，但**不预置枚举值、不写任何代码**，理由见 §3.2。
+- **多坐席协作**（同一会话多个坐席同时接待） —— 单独立项，理由见 §2.7。本设计的回执表能
+  容纳多个读者，但那只是**回执**这一层；系统层面支持多坐席是会话模型的改动，与已读无关。
 - **AI 对话阶段的已读** —— 见 §2.1。
 - **坐席并发会话数上限** —— 现阶段坐席连多会话都持有不了，先让它能用。过载属运营问题，真需要时加一个配置项即可，不影响本设计的任何结构。
 - **已结束会话进入「我的会话」列表** —— 那属于历史，去会话管理页看。
@@ -46,10 +48,23 @@ AI 对话是「发一句、秒回一句」，不存在「等对方看到」的�
 访客真正想知道的「我的消息有没有到人工那边」，由既有的会话级状态提示回答
 （`accepted` → 「客服已接入，正在为您服务」），比消息级的送达标记更直接也更诚实。
 
-### 2.3 不做访客侧回执（坐席看访客已读）
+### 2.3 访客侧回执（B）与 A 严格对称
 
-坐席通常不关心访客读没读；而访客一关页面就永远停在「未读」，反倒给坐席制造无意义的焦虑。
-价值最薄的一项，砍掉。
+判定条件、展示规则、水位线机制全部照搬 A，只是方向相反：
+
+| | A（坐席读访客） | B（访客读坐席） |
+|---|---|---|
+| 谁上报 | 坐席台 | widget |
+| 判定条件 | 选中该会话 **且** 标签页前台可见 | widget **展开**（非收起）**且** 页面前台可见 |
+| 推给谁 | 访客（`read` 事件） | 该会话的坐席 |
+| 展示 | 只标最后一条已读的访客消息 | 只标最后一条已读的坐席消息 |
+
+**widget 收起时不算已读**：沿用 A 的原则——「人真的看到了才算」。widget 收成一个悬浮按钮时
+内容不可见，此时标已读就是骗坐席。
+
+⚠️ **B 的固有局限，产品上要接受**：访客关掉页面后永远停在未读，坐席会看到自己最后一条消息
+一直没有已读标记。这是真实情况的忠实反映（访客确实没看到），不做任何美化——**不要**因为
+「看着不舒服」就在会话结束时补一个已读。
 
 ### 2.4 访客侧只显示「已读」，不显示「未读」，且只标最后一条
 
@@ -68,12 +83,32 @@ AI 对话是「发一句、秒回一句」，不存在「等对方看到」的�
 
 ### 2.6 采用独立回执表，而非在 `ChatSession` 上加两个字段
 
-会话级水位线（`ChatSession.agent_read_up_to_message_id`）能满足当前全部需求且更简单，但选择
-独立表，为多坐席协作与将来可能的访客侧回执留出结构位——扩展时只加枚举值与数据行，
-不动表结构与索引。
+会话级水位线（`ChatSession.agent_read_up_to_message_id`）只能表达**一个**读者，而本轮同时要做
+A 与 B，即一个会话至少有两个读者（坐席、访客），各有各的水位线。独立表是这个需求的直接结果，
+不是为将来预留。
 
-⚠️ **代价必须写明**：多一张表、一次 JOIN、以及 upsert 的并发处理（§3.3）。这是有意识付出的
-复杂度，换的是扩展时不必改表。
+⚠️ **代价**：多一张表、一次 JOIN、以及 upsert 的并发处理（§3.3）。在两个读者的前提下这个代价
+是必须付的——用会话字段做就得写成 `agent_read_up_to` + `visitor_read_up_to` 两组字段，
+再来第三个读者就得改表。
+
+### 2.7 多坐席协作单独立项，不并入本轮
+
+回执表的 `reader_id` 那一维确实能容纳多个坐席，但**那只是回执这一层**。系统层面支持多坐席是
+会话模型的改动，与已读没有交集：
+
+| 缺口 | 现状 | 要做什么 |
+|---|---|---|
+| 会话↔坐席关系 | `ChatSession.agentId` 单字段 | 改关联表，1:1 → 1:N |
+| 接管语义 | `acceptSession` 排他（`ChatServiceImpl:1246` 直接覆盖 `setAgentId`） | 重新定义：多人同时接管，还是主坐席 + 协作者？谁能结束会话？ |
+| **消息归属** | **`ChatMessage` 没有 `agentId`**（全类 0 处引用） | AGENT 消息无法区分是谁发的，两端都看不出「张三说」还是「李四说」。要加字段并改所有 AGENT 消息落库路径 |
+| 实时推送 | `toAgentMessage(tenantId, agentUserId, msg)` 单播 | 改成推给该会话的全部坐席 |
+| 权限 | 无概念 | 谁能回复 / 结束 / 转接 / 移出协作者 |
+| 坐席台 | 单人视角 | 同事在场提示、避免两人重复回复同一条 |
+
+「消息归属」那条是硬缺口：**多坐席在消息层面根本没有立足点**，必须先给 `ChatMessage` 加发送者。
+
+两者的验收标准也没有交集——本轮验的是「双向已读准确」，多坐席验的是「两个坐席同时服务一个
+客户且不打架」。捆在一起做，任何一半出问题都会卡住另一半上线。
 
 ## 3. 数据模型
 
@@ -88,8 +123,8 @@ AI 对话是「发一句、秒回一句」，不存在「等对方看到」的�
 public class MessageReadReceipt extends BaseTenantEntity {
     private Long id;
     private Long sessionId;              // → chat_session.id
-    private ReaderType readerType;       // 目前只有 AGENT
-    private Long readerId;               // 坐席 user id
+    private ReaderType readerType;       // AGENT | VISITOR
+    private Long readerId;               // 见 §3.2.1，不可为 null
     private Long upToMessageId;          // 水位线：读到这条为止（含）
     private LocalDateTime readAt;
 }
@@ -100,21 +135,31 @@ CLAUDE.md 中「异步落库的实体不得继承」那条例外（`WebhookDeliv
 不适用于本实体。
 
 **唯一约束 `(session_id, reader_type, reader_id)`**：一个读者在一个会话只有一条水位线。
-它既是 upsert 的依据，也是 §2.6 那个扩展性承诺的兑现点——多坐席只是多几行。
+它既是 upsert 的依据，也是 A 与 B 两条水位线得以共存于一张表的依据：同一会话下
+`(AGENT, 坐席id)` 与 `(VISITOR, 会话id)` 是两行，互不干扰。
 
-### 3.2 `ReaderType` 枚举当前只有 `AGENT` 一个值
+### 3.2 `ReaderType` 两个值，都有真实写入路径
 
-⚠️ **刻意不预置 `VISITOR`**。预置一个永远不写入的枚举值，就是技术债第 4 项 `isRead` 死字段的
-同一个错误——那次的结论原话是「留一个永远为 false 的列会持续误导读代码的人」。
-本设计的扩展性来自**表结构**（session + reader + 水位线三元组），不来自预置值：将来做访客侧
-回执，是加一个枚举值加一条回执路径，不动表、不动索引、不动唯一约束。
+`AGENT`（§4.1 坐席回执）与 `VISITOR`（§4.3 访客回执）本轮都实现，不存在只建不用的值。
+
+⚠️ 若将来因故砍掉其中一侧，**枚举值要跟着删**，别留一个永不写入的值——那正是技术债第 4 项
+`isRead` 死字段的形态，那次的结论原话是「留一个永远为 false 的列会持续误导读代码的人」。
+
+### 3.2.1 `reader_id` 是「在 `reader_type` 命名空间内标识读者」
+
+- `AGENT` → 坐席的 user id；
+- `VISITOR` → 该会话的 `chat_session.id`（一个会话只有一个访客，用会话 id 即可唯一标识它）。
+
+⚠️ **`reader_id` 绝不能对访客留 NULL**：PostgreSQL 的唯一约束里 `NULL` 不等于 `NULL`，
+`(session_id, 'VISITOR', NULL)` 可以插入任意多行，唯一约束**形同虚设**，水位线会变成多行并存、
+读出来哪一行全看运气。这个坑不报错，只会让已读状态间歇性错乱。
 
 ### 3.3 水位线只增不减，用带条件的原子 UPDATE
 
 ```sql
 UPDATE message_read_receipt
    SET up_to_message_id = :new, read_at = :now
- WHERE session_id = :sid AND reader_type = 'AGENT' AND reader_id = :uid
+ WHERE session_id = :sid AND reader_type = :readerType AND reader_id = :readerId
    AND up_to_message_id < :new
 ```
 
@@ -171,12 +216,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_receipt_session_reader
 JOIN 聚合查询，且平台管理员整体绕过 `@Filter`。同 `getWaitingAgentSessions` 已有的手工收窄，
 以及 `AnalyticsRollupDao` / `findDueWebPageIds` 的既有模式。
 
-### 4.3 访客侧历史需带上水位线
+### 4.3 回执上报（访客端，B）
 
-访客刷新页面后必须能恢复已读标记——已读状态恰恰是刷新后最该稳定的东西。
-widget 拉取会话历史的响应增加 `agentReadUpToMessageId` 字段。
+`POST /open/v1/sessions/{sessionId}/read`，body `{"upToMessageId": 123}`
 
-### 4.4 契约新增：访客要知道自己那条消息的 id
+- 走开放 API 鉴权（`X-App-Id` + Origin 白名单 / ApiKey），sessionId 本身是第二重能力凭证，
+  与附件下载端点 `?sessionId=` 的定级一致；
+- 写入 `readerType = VISITOR`、`readerId = chat_session.id`（§3.2.1）；
+- 幂等与并发收敛同 §3.3；
+- 会话不存在或不属于当前 app 时拒绝。
+
+⚠️ **只统计坐席消息**：访客的水位线用于判断「坐席发的消息被读了没」，与 A 的口径
+（只数 `role = 'USER'`）方向相反，展示时只考虑 `role IN ('AGENT')` 的消息。
+
+### 4.4 两端历史都要带上对方的水位线
+
+刷新后必须能恢复已读标记——已读状态恰恰是刷新后最该稳定的东西。两个方向都要：
+
+- widget 拉取会话历史的响应增加 `agentReadUpToMessageId`（坐席读到哪了）；
+- 坐席台拉取会话消息的响应增加 `visitorReadUpToMessageId`（访客读到哪了）。
+
+⚠️ 两端各只需要**对方**的水位线。把自己的水位线也返回没有用处，反而会诱使前端拿它当本地
+状态的事实源，而本地水位线的推进条件（可见性）只有客户端自己知道。
+
+### 4.5 契约新增：访客要知道自己那条消息的 id
 
 现有 `OpenChatResponse.messageId` 是 **AI 回复**的 id（供反馈按钮使用），访客发出的那条消息
 自身的 id 没有透出，无法与 `upToMessageId` 比对。需在两处各增一个 `userMessageId`
@@ -194,11 +257,22 @@ widget 拉取会话历史的响应增加 `agentReadUpToMessageId` 字段。
 ### 5.1 SSE 用独立的 `read` 事件，不复用 `session`
 
 ```java
+/** A：坐席读了 → 推给访客 inbox */
 public void readReceiptToUser(String sessionId, Long upToMessageId) {
     hub.publish(RealtimeKeys.session(sessionId), "read",
                 json(Map.of("sessionId", sessionId, "upToMessageId", upToMessageId)));
 }
+
+/** B：访客读了 → 推给该会话的坐席 */
+public void readReceiptToAgent(Long tenantId, Long agentUserId, String sessionId, Long upToMessageId) {
+    hub.publish(RealtimeKeys.agent(tenantId, agentUserId), "read",
+                json(Map.of("sessionId", sessionId, "upToMessageId", upToMessageId)));
+}
 ```
+
+两条用**同一个事件名 `read`**，靠订阅的 key 区分方向（访客只订阅自己会话的 inbox，坐席只订阅
+自己的单播键），载荷结构也相同。坐席端收到时按 `sessionId` 归入对应会话——这一点在多会话
+列表下是必需的，坐席可能正看着别的会话。
 
 ⚠️ **不能复用 `toUserSessionEvent`**：`widget/src/main.ts:67` 对 `session` 事件是
 **无条件当文案展示**（`ui.showSessionState(p.text || sessionStateText(p.kind))`）。复用它会让
@@ -218,16 +292,25 @@ public void readReceiptToUser(String sessionId, Long upToMessageId) {
 这与 CLAUDE.md 记载的「attach 必须早于 notify」是同一类顺序约束（那条的后果是坐席收到的
 `attachments` 恒为空数组）。
 
-### 5.4 前端触发时机
+### 5.4 两端的触发时机
 
-`选中会话 && document.visibilityState === 'visible'` 时上报，三个触发点：
+**坐席台（A）**：`选中会话 && document.visibilityState === 'visible'` 时上报，三个触发点：
 
 1. 切换到该会话；
 2. 收到该会话的新消息；
 3. 标签页从后台切回前台（`visibilitychange`）。
 
-**不做防抖**：人工对话频率下每条消息一次请求完全可接受，而防抖会把「已读」延迟到访客能
-察觉的程度，损害这个特性唯一的价值。
+**widget（B）**：`widget 展开 && document.visibilityState === 'visible'` 时上报，三个触发点：
+
+1. widget 从收起变为展开；
+2. 收到坐席的新消息（仅当已展开且可见）；
+3. 标签页从后台切回前台。
+
+⚠️ widget 的收起/展开是它自己的内部状态，不等于页面可见性——两个条件都要判，缺一都会产生
+假已读（收起时收到消息、或展开着但标签页在后台）。
+
+**两端都不做防抖**：人工对话频率下每条消息一次请求完全可接受，而防抖会把「已读」延迟到对方
+能察觉的程度，损害这个特性唯一的价值。
 
 ## 6. 前端与 widget
 
@@ -271,11 +354,22 @@ SSE 收到非当前会话的消息时本地 `+1`（即时反馈，不必等下�
 ⚠️ 这条要写进代码注释：将来若有人「优化」成以本地累加为准，就会漂移，而漂移不报错——
 只是徽章上的数字不对，没有任何现象提醒。
 
-### 6.5 widget 侧渲染
+### 6.5 widget 侧：渲染 A + 上报 B
 
-监听 `read` 事件，取 `upToMessageId`，把 id ≤ 水位线的**最后一条访客消息**标为「已读」。
-需要在消息 DOM 上带 `data-message-id`（当前 widget 只在流式完成时用过一次 messageId，
-未保留在 DOM 上）。
+**渲染**：监听 `read` 事件，取 `upToMessageId`，把 id ≤ 水位线的**最后一条访客消息**标为
+「已读」。需要在消息 DOM 上带 `data-message-id`（当前 widget 只在流式完成时用过一次
+messageId，未保留在 DOM 上）。
+
+**上报**：按 §5.4 的三个触发点调 `POST /open/v1/sessions/{id}/read`，`upToMessageId` 传当前已
+渲染的最新一条消息 id。fail-soft：失败只 `console.debug`，绝不打断访客的对话。
+
+### 6.6 坐席台侧：渲染 B
+
+监听 `read` 事件（走坐席单播键），按载荷里的 `sessionId` 归入对应会话——**不能假设它就是当前
+选中的会话**，坐席可能正在看别的会话，而那个会话的访客同时读了消息。
+
+在该会话的消息区，把 id ≤ 水位线的**最后一条坐席消息**标为「已读」。切换会话时从 §4.4 的
+`visitorReadUpToMessageId` 恢复。
 
 ## 7. 测试策略
 
@@ -284,34 +378,42 @@ SSE 收到非当前会话的消息时本地 `+1`（即时反馈，不必等下�
 ### 7.1 单测（Mockito，免 Docker）
 
 - 水位线只增不减（传入更小的 `upToMessageId` 不回退）；
-- 非本人接管的会话拒绝回执；
+- 非本人接管的会话拒绝坐席回执；
+- 访客回执写入的是 `(VISITOR, chat_session.id)` 这一行，**不影响** `(AGENT, ...)` 那行；
 - 未读数只统计 `role = USER` 且 id 超过水位线的消息；
-- `acceptSession` 把水位线置为当时最新消息 id；
-- 会话结束 / 已转走后拒绝回执。
+- `acceptSession` 把坐席水位线置为当时最新消息 id；
+- 会话结束 / 已转走后拒绝坐席回执；
+- 访客回执落在不属于当前 app 的会话上时被拒。
 
 ### 7.2 集成测试（Testcontainers）
 
 - **唯一约束真的生效**：并发 upsert 不产生两行；
+- **A 与 B 两条水位线互不干扰**：同一会话下写 `AGENT` 与 `VISITOR` 两行，各自推进互不覆盖。
+  这条守的是 §3.2.1 那个 `reader_id` 设计——若有人把访客的 `reader_id` 写成 NULL，
+  PostgreSQL 的唯一约束会形同虚设，本条会转红；
 - **原生 SQL 的租户隔离**：跨租户查不到别人的未读数。这条必须有——原生 SQL 绕开了
   `@Filter`，正是本仓库反复出事的地方。
 
 ### 7.3 前端 vitest
 
 - `visibilitychange` 触发回执；切换会话触发回执；
-- **本地 `+1` 被后端值覆盖**（守 §6.4 那条约定）。
+- **本地 `+1` 被后端值覆盖**（守 §6.4 那条约定）；
+- **收到非当前会话的 `read` 事件时，标记落在正确的会话上**（守 §6.6——最容易写成「直接标在
+  当前会话」，而那在多会话列表下是错的）。
 
 ### 7.4 widget vitest
 
 - **`read` 事件不产生任何文案节点**（不走 `showSessionState`）。这条是变异测试的好目标：
   把实现改回复用 `session` 事件，它必须转红；
-- 按 `upToMessageId` 标记正确的那一条。
+- 按 `upToMessageId` 标记正确的那一条；
+- **widget 收起时不上报**、展开且可见时才上报（守 §5.4 那两个必须同时成立的条件）。
 
 ### 7.5 错误处理
 
 | 失败点 | 处理 |
 |---|---|
 | 回执接口调用失败 | fail-soft，坐席端只记日志不弹错——坐席正在服务客户，不该被「已读上报失败」打断 |
-| `read` 事件推送失败 | 水位线已落库，访客下次拉历史即恢复（§4.3） |
+| `read` 事件推送失败 | 水位线已落库，访客下次拉历史即恢复（§4.4） |
 | 并发回执 / SSE 乱序 | §3.3 的原子 UPDATE 收敛到最大值 |
 | 坐席掉线 / 会话转走 | 水位线保留不动；`agentId` 校验挡住后续越权回执 |
 
@@ -326,6 +428,12 @@ SSE 收到非当前会话的消息时本地 `+1`（即时反馈，不必等下�
    （同 `WebhookQueueIT` 面对的问题）。
 5. **访客界面无视觉噪音**：坐席反复读，访客侧只出现「已读」二字，不冒任何状态提示条
    （§5.1 那个坑的真机确认）。
+6. **B 的双向真机联调**：坐席发消息 → 访客 widget 展开着 → 坐席端出现「已读」；把 widget
+   收起再让坐席发一条 → 坐席端**不该**出现已读。收起状态是 widget 自己的内部状态，
+   jsdom 里测的是我们自己的桩。
+7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着会话甲，让会话乙的访客读消息
+   → 已读标记必须落在乙上，不能落在甲上。这条在单会话时代不存在，是多会话列表引入的新
+   失效模式，而它只在真机多开时才现形。
 
 配套：CLAUDE.md 增加一节「改动已读回执链路后必须手工验证」，并在
 `scripts/manual-smoke-hints.sh` 增加路径 → 章节映射。⚠️ 该脚本会校验引用的章节标题在
@@ -333,9 +441,13 @@ CLAUDE.md 中存在，改标题忘同步会 `exit 1`。
 
 ## 9. 风险与后续
 
-- **本设计付出的主要复杂度是独立表**（§2.6）。若一年内仍未出现多坐席协作或访客侧回执的需求，
-  它相对「`ChatSession` 加两个字段」就是净亏损。记在这里，便于将来回看这个判断对不对。
+- **独立表的复杂度已被 B 兑现**（§2.6）：两个读者各一条水位线，会话字段方案做不到。这个判断
+  不再是「为将来预留」，而是当轮需求的直接结果。
 - **坐席并发会话上限**未做（§1）。「我的会话」列表能持有的会话数无限，极端情况下列表很长。
   加上限只需一个配置项 + `acceptSession` 处一道校验，不影响本设计任何结构。
-- **访客侧回执（B）**若将来要做：加 `ReaderType.VISITOR`、一条访客回执路径、坐席台渲染，
-  表结构与索引不动（§3.2）。
+- **多坐席协作**（§2.7）单独立项。届时本设计只需在 `reader_id` 维度多写几行，**真正的工作量
+  在会话模型**：`ChatSession.agentId` 改关联表、`ChatMessage` 补发送者字段、单播推送改多播、
+  接管与权限语义重定义。⚠️ **别被「回执表已支持多读者」误导成这件事很轻**。
+- **B 的固有局限**（§2.3）：访客关页面后坐席永远看不到已读。这是真实情况的忠实反映，
+  若将来产品上觉得不可接受，正确的解法是给坐席显示「访客已离开」这类**会话级**状态，
+  而不是伪造一个已读。
