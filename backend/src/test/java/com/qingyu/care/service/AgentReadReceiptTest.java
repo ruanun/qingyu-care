@@ -25,6 +25,7 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -164,5 +165,25 @@ class AgentReadReceiptTest {
 
         verify(readReceiptService).markReadInNewTransaction(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
         verify(readReceiptService, never()).markRead(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
+    }
+
+    @Test
+    @DisplayName("接管时置顶已读水位线失败不拖累会话接管本身（已读是增强，不能反过来伤主流程）")
+    void 接管路径已读回执异常不影响会话接管() {
+        ChatSession s = session(null, SessionStatus.WAITING_AGENT);
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(i -> i.getArgument(0));
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(s.getId()))
+                .thenReturn(Optional.of(ChatMessage.builder().id(77L).build()));
+        // 模拟 REQUIRES_NEW 新事务内 insert 撞唯一键、重试 UPDATE 也撞 25P02，异常从
+        // markReadInNewTransaction 里抛出来
+        when(readReceiptService.markReadInNewTransaction(s.getId(), ReaderType.AGENT, ME, 77L))
+                .thenThrow(new RuntimeException("模拟已读水位线写入失败（如 25P02）"));
+
+        ChatSession result = chatService.acceptSession("sess-1", ME);   // 不应抛出
+
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(SessionStatus.AGENT_PROCESSING);
+        assertThat(result.getAgentId()).isEqualTo(ME);
+        verify(sessionRepository).save(any(ChatSession.class));   // 会话接管本身照常落库
     }
 }

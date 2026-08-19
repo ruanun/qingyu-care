@@ -1254,12 +1254,24 @@ public class ChatServiceImpl implements ChatService {
 
         // 接管瞬间视为读完全部历史：坐席界面此刻就会加载整个会话，
         // 访客侧同时看到排队期间发的消息集体变「已读」，时序正确
-        // ⚠️ 本方法处于 @Transactional 内，必须调 markReadInNewTransaction（REQUIRES_NEW）而非
-        // markRead：并发首次回执 insert 撞唯一键会把当前事务标成 rollback-only（PG 25P02），
-        // 连累会话接管本身失败——见 ReadReceiptService 类注释。
+        // ⚠️ 本方法处于 @Transactional 内，用 markReadInNewTransaction（REQUIRES_NEW）避免并发
+        // 首次回执 insert 撞唯一键毒化当前事务（PG 25P02）——见 ReadReceiptService 类注释。
+        // ⚠️ 但 REQUIRES_NEW 只挡住了「事务被毒化」，异常本身仍会从新事务里抛出来，所以这里必须
+        // 再包一层 try/catch 兜底：已读是增强，绝不能反过来伤主流程——坐席接管会话本身才是这条
+        // 链路的主流程，置顶已读水位线只是顺带做的优化，后者失败绝不该让前者失败。故此处刻意
+        // 吞掉异常只记 WARN；不要把这个 catch "修"成往外抛——失败的后果仅是该会话坐席端首次
+        // 进入会看到偏多的未读数，下次坐席正常上报已读即自愈。
         messageRepository.findTopBySessionIdOrderByIdDesc(session.getId())
-                .ifPresent(latest -> readReceiptService.markReadInNewTransaction(
-                        session.getId(), ReaderType.AGENT, agentId, latest.getId()));
+                .ifPresent(latest -> {
+                    try {
+                        readReceiptService.markReadInNewTransaction(
+                                session.getId(), ReaderType.AGENT, agentId, latest.getId());
+                    } catch (Exception e) {
+                        log.warn("接管时置顶已读水位线失败，不影响接管；该会话坐席端首次进入会看到"
+                                        + "偏多的未读数，下次正常上报即自愈 sessionId={} agentId={}",
+                                sessionId, agentId, e);
+                    }
+                });
 
         eventPublisher.publishEvent(new WebhookDomainEvent(
                 "session.accepted", session.getAppId(), session.getTenantId(),
