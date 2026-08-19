@@ -1295,8 +1295,7 @@ public class ChatServiceImpl implements ChatService {
 
         long effective = readReceiptService.markRead(
                 session.getId(), ReaderType.AGENT, agentId, upToMessageId);
-        // TODO(Task 5): realtimeNotifier.readReceiptToUser 由 Task 5 实现，届时放开
-        // realtimeNotifier.readReceiptToUser(sessionId, effective);
+        realtimeNotifier.readReceiptToUser(sessionId, effective);
         return effective;
     }
 
@@ -1317,11 +1316,10 @@ public class ChatServiceImpl implements ChatService {
         long effective = readReceiptService.markRead(
                 session.getId(), ReaderType.VISITOR, session.getId(), upToMessageId);
 
-        // TODO(Task 5): readReceiptToAgent 由 Task 5 实现，届时放开
-        // if (session.getAgentId() != null) {
-        //     realtimeNotifier.readReceiptToAgent(
-        //             session.getTenantId(), session.getAgentId(), sessionId, effective);
-        // }
+        if (session.getAgentId() != null) {
+            realtimeNotifier.readReceiptToAgent(
+                    session.getTenantId(), session.getAgentId(), sessionId, effective);
+        }
         return effective;
     }
 

@@ -105,8 +105,7 @@ class VisitorReadReceiptTest {
 
         chatService.markVisitorRead("sess-1", 42L);
 
-        // TODO(Task 5): readReceiptToAgent 由 Task 5 实现，届时放开
-        // verify(realtimeNotifier).readReceiptToAgent(1L, 100L, "sess-1", 42L);
+        verify(realtimeNotifier).readReceiptToAgent(1L, 100L, "sess-1", 42L);
     }
 
     @Test
@@ -119,8 +118,7 @@ class VisitorReadReceiptTest {
         chatService.markVisitorRead("sess-1", 42L);
 
         verify(readReceiptService).markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 42L);
-        // TODO(Task 5): readReceiptToAgent 由 Task 5 实现，届时放开
-        // verify(realtimeNotifier, never()).readReceiptToAgent(any(), any(), any(), any());
+        verify(realtimeNotifier, never()).readReceiptToAgent(any(), any(), any(), any());
     }
 
     @Test
