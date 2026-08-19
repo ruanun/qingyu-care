@@ -57,12 +57,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 路径现在就在边界外）。要根治得换成「每个有 PUT 端点、请求体是专用 DTO 的实体都必须登记」，
  * 而不是靠类名后缀去发现。
  *
- * <p>⚠️ <b>本类只守住了「实体 → DTO」这一跳，「DTO → 控制器赋值」那一跳零守护</b>：
- * 给实体和 DTO 都加了字段、却漏掉控制器里那行 {@code if (x != null) existing.setX(...)}，
- * 本类全绿而症状完全静默——与它要防的那类缺陷一字不差。2026-08-15 逐个核过 8 个 DTO 的映射
- * 代码，当前全部字段都已映射、无存量缺陷，所以这是结构缺口而非现行 bug。真要补，是给这 8 个
- * DTO 写一条通用「全字段传播」测试：反射把每个 DTO 字段设成非默认值，调控制器，断言实体对应
- * 字段全部变了。
+ * <p><b>本类只守住「实体 → DTO」这一跳</b>；「DTO → {@code if (x != null) existing.setX(...)}」
+ * 那一跳由 {@code UpdateRequestPropagationTest} 守（技术债第 18 项，已补）。两者缺一不可：
+ * 给实体和 DTO 都加了字段、却漏掉那行赋值时，<b>本类全绿</b>而症状完全静默。
+ * 实测印证过——把 {@code PlatformController.updateSharedTool} 的一行 setter 删掉，全仓 713 条
+ * 测试里只有传播哨兵那一条转红。
  *
  * <p>白名单本身也不能腐烂：{@link #whitelist条目必须仍然对得上实体与DTO的真实差集()} 反向断言
  * 白名单里的每条声明现在依然成立（字段确实在实体上、确实不在 DTO 上）——否则它会变成一张没人
