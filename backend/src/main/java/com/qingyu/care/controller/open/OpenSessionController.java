@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 开放会话 API：查询会话 + 请求转人工 + 用户端实时通道（inbox / typing）。
+ * 开放会话 API：查询会话 + 请求转人工 + 用户端实时通道（inbox / typing）+ 已读上报。
  * 会话归属隔离：ChatService 内部经 TenantContext（拦截器已按应用注入）过滤，跨应用会话不可见。
  *
  * @author ruan

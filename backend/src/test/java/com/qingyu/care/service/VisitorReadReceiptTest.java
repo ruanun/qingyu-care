@@ -101,11 +101,13 @@ class VisitorReadReceiptTest {
     void 推给坐席() {
         session(1L, 100L);
         TenantContext.setAppId(1L);
-        when(readReceiptService.markRead(anyLong(), any(), anyLong(), anyLong())).thenReturn(42L);
+        // ⚠️ 传入值（42）与桩返回值（88）必须不同：若两者相同，即便 markVisitorRead 误传
+        // upToMessageId 而非 effective 这条断言也会照样绿，判别力等于零
+        when(readReceiptService.markRead(anyLong(), any(), anyLong(), anyLong())).thenReturn(88L);
 
         chatService.markVisitorRead("sess-1", 42L);
 
-        verify(realtimeNotifier).readReceiptToAgent(1L, 100L, "sess-1", 42L);
+        verify(realtimeNotifier).readReceiptToAgent(1L, 100L, "sess-1", 88L);
     }
 
     @Test
