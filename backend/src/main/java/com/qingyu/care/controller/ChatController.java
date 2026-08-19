@@ -158,7 +158,9 @@ public class ChatController {
     @PostMapping("/session/{sessionId}/read")
     @Operation(summary = "坐席上报已读", description = "推进本坐席在该会话的已读水位线，并推送给访客")
     public ApiResponse<Long> markAgentRead(@PathVariable String sessionId,
-                                           @RequestBody ReadReceiptRequest request) {
+                                           @Valid @RequestBody ReadReceiptRequest request) {
+        // ⚠️ @Valid 不可省：ReadReceiptRequest.upToMessageId 的 @NotNull 靠它才生效，
+        // 缺了它 null 会一路传进 service 撞 NPE，对客户端表现为 500 而非语义正确的 400。
         SecurityUtil.requireAgent();
         // 取当前坐席 id 的方式与同文件的 acceptSession 完全一致
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
