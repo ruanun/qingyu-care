@@ -300,6 +300,23 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
   `UpdateRequestNoInitializerTest` 反射扫描 `dto` 包下所有 `*UpdateRequest` 类，强制每个字段
   在无参构造后必须是 `null`——新增 DTO、或给现有 DTO 加一个带初始化器的新字段，都会被它拦住。
 
+  **四道哨兵各守一段，新增 update 端点时四段都要过**（缺任一段的失效都是完全静默的）：
+
+  | 哨兵 | 守的那一段 | 漏了会怎样 |
+  |---|---|---|
+  | `UpdateRequestNoInitializerTest` | DTO 字段不写初始化器 | 判空恒真，没传的字段被打回类默认值 |
+  | `UpdateRequestFieldCoverageTest` | 实体字段 → 进 DTO 或进白名单并写理由 | 实体加了字段，DTO 没跟上且没人发现 |
+  | `PutEndpointBodyRegistrationTest` | PUT 端点的请求体 → 必须被上表或全量覆盖豁免表登记 | 换个不以 `UpdateRequest` 结尾的类名就绕开前两道 |
+  | `UpdateRequestPropagationTest` | DTO 字段 → 控制器/服务层那行 `setX` | 字段在界面上改不动，无报错无日志 |
+
+  ⚠️ **第三道是 2026-08-19 补的，补它的直接原因是边界外真藏了一个活缺陷**：`KnowledgeBaseRequest`
+  （建库改库共用、`enabled` 带 `= true` 初始化器）长期喂着 `PUT /knowledge/{id}`，改一次知识库
+  名字就把已停用的库重新启用。它躲开前两道的唯一原因就是类名不叫 `*UpdateRequest`。
+  ⚠️ **第四道登记的是「更新路径」而非「控制器」**：映射代码分布在两层（`AbExperiment` 在
+  `AbTestService`、`KnowledgeBase` 在 `KnowledgeServiceImpl`，其余在控制器里），写死成「调控制器」
+  会让服务层那两条因 mock 而静默零覆盖。同一个 DTO 喂两个端点时（`AiTool`/`AiModelConfig` 各有
+  租户侧与平台共享侧）**两条都要登记**——两份映射代码各自独立抄写、会各自漂移。
+
 ### 前端结构（frontend/src/）
 - **HTTP** `api/client.ts`：单例 axios。请求拦截器从 localStorage 注入 `satoken`（key `qingyu-auth`）与 `X-App-Id`（key `qingyu-current-app`）；响应拦截器返回 `response.data`（即后端那整个 `ApiResponse`，**不是**再往里取一层 `.data`——调用方拿到的是 `{code, message, data}`），401 清登录态并跳 `/login`。各领域 service（`api/*.ts`）都走这个实例。
 - ⚠️ **业务异常是「HTTP 200 + `body.code`」约定，axios 不会 reject**：响应拦截器只特殊处理 401，其余状态原样把 `{code, message, data}` resolve 给调用方——**写操作必须显式判 `if (res.code !== 200) throw new Error(res.message)`**，不判就会把后端业务错误（重复入口、资源被占用、并发上限等）静默吞掉，用户点按钮毫无反应且没有任何报错。不限于某一特性，是全局约定；参考写法见 `components/knowledge/CrawlSiteList.tsx` 的四个写操作。

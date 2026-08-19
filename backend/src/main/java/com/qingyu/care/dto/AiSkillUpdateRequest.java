@@ -25,7 +25,14 @@ import java.util.Set;
  * 它时 Lombok 会警告「初始化表达式被忽略」，但 {@code new AiSkill()} 依旧会应用初始化器。反证见
  * {@code KnowledgeBaseRequest.enabled}：它有 {@code @Builder} + {@code private Boolean enabled
  * = true;} 却<b>没有</b> {@code @Builder.Default}，{@code new KnowledgeBaseRequest().getEnabled()}
- * 依然是 {@code true}（它现在没出事只因为前端建/改知识库都发整份对象，不代表这条路径安全）。
+ * 依然是 {@code true}。
+ *
+ * <p>⚠️ 这里原先写着「它现在没出事只因为前端建/改知识库都发整份对象」——<b>那句话是错的，而且
+ * 正是它让缺陷被放过了两次</b>。前端<b>根本没有调用过</b>更新知识库这个端点（全前端零命中），
+ * 该依据从一开始就不成立；改名字这条路径当时确实在把已停用的知识库静默启用。现已拆出
+ * {@link KnowledgeBaseUpdateRequest}（无初始化器、且不含 {@code enabled}）修掉。
+ * <b>教训</b>：「前端碰巧发了全量字段」永远不能作为端点安全的依据——端点对任何 API 调用方都是
+ * 开放的，而前端的提交形状会在无人察觉时改变。
  *
  * <p>⚠️ <b>反过来，{@code AiSkill} 实体上 {@code toolIds} 的初始化器不能被删掉</b>：
  * {@code AiSkillController.create} 仍然直接收 {@code AiSkill} 实体作为请求体，请求体不带

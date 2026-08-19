@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
+import com.qingyu.care.dto.KnowledgeBaseUpdateRequest;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import org.springframework.web.multipart.MultipartFile;
@@ -31,7 +32,7 @@ public interface KnowledgeService {
     /**
      * 更新知识库
      */
-    KnowledgeBase updateKnowledgeBase(Long id, KnowledgeBaseRequest request);
+    KnowledgeBase updateKnowledgeBase(Long id, KnowledgeBaseUpdateRequest request);
     
     /**
      * 删除知识库

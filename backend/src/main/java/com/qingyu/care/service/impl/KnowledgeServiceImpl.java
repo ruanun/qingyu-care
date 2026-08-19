@@ -3,6 +3,7 @@ package com.qingyu.care.service.impl;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
+import com.qingyu.care.dto.KnowledgeBaseUpdateRequest;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentStatus;
@@ -113,13 +114,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     @Transactional
-    public KnowledgeBase updateKnowledgeBase(Long id, KnowledgeBaseRequest request) {
+    public KnowledgeBase updateKnowledgeBase(Long id, KnowledgeBaseUpdateRequest request) {
         KnowledgeBase kb = getKnowledgeBase(id);
         kb.setName(request.getName());
         kb.setDescription(request.getDescription());
-        if (request.getEnabled() != null) {
-            kb.setEnabled(request.getEnabled());
-        }
+        // 刻意不碰 enabled：启用状态由 toggleKnowledgeBase / setKnowledgeBaseEnabled 两个
+        // 专用端点负责。此前这里有一段 if (request.getEnabled() != null)，而请求 DTO 的
+        // enabled 写了 `= true` 初始化器使判空恒真——改一次名字就把停用的库重新启用了。
         return knowledgeBaseRepository.save(kb);
     }
 

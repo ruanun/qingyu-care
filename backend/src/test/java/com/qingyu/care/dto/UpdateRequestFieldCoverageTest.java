@@ -6,6 +6,7 @@ import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
+import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import org.junit.jupiter.api.DisplayName;
@@ -56,12 +57,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 路径现在就在边界外）。要根治得换成「每个有 PUT 端点、请求体是专用 DTO 的实体都必须登记」，
  * 而不是靠类名后缀去发现。
  *
- * <p>⚠️ <b>本类只守住了「实体 → DTO」这一跳，「DTO → 控制器赋值」那一跳零守护</b>：
- * 给实体和 DTO 都加了字段、却漏掉控制器里那行 {@code if (x != null) existing.setX(...)}，
- * 本类全绿而症状完全静默——与它要防的那类缺陷一字不差。2026-08-15 逐个核过 8 个 DTO 的映射
- * 代码，当前全部字段都已映射、无存量缺陷，所以这是结构缺口而非现行 bug。真要补，是给这 8 个
- * DTO 写一条通用「全字段传播」测试：反射把每个 DTO 字段设成非默认值，调控制器，断言实体对应
- * 字段全部变了。
+ * <p><b>本类只守住「实体 → DTO」这一跳</b>；「DTO → {@code if (x != null) existing.setX(...)}」
+ * 那一跳由 {@code UpdateRequestPropagationTest} 守（技术债第 18 项，已补）。两者缺一不可：
+ * 给实体和 DTO 都加了字段、却漏掉那行赋值时，<b>本类全绿</b>而症状完全静默。
+ * 实测印证过——把 {@code PlatformController.updateSharedTool} 的一行 setter 删掉，全仓 713 条
+ * 测试里只有传播哨兵那一条转红。
  *
  * <p>白名单本身也不能腐烂：{@link #whitelist条目必须仍然对得上实体与DTO的真实差集()} 反向断言
  * 白名单里的每条声明现在依然成立（字段确实在实体上、确实不在 DTO 上）——否则它会变成一张没人
@@ -85,7 +85,7 @@ class UpdateRequestFieldCoverageTest {
      * 类名规则变化时会静默失配（如 {@code AbTestUpdateRequest} 对应的是 {@code AbExperiment}
      * 而非 {@code AbTest}）。
      */
-    private static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.of(
+    static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.of(
             ApplicationUpdateRequest.class, Application.class,
             TenantUpdateRequest.class, Tenant.class,
             UserUpdateRequest.class, User.class,
@@ -93,7 +93,8 @@ class UpdateRequestFieldCoverageTest {
             AiModelConfigUpdateRequest.class, AiModelConfig.class,
             AiToolUpdateRequest.class, AiTool.class,
             AiSkillUpdateRequest.class, AiSkill.class,
-            ChatStrategyUpdateRequest.class, ChatStrategy.class);
+            ChatStrategyUpdateRequest.class, ChatStrategy.class,
+            KnowledgeBaseUpdateRequest.class, KnowledgeBase.class);
 
     /**
      * 白名单：DTO 简单类名 → （字段名 → 刻意排除的理由）。理由是给人读的，必须能回答
@@ -138,6 +139,12 @@ class UpdateRequestFieldCoverageTest {
         aiTool.put("scope", "客户端可控字段，租户曾可在请求体里自封 PLATFORM 让自己的工具（连同自己的"
                 + "鉴权头）出现在所有租户列表里；平台共享工具只能走 /v1/platform/tools");
         whitelist.put("AiToolUpdateRequest", aiTool);
+
+        Map<String, String> knowledgeBase = new HashMap<>();
+        knowledgeBase.put("enabled", "启用状态有 PUT /{id}/toggle 与 PUT /{id}/enabled 两个专用端点；"
+                + "它曾经在改名字这条路径上被静默打回 true（DTO 的 enabled 写了 = true 初始化器使判空恒真），"
+                + "停用的知识库因此会被一次改名重新启用");
+        whitelist.put("KnowledgeBaseUpdateRequest", knowledgeBase);
 
         return whitelist;
     }

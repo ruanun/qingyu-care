@@ -8,6 +8,7 @@ import com.qingyu.care.dto.CrawlSiteRequest;
 import com.qingyu.care.dto.CrawlStartResponse;
 import com.qingyu.care.dto.DocumentStatusDTO;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
+import com.qingyu.care.dto.KnowledgeBaseUpdateRequest;
 import com.qingyu.care.entity.CrawlSite;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
@@ -65,7 +66,7 @@ public class KnowledgeController {
     @Operation(summary = "更新知识库", description = "更新知识库信息")
     public ApiResponse<KnowledgeBase> updateKnowledgeBase(
             @PathVariable Long id, 
-            @Valid @RequestBody KnowledgeBaseRequest request) {
+            @Valid @RequestBody KnowledgeBaseUpdateRequest request) {
         KnowledgeBase kb = knowledgeService.updateKnowledgeBase(id, request);
         return ApiResponse.success("知识库更新成功", kb);
     }
