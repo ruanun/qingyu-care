@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -20,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,6 +58,52 @@ class ReadReceiptServiceTest {
 
         assertThat(result).isEqualTo(9L);
         verify(repository).save(any(MessageReadReceipt.class));
+    }
+
+    @Test
+    @DisplayName("并发首次回执：save 抛冲突后重试 UPDATE，返回正确的生效值")
+    void 并发首次回执冲突后重试返回实际生效值() {
+        // 首次 UPDATE 影响 0 行（行不存在）→ 查询未见该行 → insert 撞唯一键（另一线程刚插进去）
+        when(repository.advanceWatermark(eq(1L), eq("AGENT"), eq(100L), eq(9L), any()))
+                .thenReturn(0, 1);
+        when(repository.findBySessionIdAndReaderTypeAndReaderId(1L, ReaderType.AGENT, 100L))
+                .thenReturn(Optional.empty(),
+                        Optional.of(MessageReadReceipt.builder()
+                                .sessionId(1L).readerType(ReaderType.AGENT).readerId(100L)
+                                .upToMessageId(15L).readAt(LocalDateTime.now()).build()));
+        when(repository.save(any(MessageReadReceipt.class)))
+                .thenThrow(new DataIntegrityViolationException("并发插入冲突"));
+
+        long result = service.markRead(1L, ReaderType.AGENT, 100L, 9L);
+
+        // 返回的是重试后重新查到的实际值（15），不是盲目返回传入值（9）——
+        // 若有人把 catch 块里"重试 UPDATE 再重新查询"简化成直接 return upToMessageId，
+        // 这里会拿到 9 而非 15，断言即转红。
+        assertThat(result).as("冲突路径必须重新查库拿实际生效值，而不是盲目回传参数")
+                .isEqualTo(15L);
+        // 冲突后走的是"重试 UPDATE"，不是"再插一次"——再插一次必然又撞同一个唯一键，是死循环的开端。
+        verify(repository, times(2)).advanceWatermark(eq(1L), eq("AGENT"), eq(100L), eq(9L), any());
+        verify(repository, times(1)).save(any(MessageReadReceipt.class));
+    }
+
+    @Test
+    @DisplayName("并发冲突后对方的水位线更大时，不回退")
+    void 并发冲突后对方水位线更大时不回退() {
+        when(repository.advanceWatermark(eq(1L), eq("VISITOR"), eq(200L), eq(5L), any()))
+                .thenReturn(0, 1);
+        when(repository.findBySessionIdAndReaderTypeAndReaderId(1L, ReaderType.VISITOR, 200L))
+                .thenReturn(Optional.empty(),
+                        Optional.of(MessageReadReceipt.builder()
+                                .sessionId(1L).readerType(ReaderType.VISITOR).readerId(200L)
+                                .upToMessageId(20L).readAt(LocalDateTime.now()).build()));
+        when(repository.save(any(MessageReadReceipt.class)))
+                .thenThrow(new DataIntegrityViolationException("并发插入冲突"));
+
+        long result = service.markRead(1L, ReaderType.VISITOR, 200L, 5L);
+
+        assertThat(result).as("冲突路径同样不能回退：对方已推到 20，本次传 5 不该覆盖回去")
+                .isEqualTo(20L);
+        verify(repository, times(1)).save(any(MessageReadReceipt.class));
     }
 
     @Test

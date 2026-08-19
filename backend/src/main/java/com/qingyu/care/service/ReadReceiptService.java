@@ -4,7 +4,6 @@ import com.qingyu.care.entity.MessageReadReceipt;
 import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.repository.MessageReadReceiptRepository;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +20,6 @@ import java.util.Optional;
  *
  * @author ruan
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReadReceiptService {
