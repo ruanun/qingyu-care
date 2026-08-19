@@ -45,12 +45,20 @@ class MessageReadReceiptIT extends AbstractPostgresIT {
      * 那样即便漏了 reader_type 条件，reader_id 不等也会让 UPDATE 天然只命中一行。
      * 现实中这种编号碰撞是可能的：VISITOR 的 readerId 是 chat_session.id，AGENT 的是
      * 坐席 user id，两个数值空间互相独立，取到同一个数值毫不意外。
+     *
+     * <p>⚠️ VISITOR 行的初始 upToMessageId（3L）<b>必须小于</b>本次推进的目标值（7L），
+     * 不能顺手改成一个更大的数（比如原先的 8L）：{@code advanceWatermark} 的 SQL 还带了
+     * {@code up_to_message_id < :upTo} 这个条件，若 VISITOR 的初始值本就不小于目标值，
+     * 那么即便漏掉 reader_type 过滤，这个条件也会独立地把 VISITOR 行挡在 UPDATE 之外——
+     * 两条断言在「漏了 reader_type」这个变异下依旧成立，测试退化成永真、抓不住那个 bug。
+     * 只有 VISITOR 初始值小于目标值时，漏掉 reader_type 才会让 VISITOR 行被误伤更新，
+     * {@code agentUpdated} 变成 2、VISITOR 的水位线也被错误推到 7，两条断言才会各自转红。
      */
     @Test
     @DisplayName("同一会话下坐席与访客各一条水位线，即便 readerId 数值相同也互不干扰")
     void 坐席与访客的水位线互不干扰() {
         repository.saveAndFlush(receipt(2L, ReaderType.AGENT, 100L, 5L));
-        repository.saveAndFlush(receipt(2L, ReaderType.VISITOR, 100L, 8L));
+        repository.saveAndFlush(receipt(2L, ReaderType.VISITOR, 100L, 3L));
 
         int agentUpdated = repository.advanceWatermark(
                 2L, ReaderType.AGENT.name(), 100L, 7L, LocalDateTime.now());
@@ -61,7 +69,7 @@ class MessageReadReceiptIT extends AbstractPostgresIT {
         assertThat(repository.findBySessionIdAndReaderTypeAndReaderId(2L, ReaderType.VISITOR, 100L))
                 .as("推进坐席水位线不该动到访客那一行——即便两行的 readerId 数值相同，"
                         + "reader_type 仍必须是过滤条件的一部分")
-                .get().extracting(MessageReadReceipt::getUpToMessageId).isEqualTo(8L);
+                .get().extracting(MessageReadReceipt::getUpToMessageId).isEqualTo(3L);
     }
 
     @Test
