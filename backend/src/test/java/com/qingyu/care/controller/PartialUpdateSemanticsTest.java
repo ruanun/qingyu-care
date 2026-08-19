@@ -62,6 +62,14 @@ import static org.mockito.Mockito.when;
  * {@code new KnowledgeBaseRequest().getEnabled()} 依然是 {@code true}。所以本次修复的铁律是
  * 「专用 DTO 不写字段初始化器」，不是「不加 {@code @Builder.Default}」——后者只是顺带。
  *
+ * <p>⚠️ <b>这个标本当年是活的，而两次盘点都没发现</b>：{@code KnowledgeBaseRequest} 那时不只是
+ * 建库请求体，还同时是<b>改库</b>请求体，{@code KnowledgeServiceImpl.updateKnowledgeBase} 里
+ * 就有一段 {@code if (request.getEnabled() != null)}——即它正躺在自己演示的那条缺陷路径上，
+ * 改一次知识库名字就会把已停用的库重新启用。它躲开两道哨兵的原因是类名不以
+ * {@code UpdateRequest} 结尾（技术债第 17 项说的覆盖边界）。现已拆出
+ * {@code KnowledgeBaseUpdateRequest}，本类留下的标本身份因此才是干净的：
+ * {@code KnowledgeBaseRequest} 如今只服务 {@code create}，初始化器在那条路径上无害。
+ *
  * <p><b>断言必须检查具体原值</b>（如 {@code isEqualTo(30000)}），不能只断言非 null——
  * 后者在字段被打回默认值时同样成立，是永真测试。
  *
@@ -154,6 +162,10 @@ class PartialUpdateSemanticsTest {
         // KnowledgeBaseRequest.enabled 只写了 `= true`，没有 @Builder.Default，
         // 但 Jackson 走的无参构造照样应用这个初始化器——把这条钉成断言，以后有人把它
         // 「修」成删掉 @Builder.Default 时，这条测试会告诉他这不解决问题。
+        //
+        // ⚠️ 这个初始化器现在是建库路径专用、且无害（createKnowledgeBase 自己还有一层
+        // `!= null ? : true` 兜底），别顺手删掉——删了本条标本就没了。改库路径已改用
+        // KnowledgeBaseUpdateRequest，行为由 KnowledgeBaseUpdateSemanticsTest 守护。
         assertThat(new KnowledgeBaseRequest().getEnabled()).isTrue();
     }
 

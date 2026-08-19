@@ -6,6 +6,7 @@ import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
+import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import org.junit.jupiter.api.DisplayName;
@@ -85,7 +86,7 @@ class UpdateRequestFieldCoverageTest {
      * 类名规则变化时会静默失配（如 {@code AbTestUpdateRequest} 对应的是 {@code AbExperiment}
      * 而非 {@code AbTest}）。
      */
-    private static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.of(
+    static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.of(
             ApplicationUpdateRequest.class, Application.class,
             TenantUpdateRequest.class, Tenant.class,
             UserUpdateRequest.class, User.class,
@@ -93,7 +94,8 @@ class UpdateRequestFieldCoverageTest {
             AiModelConfigUpdateRequest.class, AiModelConfig.class,
             AiToolUpdateRequest.class, AiTool.class,
             AiSkillUpdateRequest.class, AiSkill.class,
-            ChatStrategyUpdateRequest.class, ChatStrategy.class);
+            ChatStrategyUpdateRequest.class, ChatStrategy.class,
+            KnowledgeBaseUpdateRequest.class, KnowledgeBase.class);
 
     /**
      * 白名单：DTO 简单类名 → （字段名 → 刻意排除的理由）。理由是给人读的，必须能回答
@@ -138,6 +140,12 @@ class UpdateRequestFieldCoverageTest {
         aiTool.put("scope", "客户端可控字段，租户曾可在请求体里自封 PLATFORM 让自己的工具（连同自己的"
                 + "鉴权头）出现在所有租户列表里；平台共享工具只能走 /v1/platform/tools");
         whitelist.put("AiToolUpdateRequest", aiTool);
+
+        Map<String, String> knowledgeBase = new HashMap<>();
+        knowledgeBase.put("enabled", "启用状态有 PUT /{id}/toggle 与 PUT /{id}/enabled 两个专用端点；"
+                + "它曾经在改名字这条路径上被静默打回 true（DTO 的 enabled 写了 = true 初始化器使判空恒真），"
+                + "停用的知识库因此会被一次改名重新启用");
+        whitelist.put("KnowledgeBaseUpdateRequest", knowledgeBase);
 
         return whitelist;
     }
