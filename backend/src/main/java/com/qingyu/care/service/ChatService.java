@@ -103,7 +103,20 @@ public interface ChatService {
      * 客服接管会话
      */
     ChatSession acceptSession(String sessionId, Long agentId);
-    
+
+    /**
+     * 坐席上报已读水位线。
+     *
+     * @param agentId       当前坐席的 user id，<b>由控制器取好传入</b>（同 {@code acceptSession}
+     *                      的既有范式：{@code StpUtil.getLoginIdAsLong()} 在控制器层取）。service 层
+     *                      不碰 Sa-Token，单测因此不需要静态桩。
+     * @param upToMessageId 坐席端当前<b>已渲染</b>的最新一条消息 id。服务端不替客户端推断
+     *                      「最新是哪条」——坐席实际看到的截止位置只有客户端知道，服务端若取库里
+     *                      最新的一条，会把「消息刚到、还没渲染出来」也算成已读。
+     * @return 生效后的水位线
+     */
+    long markAgentRead(String sessionId, Long agentId, Long upToMessageId);
+
     /**
      * 客服发送消息（绕过 AI）
      */

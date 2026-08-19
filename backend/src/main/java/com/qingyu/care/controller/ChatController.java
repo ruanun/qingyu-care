@@ -10,6 +10,7 @@ import com.qingyu.care.dto.ChatMessageDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.PageDTO;
+import com.qingyu.care.dto.ReadReceiptRequest;
 import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
@@ -152,6 +153,17 @@ public class ChatController {
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
         ChatSession session = chatService.acceptSession(sessionId, agentId);
         return ApiResponse.success("会话已接管", session);
+    }
+
+    @PostMapping("/session/{sessionId}/read")
+    @Operation(summary = "坐席上报已读", description = "推进本坐席在该会话的已读水位线，并推送给访客")
+    public ApiResponse<Long> markAgentRead(@PathVariable String sessionId,
+                                           @RequestBody ReadReceiptRequest request) {
+        SecurityUtil.requireAgent();
+        // 取当前坐席 id 的方式与同文件的 acceptSession 完全一致
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(
+                chatService.markAgentRead(sessionId, agentId, request.getUpToMessageId()));
     }
 
     @PostMapping("/agent/reply")

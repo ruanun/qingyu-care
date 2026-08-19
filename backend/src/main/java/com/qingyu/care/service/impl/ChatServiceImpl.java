@@ -9,6 +9,7 @@ import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.enums.MessageRole;
+import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
@@ -25,6 +26,7 @@ import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.HybridRetrievalService;
+import com.qingyu.care.service.ReadReceiptService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RetrievalScopeResolver;
 import com.qingyu.care.service.StreamingSpecSplitter;
@@ -59,6 +61,7 @@ import com.qingyu.care.event.WebhookDomainEvent;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -88,6 +91,7 @@ public class ChatServiceImpl implements ChatService {
     // 附件关联（MM-6）：本类 → ChatAttachmentService 单方向依赖，反向会构造器循环依赖
     // （ChatAttachmentService 刻意不注入 ChatService，见 ChatAttachmentService 类注释）
     private final ChatAttachmentService chatAttachmentService;
+    private final ReadReceiptService readReceiptService;
 
     // 结构化卡片：是否向系统 Prompt 注入卡片能力片段（流式与非流式均注入；
     // 流式由 StreamingSpecSplitter 在围栏闭合时增量下发 CARD 事件）
@@ -1248,12 +1252,37 @@ public class ChatServiceImpl implements ChatService {
         log.info("Session {} accepted by agent {}", sessionId, agentId);
         ChatSession saved = sessionRepository.save(session);
 
+        // 接管瞬间视为读完全部历史：坐席界面此刻就会加载整个会话，
+        // 访客侧同时看到排队期间发的消息集体变「已读」，时序正确
+        messageRepository.findTopBySessionIdOrderByIdDesc(session.getId())
+                .ifPresent(latest -> readReceiptService.markRead(
+                        session.getId(), ReaderType.AGENT, agentId, latest.getId()));
+
         eventPublisher.publishEvent(new WebhookDomainEvent(
                 "session.accepted", session.getAppId(), session.getTenantId(),
                 session.getSessionId(), null, LocalDateTime.now()));
         realtimeNotifier.toUserSessionEvent(session.getSessionId(), "accepted", "客服已接入，正在为您服务");
 
         return saved;
+    }
+
+    @Override
+    public long markAgentRead(String sessionId, Long agentId, Long upToMessageId) {
+        ChatSession session = sessionRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在: " + sessionId));
+
+        // 安全边界：不校验就能靠遍历 sessionId 给别人接管的会话写水位线，
+        // 进而伪造一条发给那个访客的「已读」
+        if (session.getStatus() != SessionStatus.AGENT_PROCESSING
+                || !Objects.equals(session.getAgentId(), agentId)) {
+            throw new InvalidOperationException("该会话不在您的接待中，无法上报已读");
+        }
+
+        long effective = readReceiptService.markRead(
+                session.getId(), ReaderType.AGENT, agentId, upToMessageId);
+        // TODO(Task 5): realtimeNotifier.readReceiptToUser 由 Task 5 实现，届时放开
+        // realtimeNotifier.readReceiptToUser(sessionId, effective);
+        return effective;
     }
 
     @Override
