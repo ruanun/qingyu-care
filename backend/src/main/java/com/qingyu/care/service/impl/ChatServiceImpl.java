@@ -1254,8 +1254,11 @@ public class ChatServiceImpl implements ChatService {
 
         // 接管瞬间视为读完全部历史：坐席界面此刻就会加载整个会话，
         // 访客侧同时看到排队期间发的消息集体变「已读」，时序正确
+        // ⚠️ 本方法处于 @Transactional 内，必须调 markReadInNewTransaction（REQUIRES_NEW）而非
+        // markRead：并发首次回执 insert 撞唯一键会把当前事务标成 rollback-only（PG 25P02），
+        // 连累会话接管本身失败——见 ReadReceiptService 类注释。
         messageRepository.findTopBySessionIdOrderByIdDesc(session.getId())
-                .ifPresent(latest -> readReceiptService.markRead(
+                .ifPresent(latest -> readReceiptService.markReadInNewTransaction(
                         session.getId(), ReaderType.AGENT, agentId, latest.getId()));
 
         eventPublisher.publishEvent(new WebhookDomainEvent(

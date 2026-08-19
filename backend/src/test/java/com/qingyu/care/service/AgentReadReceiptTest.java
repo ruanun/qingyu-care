@@ -135,6 +135,34 @@ class AgentReadReceiptTest {
 
         chatService.acceptSession("sess-1", ME);   // 既有签名就是两参
 
-        verify(readReceiptService).markRead(s.getId(), ReaderType.AGENT, ME, 77L);
+        // acceptSession 自身带 @Transactional：必须走 REQUIRES_NEW 的 markReadInNewTransaction，
+        // 否则并发首次回执 insert 撞唯一键会把这个事务标成 rollback-only（PG 25P02），
+        // 连累会话接管本身失败——见 ReadReceiptService 类注释。
+        verify(readReceiptService).markReadInNewTransaction(s.getId(), ReaderType.AGENT, ME, 77L);
+    }
+
+    @Test
+    @DisplayName("两条写水位线路径不可混用：坐席上报走 markRead，接管置顶走独立事务的 markReadInNewTransaction")
+    void 两条路径调用不同方法_防止误合并重新暴露25P02风险() {
+        // markAgentRead 本身不在任何外层事务里，无需额外开新事务，应调用 markRead
+        ChatSession replySession = session(ME, SessionStatus.AGENT_PROCESSING);
+        when(readReceiptService.markRead(replySession.getId(), ReaderType.AGENT, ME, 42L)).thenReturn(42L);
+
+        chatService.markAgentRead("sess-1", ME, 42L);
+
+        verify(readReceiptService).markRead(replySession.getId(), ReaderType.AGENT, ME, 42L);
+        verify(readReceiptService, never()).markReadInNewTransaction(any(), any(), any(), any());
+
+        // acceptSession 自身带 @Transactional，必须调 markReadInNewTransaction 而非 markRead，
+        // 否则 insert 唯一键冲突会连累接管本身失败（同上一条测试的理由）
+        ChatSession acceptSession = session(null, SessionStatus.WAITING_AGENT);
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(i -> i.getArgument(0));
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(acceptSession.getId()))
+                .thenReturn(Optional.of(ChatMessage.builder().id(77L).build()));
+
+        chatService.acceptSession("sess-1", ME);
+
+        verify(readReceiptService).markReadInNewTransaction(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
+        verify(readReceiptService, never()).markRead(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
     }
 }
