@@ -118,6 +118,22 @@ public interface ChatService {
     long markAgentRead(String sessionId, Long agentId, Long upToMessageId);
 
     /**
+     * 访客上报已读水位线（开放 API，无登录态）。
+     *
+     * <p>开放 API 的身份是「这个 app」：调用方额外校验会话属于当前 {@code TenantContext.getAppId()}，
+     * 与附件下载端点要求 {@code ?sessionId=} 是同一套定级——{@code sessionId}(UUID) 本身即第二重
+     * 能力凭证。
+     *
+     * <p>readerId 用该会话的 {@code chat_session.id}：访客没有 user id，一个会话只有一个访客，
+     * 用会话主键即可唯一标识它；绝不能传 null（PG 唯一约束里 {@code NULL != NULL}，留 null 会让
+     * 同一会话的多条访客回执各自插入，约束形同虚设且不报错）。
+     *
+     * @param upToMessageId 访客端当前已渲染的最新一条消息 id
+     * @return 生效后的水位线
+     */
+    long markVisitorRead(String sessionId, Long upToMessageId);
+
+    /**
      * 客服发送消息（绕过 AI）
      */
     void agentReply(String sessionId, String message, Long agentId);

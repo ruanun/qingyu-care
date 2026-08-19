@@ -1,6 +1,8 @@
 package com.qingyu.care.controller.open;
 
+import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AttachmentDTO;
+import com.qingyu.care.dto.ReadReceiptRequest;
 import com.qingyu.care.dto.open.OpenSessionResponse;
 import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
@@ -10,6 +12,7 @@ import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
+import jakarta.validation.Valid;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -17,6 +20,7 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
@@ -80,6 +84,20 @@ public class OpenSessionController {
     public Flux<ServerSentEvent<String>> inbox(@PathVariable String sessionId) {
         chatService.getSession(sessionId); // 归属校验：越权/不存在抛 404，阻止跨租户订阅
         return realtimeHub.subscribe(RealtimeKeys.session(sessionId));
+    }
+
+    /**
+     * 访客上报已读。开放 API 的身份是「这个 app」，service 层额外校验会话属于当前 app；
+     * {@code sessionId}(UUID) 本身即第二重能力凭证，与附件下载端点要求 {@code ?sessionId=}
+     * 同一定级。
+     * POST /open/v1/sessions/{sessionId}/read
+     */
+    @PostMapping("/{sessionId}/read")
+    public ApiResponse<Long> markVisitorRead(@PathVariable String sessionId,
+                                              @Valid @RequestBody ReadReceiptRequest request) {
+        // ⚠️ @Valid 不可省：ReadReceiptRequest.upToMessageId 的 @NotNull 靠它才生效，
+        // 缺了它 null 会一路传进 service 撞 NPE，对客户端表现为 500 而非语义正确的 400。
+        return ApiResponse.success(chatService.markVisitorRead(sessionId, request.getUpToMessageId()));
     }
 
     /**

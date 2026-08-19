@@ -1301,6 +1301,31 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
+    public long markVisitorRead(String sessionId, Long upToMessageId) {
+        ChatSession session = sessionRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("会话不存在: " + sessionId));
+
+        // 开放 API 的身份是「这个 app」，sessionId(UUID) 是第二重能力凭证——
+        // 与附件下载端点要求 ?sessionId= 的定级一致
+        Long appId = TenantContext.getAppId();
+        if (appId != null && !Objects.equals(session.getAppId(), appId)) {
+            throw new InvalidOperationException("会话不属于当前应用");
+        }
+
+        // readerId 用 chat_session.id：一个会话只有一个访客，用会话 id 即可唯一标识它。
+        // ⚠️ 绝不能传 null——PG 唯一约束里 NULL != NULL，会让约束形同虚设
+        long effective = readReceiptService.markRead(
+                session.getId(), ReaderType.VISITOR, session.getId(), upToMessageId);
+
+        // TODO(Task 5): readReceiptToAgent 由 Task 5 实现，届时放开
+        // if (session.getAgentId() != null) {
+        //     realtimeNotifier.readReceiptToAgent(
+        //             session.getTenantId(), session.getAgentId(), sessionId, effective);
+        // }
+        return effective;
+    }
+
+    @Override
     @Transactional
     public void agentReply(String sessionId, String message, Long agentId) {
         agentReply(sessionId, message, agentId, null);
