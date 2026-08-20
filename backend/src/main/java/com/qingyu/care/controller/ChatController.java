@@ -5,6 +5,7 @@ import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.controller.support.AttachmentResponses;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AgentReplyRequest;
+import com.qingyu.care.dto.AgentSessionDTO;
 import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.ChatMessageDTO;
 import com.qingyu.care.dto.ChatRequest;
@@ -180,6 +181,16 @@ public class ChatController {
         chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
                 request.getAttachmentIds());
         return ApiResponse.success("消息已发送", null);
+    }
+
+    @GetMapping("/sessions/mine")
+    @Operation(summary = "我接管中的会话", description = "含每个会话的未读消息数，按最后消息时间倒序")
+    public ApiResponse<List<AgentSessionDTO>> getMySessions(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        SecurityUtil.requireAgent();
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(chatService.getMySessions(agentId, page, size));
     }
 
     @GetMapping("/sessions/waiting")

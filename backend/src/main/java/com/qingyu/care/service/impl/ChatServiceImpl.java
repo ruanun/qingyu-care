@@ -1,5 +1,6 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.dto.AgentSessionDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.ChatStreamEvent;
@@ -11,6 +12,7 @@ import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.repository.AgentSessionDao;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.config.TenantContext;
@@ -92,6 +94,7 @@ public class ChatServiceImpl implements ChatService {
     // （ChatAttachmentService 刻意不注入 ChatService，见 ChatAttachmentService 类注释）
     private final ChatAttachmentService chatAttachmentService;
     private final ReadReceiptService readReceiptService;
+    private final AgentSessionDao agentSessionDao;
 
     // 结构化卡片：是否向系统 Prompt 注入卡片能力片段（流式与非流式均注入；
     // 流式由 StreamingSpecSplitter 在围栏闭合时增量下发 CARD 事件）
@@ -1448,6 +1451,17 @@ public class ChatServiceImpl implements ChatService {
                 session.getSessionId(), null, LocalDateTime.now()));
         realtimeNotifier.toUserSessionEvent(sessionId, "returned_to_ai", "已切回智能助手为您服务");
         log.info("Session {} returned to AI by agent", sessionId);
+    }
+
+    @Override
+    public List<AgentSessionDTO> getMySessions(Long agentId, int page, int size) {
+        // 平台管理员无租户上下文，返空而非裸查（同 getWaitingAgentSessions 的既有范式）
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            return List.of();
+        }
+        return agentSessionDao.findMySessions(
+                tenantId, TenantContext.getAppId(), agentId, size, page * size);
     }
 }
 

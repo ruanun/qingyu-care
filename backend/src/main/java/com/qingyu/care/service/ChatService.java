@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.dto.AgentSessionDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.ChatStreamEvent;
@@ -158,5 +159,16 @@ public interface ChatService {
      * 坐席把会话交还 AI 续答（仅 AGENT_PROCESSING 状态允许）
      */
     void returnToAI(String sessionId);
+
+    /**
+     * 获取当前坐席接管中的会话列表，含每个会话的未读消息数，按最后消息时间倒序。
+     *
+     * @param agentId 当前坐席的 user id，<b>由控制器取好传入</b>（同 {@link #markAgentRead}
+     *                的既有范式：{@code StpUtil.getLoginIdAsLong()} 在控制器层取）。service 层
+     *                不碰 Sa-Token，单测因此不需要静态桩。
+     * @param page    页码（从 0 开始）
+     * @param size    页大小
+     */
+    List<AgentSessionDTO> getMySessions(Long agentId, int page, int size);
 }
 
