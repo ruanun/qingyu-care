@@ -1,5 +1,5 @@
 import api from './client';
-import type { ChatSession, ChatMessageEntity, Attachment, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
+import type { ChatSession, SessionMessagesResponse, Attachment, ApiResponse, PageResponse, SessionStatus, SessionTag } from '../types';
 
 export const chatService = {
     // 上传消息附件（图片/文件），仅落库拿 id，不关联到具体消息；发消息时把返回的 id 塞进 attachmentIds
@@ -58,8 +58,11 @@ export const chatService = {
     updateSessionSummary: (sessionId: string, summary: string): Promise<ApiResponse<ChatSession>> =>
         api.put(`/chat/session/${sessionId}/summary`, summary),
 
-    // 获取会话消息历史（管理端坐席专用，requireAgent；返回原始实体，uiSpec 未解析）
-    getSessionMessages: (sessionId: string): Promise<ApiResponse<ChatMessageEntity[]>> =>
+    // 获取会话消息历史（管理端坐席专用，requireAgent；消息本身仍是原始实体，uiSpec 未解析）。
+    // ⚠️ 响应形态：不再是裸 List<ChatMessageDTO>，改为 { messages, visitorReadUpToMessageId }
+    // 包装（已读回执特性引入，见 types/index.ts 的 SessionMessagesResponse 注释）——
+    // 调用方必须取 .data.messages，直接把 .data 当数组用会在运行时炸。
+    getSessionMessages: (sessionId: string): Promise<ApiResponse<SessionMessagesResponse>> =>
         api.get(`/chat/session/${sessionId}/messages`),
 
     // 消息反馈（1=赞 / -1=踩，重复提交覆盖）

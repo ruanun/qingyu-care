@@ -30,6 +30,19 @@ export interface ChatSession {
     endedAt?: string;
 }
 
+// 坐席台「我接管中的会话」列表项，含未读消息数（GET /chat/sessions/mine，按最后消息时间倒序，
+// offset 分页无 total）。status 恒为 AGENT_PROCESSING——后端查询已按此过滤
+// （见 AgentSessionDao.findMySessions），前端不需要也不应再自行过滤。
+// unreadCount 只统计角色为 USER（访客）且晚于坐席已读水位线的消息，坐席自己发的不计入。
+export interface AgentSession {
+    id: number;
+    sessionId: string;
+    userId: string;
+    status: SessionStatus;
+    lastMessageAt: string;
+    unreadCount: number;
+}
+
 export interface ChatMessage {
     id: number;
     role: MessageRole;
@@ -49,6 +62,15 @@ export interface ChatMessageEntity {
     createdAt: string;
     uiSpec?: string | null;
     attachments?: Attachment[];
+}
+
+// GET /chat/session/{id}/messages 的响应包装（不再是裸 List<ChatMessageDTO>，见后端
+// SessionMessagesResponse 类注释：水位线字段挂不到 List 上，故引入本包装类型）。
+// visitorReadUpToMessageId 是对方（访客）的已读水位线，不带坐席自己的；访客尚未产生任何
+// 已读回执时为 null。该字段目前只负责把类型钉对，消费逻辑（渲染/续接）是另一步的事。
+export interface SessionMessagesResponse {
+    messages: ChatMessageEntity[];
+    visitorReadUpToMessageId: number | null;
 }
 
 // 消息附件（图片/文件）。⚠️ 不含 url：下载端点是请求头鉴权（satoken/X-Api-Key），

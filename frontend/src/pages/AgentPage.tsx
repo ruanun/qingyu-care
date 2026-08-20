@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { agentService } from '@/api/agent';
 import { chatService } from '@/api/chat';
 import { connectSse } from '@/lib/sse';
-import type { ChatSession, ChatMessage, ChatMessageEntity, MessageRole, Attachment } from '@/types';
+import type { ChatSession, ChatMessage, ChatMessageEntity, MessageRole, Attachment, AgentSession } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { JsonRender } from '@/components/chat/JsonRender';
@@ -18,11 +18,13 @@ import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const AgentPage: React.FC = () => {
     const [waitingSessions, setWaitingSessions] = useState<ChatSession[]>([]);
+    // 坐席已接管、仍在进行中的会话（GET /chat/sessions/mine）。左栏「我的会话」分段的数据源，
+    // 也是未读徽章的唯一事实源（session.unreadCount 由后端聚合，见 fetchMySessions 注释）。
+    const [mySessions, setMySessions] = useState<AgentSession[]>([]);
     const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [replyInput, setReplyInput] = useState('');
     const [isSending, setIsSending] = useState(false);
-    const [unread, setUnread] = useState<Record<string, number>>({});
     const [onlineCount, setOnlineCount] = useState(0);
     const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
     const [isUploading, setIsUploading] = useState(false);
@@ -36,7 +38,11 @@ const AgentPage: React.FC = () => {
 
     useEffect(() => {
         fetchWaitingSessions();
-        const interval = setInterval(fetchWaitingSessions, 10000); // 每10秒刷新
+        fetchMySessions();
+        const interval = setInterval(() => {
+            fetchWaitingSessions();
+            fetchMySessions();
+        }, 10000); // 每10秒刷新
         return () => clearInterval(interval);
     }, []);
 
@@ -62,7 +68,15 @@ const AgentPage: React.FC = () => {
                             attachments: payload.attachments as Attachment[] | undefined,
                         }]);
                     } else if (sid) {
-                        setUnread((prev) => ({ ...prev, [sid]: (prev[sid] ?? 0) + 1 }));
+                        // 本地 +1 只是即时反馈的过渡态：真正的未读数以后端聚合值为准
+                        // （AgentSessionDTO.unreadCount，按已读水位线现算）。这里立刻发起
+                        // 一次 fetchMySessions() 用服务端结果覆盖，不依赖本地累加——
+                        // ⚠️ 别改成「只累加、不再刷新」：本地计数在消息重复推送/漏推、
+                        // 多端同时在线等场景下会漂移，且漂移不报错，只是徽章数字看着不对。
+                        setMySessions((prev) => prev.map((s) => (
+                            s.sessionId === sid ? { ...s, unreadCount: s.unreadCount + 1 } : s
+                        )));
+                        fetchMySessions();
                     }
                 } else if (event === 'session') {
                     // 新待接/结束等 → 刷新待接队列
@@ -92,8 +106,19 @@ const AgentPage: React.FC = () => {
         }
     };
 
-    const clearUnread = (sessionId: string) => {
-        setUnread((prev) => ({ ...prev, [sessionId]: 0 }));
+    // 「我的会话」：坐席已接管、仍在进行中的会话，含后端聚合的未读数。
+    // ⚠️ 事实源在后端——本函数每次调用都用 response.data 整体覆盖 mySessions，
+    // 绝不与本地状态合并/累加。这是修复"未读徽章会漂移"的关键：SSE 到达时的本地
+    // +1（见上面 onEvent 的 message 分支）只是没有网络往返延迟的即时反馈，
+    // 任何一次这里的刷新都必须把它冲掉，改成合并会让计数越攒越多且没有报错。
+    async function fetchMySessions() {
+        try {
+            const response = await agentService.getMySessions(0, 50);
+            throwIfFailed(response);
+            setMySessions(response.data);
+        } catch (error: unknown) {
+            console.error('获取我的会话列表失败:', getErrorMessage(error));
+        }
     };
 
     const handleAcceptSession = async (session: ChatSession) => {
@@ -103,8 +128,9 @@ const AgentPage: React.FC = () => {
             setSelectedSession(res.data);
             setPendingAttachments([]); // 切会话时清掉上一个会话残留的待发附件
             const msgs = await chatService.getSessionMessages(session.sessionId);
-            // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好
-            setMessages(msgs.code === 200 ? msgs.data.map((m: ChatMessageEntity) => ({
+            // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好。
+            // ⚠️ msgs.data 是 { messages, visitorReadUpToMessageId } 包装，不再是裸数组。
+            setMessages(msgs.code === 200 ? msgs.data.messages.map((m: ChatMessageEntity) => ({
                 id: m.id,
                 role: m.role,
                 content: m.content,
@@ -112,13 +138,46 @@ const AgentPage: React.FC = () => {
                 uiParts: parseUiSpec(m.uiSpec),
                 attachments: m.attachments,
             })) : []);
-            clearUnread(session.sessionId);
             fetchWaitingSessions();
+            // 该会话此时从"待接队列"进入"我的会话"；同时这条刷新会带回此前已接管、
+            // 仍在进行中的其它会话——不会因为上面那行 setSelectedSession 只认最新一个
+            // 而把它们从界面上弄丢（这正是本次要修的缺陷：接管第二个会话曾经会让
+            // 第一个会话再也回不去，刷新也回不去）。
+            fetchMySessions();
         } catch (error: unknown) {
             // 必须把原因带出来：接管失败最常见的就是「已被别的坐席接管」这类
             // 后端业务错误（HTTP 200 + code≠200），无参 catch 会把 throwIfFailed
             // 抛出的那条 message 丢掉，坐席只看到「接管失败」不知道为什么
             toast({ title: '接管失败', variant: 'destructive', description: getErrorMessage(error) });
+        }
+    };
+
+    // 切回「我的会话」列表里此前已接管的某个会话（不是新接管，会话早已是 AGENT_PROCESSING）。
+    // 这是修复"接管第二个会话丢掉第一个"的另一半：光有列表不够，还得能点回去。
+    // AgentSession 没带 tags/summary/endedAt 等字段（列表查询没选它们），这里用能拿到的字段
+    // 拼一个最小可用的 ChatSession；这些缺失字段本页不会渲染，不影响展示。
+    const handleSelectMySession = async (session: AgentSession) => {
+        setSelectedSession({
+            id: session.id,
+            sessionId: session.sessionId,
+            userId: session.userId,
+            status: session.status,
+            createdAt: session.lastMessageAt,
+            updatedAt: session.lastMessageAt,
+        });
+        setPendingAttachments([]);
+        try {
+            const msgs = await chatService.getSessionMessages(session.sessionId);
+            setMessages(msgs.code === 200 ? msgs.data.messages.map((m: ChatMessageEntity) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                createdAt: m.createdAt,
+                uiParts: parseUiSpec(m.uiSpec),
+                attachments: m.attachments,
+            })) : []);
+        } catch (error: unknown) {
+            toast({ title: '加载会话消息失败', variant: 'destructive', description: getErrorMessage(error) });
         }
     };
 
@@ -217,56 +276,106 @@ const AgentPage: React.FC = () => {
 
     return (
         <div className="flex h-full w-full overflow-hidden">
-            {/* 左侧：待接管队列 */}
-            <div className="w-80 border-r flex flex-col bg-muted/10">
-                <div className="p-4 border-b flex items-center justify-between">
-                    <h3 className="font-semibold flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-500" />
-                        待接管队列
-                        <Badge variant="destructive" className="ml-1">{waitingSessions.length}</Badge>
-                    </h3>
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">在线坐席 {onlineCount}</span>
-                        <Button variant="ghost" size="icon" onClick={fetchWaitingSessions}>
-                            <RefreshCw className="w-4 h-4" />
-                        </Button>
+            {/* 左侧：两段——待接管队列（上）+ 我的会话（下）。两个集合按定义不相交
+                （WAITING_AGENT vs AGENT_PROCESSING），未读徽章只属于「我的会话」。 */}
+            <div className="w-80 border-r flex flex-col bg-muted/10 overflow-hidden">
+                {/* 待接管队列 */}
+                <div className="flex flex-col flex-1 min-h-0 border-b">
+                    <div className="p-3 border-b flex items-center justify-between shrink-0">
+                        <h3 className="font-semibold flex items-center gap-2 text-sm">
+                            <AlertCircle className="w-4 h-4 text-red-500" />
+                            待接管队列
+                            <Badge variant="destructive" className="ml-1">{waitingSessions.length}</Badge>
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">在线坐席 {onlineCount}</span>
+                            <Button variant="ghost" size="icon" onClick={fetchWaitingSessions}>
+                                <RefreshCw className="w-4 h-4" />
+                            </Button>
+                        </div>
                     </div>
-                </div>
-                <ScrollArea className="flex-1">
-                    <div className="p-3 space-y-2">
-                        {waitingSessions.length === 0 ? (
-                            <div className="text-center py-12 text-muted-foreground text-sm">
-                                暂无等待接管的会话
-                            </div>
-                        ) : (
-                            waitingSessions.map((session) => (
-                                <div
-                                    key={session.id}
-                                    className="p-3 rounded-lg border bg-background hover:border-primary/50 cursor-pointer transition-colors"
-                                    onClick={() => handleAcceptSession(session)}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <User className="w-4 h-4 text-muted-foreground" />
-                                            <span className="text-sm font-medium">{session.userId}</span>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                            {unread[session.sessionId] > 0 && (
-                                                <Badge variant="destructive" className="text-[10px]">
-                                                    {unread[session.sessionId]}
-                                                </Badge>
-                                            )}
+                    <ScrollArea className="flex-1">
+                        <div className="p-3 space-y-2">
+                            {waitingSessions.length === 0 ? (
+                                <div className="text-center py-8 text-muted-foreground text-sm">
+                                    暂无等待接管的会话
+                                </div>
+                            ) : (
+                                waitingSessions.map((session) => (
+                                    <div
+                                        key={session.id}
+                                        data-testid={`waiting-session-${session.sessionId}`}
+                                        className="p-3 rounded-lg border bg-background hover:border-primary/50 cursor-pointer transition-colors"
+                                        onClick={() => handleAcceptSession(session)}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <User className="w-4 h-4 text-muted-foreground" />
+                                                <span className="text-sm font-medium">{session.userId}</span>
+                                            </div>
                                             <Badge variant="destructive" className="text-[10px] animate-pulse">等待中</Badge>
                                         </div>
+                                        <p className="text-[10px] text-muted-foreground mt-1">
+                                            {new Date(session.createdAt).toLocaleString()}
+                                        </p>
                                     </div>
-                                    <p className="text-[10px] text-muted-foreground mt-1">
-                                        {new Date(session.createdAt).toLocaleString()}
-                                    </p>
-                                </div>
-                            ))
-                        )}
+                                ))
+                            )}
+                        </div>
+                    </ScrollArea>
+                </div>
+
+                {/* 我的会话：坐席已接管、仍在进行中的会话。徽章绑 session.unreadCount——
+                    这是修掉"未读徽章是死代码"的关键：旧实现的 unread 状态 key 来自
+                    AGENT_PROCESSING 会话的 SSE 推送，却渲染在上面 WAITING_AGENT 的队列里，
+                    两个集合永不相交，徽章从未显示过。 */}
+                <div className="flex flex-col flex-1 min-h-0">
+                    <div className="p-3 border-b flex items-center justify-between shrink-0">
+                        <h3 className="font-semibold flex items-center gap-2 text-sm">
+                            <UserPen className="w-4 h-4 text-blue-500" />
+                            我的会话
+                            <Badge variant="secondary" className="ml-1">{mySessions.length}</Badge>
+                        </h3>
                     </div>
-                </ScrollArea>
+                    <ScrollArea className="flex-1">
+                        <div className="p-3 space-y-2">
+                            {mySessions.length === 0 ? (
+                                <div className="text-center py-8 text-muted-foreground text-sm">
+                                    暂无接管中的会话
+                                </div>
+                            ) : (
+                                mySessions.map((session) => (
+                                    <div
+                                        key={session.id}
+                                        data-testid={`my-session-${session.sessionId}`}
+                                        className={cn(
+                                            "p-3 rounded-lg border cursor-pointer transition-colors",
+                                            selectedSession?.sessionId === session.sessionId
+                                                ? "border-primary bg-primary/5"
+                                                : "bg-background hover:border-primary/50"
+                                        )}
+                                        onClick={() => handleSelectMySession(session)}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <User className="w-4 h-4 text-muted-foreground" />
+                                                <span className="text-sm font-medium">{session.userId}</span>
+                                            </div>
+                                            {session.unreadCount > 0 && (
+                                                <Badge variant="destructive" className="text-[10px]">
+                                                    {session.unreadCount}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground mt-1">
+                                            {new Date(session.lastMessageAt).toLocaleString()}
+                                        </p>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </ScrollArea>
+                </div>
             </div>
 
             {/* 右侧：对话区域 */}
