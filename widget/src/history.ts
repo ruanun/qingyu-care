@@ -14,9 +14,13 @@ import type { WidgetUi } from './ui';
 export function restoreHistory(ui: WidgetUi, messages: OpenSessionResponse['messages']): void {
   for (const m of messages) {
     switch (m.role) {
-      case 'USER':
-        ui.addUserMessage(m.content, m.attachments);
+      case 'USER': {
+        // 必须回填 id：已读标记（markReadUpTo）按 data-message-id 定位气泡，不回填则刷新
+        // 页面后历史访客消息永远无处可标——「刷新后已读状态保持」正是这个特性最该稳的东西。
+        const handle = ui.addUserMessage(m.content, m.attachments);
+        if (typeof m.id === 'number') handle.setMessageId(m.id);
         break;
+      }
       case 'ASSISTANT':
         ui.addBotMessage(m.content, undefined, m.uiParts, m.attachments);
         break;

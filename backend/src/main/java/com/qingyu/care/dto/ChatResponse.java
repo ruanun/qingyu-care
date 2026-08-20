@@ -27,6 +27,13 @@ public class ChatResponse {
     private Long messageId;
 
     /**
+     * 访客<b>自己发出</b>的那条消息的 id，区别于 {@link #messageId}（AI 回复的 id）。
+     * 经 {@code OpenChatResponse.from} 透出给开放 API，供 widget 与已读水位线比对。
+     * 未落库用户消息的路径（理论上不存在，chat() 的每个分支都会先落用户消息）为 null。
+     */
+    private Long userMessageId;
+
+    /**
      * AI回复内容
      */
     private String content;

@@ -40,7 +40,9 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
             try {
                 const response = await chatService.getSessionMessages(sessionId);
                 if (response.code === 200) {
-                    setMessages(response.data || []);
+                    // ⚠️ response.data 是 { messages, visitorReadUpToMessageId } 包装（不再是裸数组），
+                    // 见 types/index.ts 的 SessionMessagesResponse 注释。
+                    setMessages(response.data.messages || []);
                 } else {
                     setError(response.message || '加载失败');
                 }

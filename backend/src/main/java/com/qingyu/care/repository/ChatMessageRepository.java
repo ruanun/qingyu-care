@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
@@ -19,6 +20,9 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
     List<ChatMessage> findBySessionIdOrderByCreatedAtAsc(Long sessionId);
 
     List<ChatMessage> findTop20BySessionIdOrderByCreatedAtDesc(Long sessionId);
+
+    /** 会话内最新一条消息（按 id 降序取第一条），用于坐席接管瞬间置顶已读水位线。 */
+    Optional<ChatMessage> findTopBySessionIdOrderByIdDesc(Long sessionId);
 
     // ===== 分析三件套实时明细（native 绕过租户过滤器，where 手写；同 ChatSessionRepository 聚合惯例）=====
 

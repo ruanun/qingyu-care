@@ -49,10 +49,10 @@ class ChatStreamEventIT extends AbstractPostgresIT {
 
         Mockito.when(chatService.streamChat(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
                 .thenReturn(Flux.just(
-                        ChatStreamEvent.start("s_it", true, List.of()),
+                        ChatStreamEvent.start("s_it", true, List.of(), 7L),
                         ChatStreamEvent.delta("你好\n世界"),
                         ChatStreamEvent.card(Map.of("type", "card")),
-                        ChatStreamEvent.done(42L)));
+                        ChatStreamEvent.done(42L, 9L)));
 
         MvcResult started = mockMvc.perform(post("/open/v1/chat/stream")
                         .header("X-App-Id", app.getAppKey())
@@ -67,9 +67,12 @@ class ChatStreamEventIT extends AbstractPostgresIT {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(body).contains("event:start").contains("\"sessionId\":\"s_it\"")
+                .contains("\"userMessageId\":7")
                 .contains("event:delta")
                 .contains("event:card").contains("\"node\":{\"type\":\"card\"}")
-                .contains("event:done").contains("\"messageId\":42");
+                // DONE 一律带 userMessageId（本例用 9 与 START 的 7 区分开，证明这是 DONE 自己
+                // 的字段而非断言碰巧匹配到了 START 那行）
+                .contains("event:done").contains("\"messageId\":42").contains("\"userMessageId\":9");
         // delta 里的换行必须已被 JSON 转义（SSE 层保持单行，不能出现裸换行拆成两条 data:）
         assertThat(body).contains("\\n世界");
         assertThat(body).doesNotContain("你好\n世界");

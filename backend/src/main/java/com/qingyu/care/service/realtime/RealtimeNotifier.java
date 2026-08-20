@@ -75,6 +75,35 @@ public class RealtimeNotifier {
         hub.publish(key, "typing", json(m));
     }
 
+    /**
+     * A：坐席读了 → 推给访客 inbox。
+     *
+     * <p>⚠️ <b>必须用独立的 {@code read} 事件，不能复用 {@link #toUserSessionEvent}</b>：
+     * widget（{@code widget/src/main.ts}）对 {@code session} 事件是<b>无条件当文案展示</b>
+     * （{@code ui.showSessionState(p.text || sessionStateText(p.kind))}），复用会让访客每次被读
+     * 都看到一条莫名的状态提示。走独立事件类型天然免疫，且不依赖「将来加 kind 时记得加分支」。
+     */
+    public void readReceiptToUser(String sessionId, Long upToMessageId) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sessionId", sessionId);
+        m.put("upToMessageId", upToMessageId);
+        hub.publish(RealtimeKeys.session(sessionId), "read", json(m));
+    }
+
+    /**
+     * B：访客读了 → 推给该会话的坐席。
+     *
+     * <p>与 {@link #readReceiptToUser} 用<b>同一个事件名</b>，靠订阅键区分方向。
+     * ⚠️ 载荷必须带 {@code sessionId}：坐席工作台是多会话的，收到时可能正看着别的会话，
+     * 必须按 sessionId 归位而不能默认标在当前会话上。
+     */
+    public void readReceiptToAgent(Long tenantId, Long agentUserId, String sessionId, Long upToMessageId) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sessionId", sessionId);
+        m.put("upToMessageId", upToMessageId);
+        hub.publish(RealtimeKeys.agent(tenantId, agentUserId), "read", json(m));
+    }
+
     /** 广播坐席上/下线 presence 给本租户其他在线坐席。 */
     public void presenceToTenantAgents(Long tenantId, Long agentUserId, boolean online) {
         Map<String, Object> m = new LinkedHashMap<>();

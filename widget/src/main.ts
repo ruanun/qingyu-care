@@ -40,7 +40,23 @@ async function init(): Promise<void> {
 
   let sessionId: string | null = loadSession(cfg.appKey);
 
-  // inbox：坐席消息 / 会话状态 / typing 实时通道
+  // 已读上报所需的两块状态：面板是否展开（点击悬浮气泡切换）、当前已知最新一条坐席/AI消息 id。
+  // 上报条件是两者与页面可见性三者同时成立，见 maybeReportRead。
+  let isOpen = false;
+  let latestAgentMessageId: number | null = null;
+
+  /** fail-soft 上报已读；三个触发点（面板展开/收到新消息/标签页转前台）共用同一道判定。 */
+  function maybeReportRead() {
+    if (!sessionId || !isOpen || document.visibilityState !== 'visible') return;
+    if (latestAgentMessageId == null) return;
+    void api.markRead(sessionId, latestAgentMessageId);
+  }
+  // 触发点三：标签页从后台切回前台时补报（面板可能一直是展开的，只是标签页不在前台）。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') maybeReportRead();
+  });
+
+  // inbox：坐席消息 / 会话状态 / typing / 已读回执实时通道
   let inbox: { close: () => void } | null = null;
   let inboxSid: string | null = null;
   function ensureInbox(sid: string) {
@@ -63,10 +79,19 @@ async function init(): Promise<void> {
       // 只有刷新页面走 getSession → restoreHistory 才看得见。
       if (event === 'message' && (p.role === 'ASSISTANT' || p.role === 'AGENT')) {
         ui.addAgentMessage(p.content, p.attachments as WidgetAttachment[] | undefined);
+        // 触发点二：收到坐席/AI 新消息，仅当已展开且可见才上报（maybeReportRead 内部判定）。
+        if (typeof p.messageId === 'number') {
+          latestAgentMessageId = p.messageId;
+          maybeReportRead();
+        }
       } else if (event === 'session') {
         ui.showSessionState(p.text || sessionStateText(p.kind));
       } else if (event === 'typing' && p.from === 'agent') {
         ui.setTyping(true); // 短暂显示后由下一条消息/超时清除
+      } else if (event === 'read') {
+        // ⚠️ 独立事件类型，绝不走 showSessionState——那会在访客界面冒出一条莫名提示
+        // （session 事件是无条件当文案展示的）。只标已读，不产生任何文案节点。
+        if (typeof p.upToMessageId === 'number') ui.markReadUpTo(p.upToMessageId);
       }
     });
   }
@@ -102,6 +127,12 @@ async function init(): Promise<void> {
       if (!sessionId) return Promise.reject(new Error('会话尚未建立，无法下载附件'));
       return api.downloadAttachment(id, sessionId).then((blob) => URL.createObjectURL(blob));
     },
+    // 触发点一：面板从收起变为展开。收起是 widget 自己的内部状态，与页面可见性是两个独立
+    // 条件，缺任一判断都会产生假已读——是否上报仍由 maybeReportRead 内部复核可见性。
+    onToggle: (open) => {
+      isOpen = open;
+      if (open) maybeReportRead();
+    },
   });
 
   // 刷新页面后若本地已恢复会话（可能已被坐席接管），先用 getSession 恢复历史消息（含历史卡片），
@@ -114,14 +145,26 @@ async function init(): Promise<void> {
     ui.markOpened();
     ui.setAttachEnabled(true); // 本地已有 sessionId，附件上传端点可用
     const restored = await api.getSession(sessionId);
-    if (restored && restored.messages.length) {
-      restoreHistory(ui, restored.messages);
+    if (restored) {
+      if (restored.messages.length) {
+        restoreHistory(ui, restored.messages);
+        // 补建「当前已知最新一条坐席/AI消息 id」，供刷新后面板展开时的已读上报有值可报。
+        for (const m of restored.messages) {
+          if ((m.role === 'ASSISTANT' || m.role === 'AGENT') && typeof m.id === 'number') {
+            latestAgentMessageId = m.id;
+          }
+        }
+      }
+      // 刷新恢复：从坐席的已读水位线还原访客自己消息上的「已读」标记（渲染 A，不涉及上报）。
+      if (typeof restored.agentReadUpToMessageId === 'number') {
+        ui.markReadUpTo(restored.agentReadUpToMessageId);
+      }
     }
     ensureInbox(sessionId);
   }
 
   async function handleSend(message: string, attachments?: WidgetAttachment[]): Promise<void> {
-    ui.addUserMessage(message, attachments);
+    const userHandle = ui.addUserMessage(message, attachments);
     ui.setInputEnabled(false);
     ui.setTyping(true);
 
@@ -142,11 +185,16 @@ async function init(): Promise<void> {
           saveSession(cfg!.appKey, d.sessionId);
           ensureInbox(d.sessionId);   // 流首即建坐席通道，不必等整条回复结束
           ui.setAttachEnabled(true); // 会话已建立（或确认存续），附件按钮可用
+          // START 有就先用（人工接管静默/关键词触发/知识库未命中兜底三条早退路径带真实值），
+          // 主问答路径此刻恒为 null，没有就等 DONE（见 chatStream.ts 的字段注释）。
+          if (typeof d.userMessageId === 'number') userHandle.setMessageId(d.userMessageId);
         },
         onDelta: (t) => ensureBot().appendText(t),
         onCard: (n) => ensureBot().appendCard(n),
-        onDone: (messageId) => {
+        onDone: (messageId, userMessageId) => {
           const sid = sessionId;
+          // DONE 排在落库之后，只要落了库就必然带真实 id——补齐 START 拿不到时的兜底。
+          if (typeof userMessageId === 'number') userHandle.setMessageId(userMessageId);
           ensureBot().finish(
             messageId != null && messageId > 0 && sid
               ? { onFeedback: (v) => void api.feedback(sid, messageId, v) }

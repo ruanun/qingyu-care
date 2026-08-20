@@ -40,6 +40,15 @@ public class OpenSessionResponse {
     private List<Msg> messages;
 
     /**
+     * 坐席读到哪了（对方的已读水位线）。⚠️ 只带对方（坐席）的，不带访客自己的——把自己的
+     * 也返回会诱使前端拿它当本地状态的事实源，而本地水位线的推进条件（widget 是否真的展开且
+     * 页面可见）只有客户端自己知道，服务端那份必然滞后。会话尚无坐席接管、或坐席还未产生任何
+     * 已读回执时为 {@code null}。见
+     * docs/superpowers/specs/2026-08-19-message-read-receipt-design.md §4.4。
+     */
+    private Long agentReadUpToMessageId;
+
+    /**
      * 单条消息
      */
     @Data
@@ -88,16 +97,29 @@ public class OpenSessionResponse {
     }
 
     /**
-     * 从会话实体和消息列表构建响应，附带按 messageId 分组好的附件。
-     * Widget 断线补拉历史（GET /open/v1/sessions/{sessionId}）靠这份 attachments 恢复历史消息里的图片/文件——
-     * 原先这里没有 attachments 字段，历史消息的附件恢复不出来，刷新即丢图。
+     * 从会话实体和消息列表构建响应，附带按 messageId 分组好的附件。不含已读水位线
+     * （{@code agentReadUpToMessageId} 为 null）——兼容不需要该字段的既有调用方。
      */
     public static OpenSessionResponse of(ChatSession session, List<ChatMessage> messages,
                                          ObjectMapper objectMapper,
                                          Map<Long, List<AttachmentDTO>> attachmentsByMessageId) {
+        return of(session, messages, objectMapper, attachmentsByMessageId, null);
+    }
+
+    /**
+     * 从会话实体和消息列表构建响应，附带按 messageId 分组好的附件与对方（坐席）的已读水位线。
+     * Widget 断线补拉历史（GET /open/v1/sessions/{sessionId}）靠这份 attachments 恢复历史消息里的图片/文件——
+     * 原先这里没有 attachments 字段，历史消息的附件恢复不出来，刷新即丢图；
+     * agentReadUpToMessageId 同理恢复已读标记（见 spec §4.4）。
+     */
+    public static OpenSessionResponse of(ChatSession session, List<ChatMessage> messages,
+                                         ObjectMapper objectMapper,
+                                         Map<Long, List<AttachmentDTO>> attachmentsByMessageId,
+                                         Long agentReadUpToMessageId) {
         return OpenSessionResponse.builder()
                 .sessionId(session.getSessionId())
                 .status(session.getStatus() != null ? session.getStatus().name() : null)
+                .agentReadUpToMessageId(agentReadUpToMessageId)
                 .messages(messages.stream()
                         .map(m -> Msg.builder()
                                 .id(m.getId())

@@ -53,7 +53,9 @@ const ChatPage: React.FC = () => {
             try {
                 const res = await chatService.getSessionMessages(sid);
                 if (res.code === 200) {
-                    const history: ChatMessage[] = (res.data || []).map((m: ChatMessageEntity) => ({
+                    // ⚠️ res.data 是 { messages, visitorReadUpToMessageId } 包装（不再是裸数组），
+                    // 见 types/index.ts 的 SessionMessagesResponse 注释。
+                    const history: ChatMessage[] = (res.data.messages || []).map((m: ChatMessageEntity) => ({
                         id: m.id,
                         role: m.role,
                         content: m.content,

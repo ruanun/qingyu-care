@@ -104,4 +104,58 @@ describe('postSse', () => {
     expect(errors[0]).not.toMatch(/500/);
     expect(errors[0]).toBe('抱歉，服务暂时不可用，请稍后再试。');
   });
+
+  /**
+   * 已读回执依赖 userMessageId 事后回填访客自己那条消息的气泡。裁定：START 有就先用，
+   * 没有就等 DONE——主问答路径 START.userMessageId 恒为 null，DONE 排在落库之后必带真实值。
+   */
+  it('START 携带 userMessageId 时透传给 onStart', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([
+      'event:start\ndata: {"sessionId":"s1","suggestHandover":false,"knowledgeHits":[],"userMessageId":7}\n\n',
+      'event:done\ndata: {"messageId":9,"userMessageId":7}\n\n',
+    ])));
+    let uid: number | null | undefined;
+
+    await postSse('/x', {}, {}, { onStart: (d) => { uid = d.userMessageId; } });
+
+    expect(uid).toBe(7);
+  });
+
+  it('START 的 userMessageId 缺省时 onStart 拿到 undefined（主问答路径已知限制）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([
+      'event:start\ndata: {"sessionId":"s1","suggestHandover":false,"knowledgeHits":[]}\n\n',
+      'event:done\ndata: {"messageId":9,"userMessageId":8}\n\n',
+    ])));
+    let uid: number | null | undefined = 'unset' as unknown as number;
+
+    await postSse('/x', {}, {}, { onStart: (d) => { uid = d.userMessageId; } });
+
+    expect(uid).toBeUndefined();
+  });
+
+  it('DONE 同时携带 messageId 与 userMessageId 时都透传给 onDone', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([
+      'event:done\ndata: {"messageId":9,"userMessageId":8}\n\n',
+    ])));
+    let mid: number | null = null;
+    let uid: number | null = null;
+
+    await postSse('/x', {}, {}, { onDone: (m, u) => { mid = m; uid = u; } });
+
+    expect(mid).toBe(9);
+    expect(uid).toBe(8);
+  });
+
+  it('DONE 未落库（半截回复/取消）时 messageId 与 userMessageId 均为 null', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([
+      'event:done\ndata: {"messageId":null,"userMessageId":null}\n\n',
+    ])));
+    let mid: number | null = 0 as unknown as number;
+    let uid: number | null = 0 as unknown as number;
+
+    await postSse('/x', {}, {}, { onDone: (m, u) => { mid = m; uid = u; } });
+
+    expect(mid).toBeNull();
+    expect(uid).toBeNull();
+  });
 });

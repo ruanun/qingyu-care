@@ -9,13 +9,25 @@ export interface ChatStreamStart {
   sessionId: string;
   suggestHandover: boolean;
   knowledgeHits: Array<{ content: string; score: number; source: string }>;
+  /**
+   * 访客自己那条消息的 id。⚠️ 主问答路径（检索命中/允许无知识）此刻恒为 null——用户消息与
+   * AI 回复整轮延迟到流结束才落库（「停止生成不落库」契约），构造 START 时尚未落库、
+   * ChatMessage 用 IDENTITY 生成策略取不到提前 id；人工接管静默/关键词触发转人工/知识库
+   * 未命中兜底三条早退路径落库在前，带真实值。widget 侧策略：START 有就先用，没有就等 DONE。
+   */
+  userMessageId?: number | null;
 }
 
 export interface ChatStreamHandlers {
   onStart?: (d: ChatStreamStart) => void;
   onDelta?: (text: string) => void;
   onCard?: (node: UiNode) => void;
-  onDone?: (messageId: number | null) => void;
+  /**
+   * @param messageId AI 回复的落库 id，未落库时为 null。
+   * @param userMessageId 访客自己那条消息的落库 id；DONE 排在落库之后构造，只要本轮确实
+   *   落了库就必然一并拿到真实值，是 START 那个「主问答路径恒为 null」的兜底来源。
+   */
+  onDone?: (messageId: number | null, userMessageId: number | null) => void;
   /** 后端 error 事件，或流未以 done 结束（中断）。文案已可直接展示。 */
   onError?: (message: string) => void;
 }
@@ -74,7 +86,11 @@ export async function postSse(
       if (event === 'start') handlers.onStart?.(payload as ChatStreamStart);
       else if (event === 'delta') handlers.onDelta?.((payload as { text?: string }).text ?? '');
       else if (event === 'card') { const node = (payload as { node?: UiNode }).node; if (node) handlers.onCard?.(node); }
-      else if (event === 'done') { done = true; handlers.onDone?.((payload as { messageId?: number }).messageId ?? null); }
+      else if (event === 'done') {
+        done = true;
+        const d = payload as { messageId?: number | null; userMessageId?: number | null };
+        handlers.onDone?.(d.messageId ?? null, d.userMessageId ?? null);
+      }
       else if (event === 'error') { errored = true; handlers.onError?.((payload as { message?: string }).message || '回复生成失败。'); }
     }
   }

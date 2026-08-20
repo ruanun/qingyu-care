@@ -5,15 +5,19 @@ import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.controller.support.AttachmentResponses;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AgentReplyRequest;
+import com.qingyu.care.dto.AgentSessionDTO;
 import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.ChatMessageDTO;
 import com.qingyu.care.dto.ChatRequest;
 import com.qingyu.care.dto.ChatResponse;
 import com.qingyu.care.dto.PageDTO;
+import com.qingyu.care.dto.ReadReceiptRequest;
+import com.qingyu.care.dto.SessionMessagesResponse;
 import com.qingyu.care.entity.ChatAttachment;
 import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.MessageRole;
+import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.enums.SessionTag;
 import com.qingyu.care.exception.ResourceNotFoundException;
@@ -22,6 +26,7 @@ import com.qingyu.care.service.ChatFeedbackService;
 import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.ChatStreamSseMapper;
 import com.qingyu.care.service.FileService;
+import com.qingyu.care.service.ReadReceiptService;
 import com.qingyu.care.service.media.ChatAttachmentService;
 import com.qingyu.care.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,6 +63,7 @@ public class ChatController {
     private final ChatAttachmentService chatAttachmentService;
     private final ChatAttachmentRepository chatAttachmentRepository;
     private final FileService fileService;
+    private final ReadReceiptService readReceiptService;
 
     @PostMapping
     @Operation(summary = "发送消息", description = "发送消息并获取AI回复")
@@ -154,14 +160,39 @@ public class ChatController {
         return ApiResponse.success("会话已接管", session);
     }
 
+    @PostMapping("/session/{sessionId}/read")
+    @Operation(summary = "坐席上报已读", description = "推进本坐席在该会话的已读水位线，并推送给访客")
+    public ApiResponse<Long> markAgentRead(@PathVariable String sessionId,
+                                           @Valid @RequestBody ReadReceiptRequest request) {
+        // ⚠️ @Valid 不可省：ReadReceiptRequest.upToMessageId 的 @NotNull 靠它才生效，
+        // 缺了它 null 会一路传进 service 撞 NPE，对客户端表现为 500 而非语义正确的 400。
+        SecurityUtil.requireAgent();
+        // 取当前坐席 id 的方式与同文件的 acceptSession 完全一致
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(
+                chatService.markAgentRead(sessionId, agentId, request.getUpToMessageId()));
+    }
+
     @PostMapping("/agent/reply")
-    @Operation(summary = "客服回复", description = "客服发送消息（绕过AI）")
-    public ApiResponse<Void> agentReply(@Valid @RequestBody AgentReplyRequest request) {
+    @Operation(summary = "客服回复", description = "客服发送消息（绕过AI），返回落库后的真实消息 id")
+    public ApiResponse<Long> agentReply(@Valid @RequestBody AgentReplyRequest request) {
         SecurityUtil.requireAgent();
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
-        chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
+        Long messageId = chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
                 request.getAttachmentIds());
-        return ApiResponse.success("消息已发送", null);
+        // data 带回真实 id：坐席端用它替代本地占位 id 做乐观渲染/已读上报，
+        // 见 ChatServiceImpl.clampToMaxMessageId 类注释记录的真实缺陷
+        return ApiResponse.success("消息已发送", messageId);
+    }
+
+    @GetMapping("/sessions/mine")
+    @Operation(summary = "我接管中的会话", description = "含每个会话的未读消息数，按最后消息时间倒序")
+    public ApiResponse<List<AgentSessionDTO>> getMySessions(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        SecurityUtil.requireAgent();
+        Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
+        return ApiResponse.success(chatService.getMySessions(agentId, page, size));
     }
 
     @GetMapping("/sessions/waiting")
@@ -174,10 +205,11 @@ public class ChatController {
     }
 
     @GetMapping("/session/{sessionId}/messages")
-    @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息")
-    public ApiResponse<List<ChatMessageDTO>> getSessionMessages(
+    @Operation(summary = "获取会话消息历史", description = "获取指定会话的所有消息及访客的已读水位线")
+    public ApiResponse<SessionMessagesResponse> getSessionMessages(
             @PathVariable String sessionId) {
         SecurityUtil.requireAgent();
+        ChatSession session = chatService.getSession(sessionId);
         List<ChatMessage> messages = chatService.getSessionMessages(sessionId);
         List<Long> messageIds = messages.stream().map(ChatMessage::getId).toList();
         // 一次查完全部消息的附件，按 messageId 分组塞回去——不在循环里逐条查，避免 N+1
@@ -189,7 +221,14 @@ public class ChatController {
         List<ChatMessageDTO> dtos = messages.stream()
                 .map(m -> ChatMessageDTO.of(m, attachmentsByMessageId.getOrDefault(m.getId(), List.of())))
                 .toList();
-        return ApiResponse.success(dtos);
+        // 只带对方（访客）的已读水位线，不带坐席自己的——见 SessionMessagesResponse 的字段注释。
+        // readerId 按 §3.2.1 恒为 chat_session.id（一个会话只有一个访客），故不判空直接查
+        Long visitorReadUpToMessageId = readReceiptService.currentWatermark(
+                session.getId(), ReaderType.VISITOR, session.getId());
+        return ApiResponse.success(SessionMessagesResponse.builder()
+                .messages(dtos)
+                .visitorReadUpToMessageId(visitorReadUpToMessageId)
+                .build());
     }
 
     @PostMapping("/session/{sessionId}/return-to-ai")
