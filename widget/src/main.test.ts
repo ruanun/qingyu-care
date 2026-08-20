@@ -4,6 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { restoreHistory } from './history';
 import type { WidgetUi } from './ui';
+import type { ChatStreamHandlers } from './chatStream';
 
 /**
  * main.ts 是「无导出的纯副作用 IIFE」（见 history.ts 的说明），inbox 事件回调是它的内部闭包，
@@ -20,7 +21,9 @@ const mocks = vi.hoisted(() => ({
     setInputEnabled: vi.fn(),
     setAttachEnabled: vi.fn(),
     markOpened: vi.fn(),
-    beginBotMessage: vi.fn(),
+    // 默认返回一个具备完整 StreamingBotMessage 形状的桩，避免 handleSend 里
+    // ensureBot().finish(...) 在未特意桩过 beginBotMessage 的用例里对 undefined 取属性报错。
+    beginBotMessage: vi.fn(() => ({ appendText: vi.fn(), appendCard: vi.fn(), finish: vi.fn() })),
     markReadUpTo: vi.fn(),
   },
   api: {
@@ -31,11 +34,20 @@ const mocks = vi.hoisted(() => ({
     getSession: vi.fn(async () => null),
     inboxUrl: vi.fn((sid: string) => `/open/v1/sessions/${sid}/inbox`),
     markRead: vi.fn(async () => undefined),
+    // 默认不提供实现：handleSend 相关用例（见文件末尾）各自用 mockImplementationOnce 驱动
+    // START/DONE 回调；未涉及 handleSend 的既有用例从不调用它，留空更能暴露"谁在用它"。
+    stream: vi.fn(),
   },
   /** connectSse 收到的事件回调（由 mock 截获） */
   sse: { onEvent: null as null | ((event: string, data: string) => void) },
-  /** mountUi 收到的 handlers（由 mock 截获），供 setPanelOpen 驱动真实的 onToggle 回调 */
-  uiHandlers: null as null | { onToggle?: (open: boolean) => void },
+  /**
+   * mountUi 收到的 handlers（由 mock 截获），供 setPanelOpen 驱动真实的 onToggle 回调，
+   * 供 handleSend 相关用例驱动真实的 onSend 回调。
+   */
+  uiHandlers: null as null | {
+    onToggle?: (open: boolean) => void;
+    onSend?: (message: string, attachments?: unknown[]) => void;
+  },
 }));
 
 vi.mock('./config', () => ({
@@ -46,7 +58,10 @@ vi.mock('./api', () => ({
   SessionExpiredError: class SessionExpiredError extends Error {},
 }));
 vi.mock('./ui', () => ({
-  mountUi: (_brand: unknown, handlers: { onToggle?: (open: boolean) => void }) => {
+  mountUi: (_brand: unknown, handlers: {
+    onToggle?: (open: boolean) => void;
+    onSend?: (message: string, attachments?: unknown[]) => void;
+  }) => {
     mocks.uiHandlers = handlers;
     return mocks.ui;
   },
@@ -282,5 +297,57 @@ describe('已读上报（widget 展开 且 页面可见）', () => {
     document.dispatchEvent(new Event('visibilitychange'));
 
     expect(mocks.api.markRead).toHaveBeenCalledWith('sess-1', 21);
+  });
+});
+
+/**
+ * handleSend 里 START/DONE → userHandle.setMessageId 这两行胶水（main.ts 190/197 行附近）：
+ * 这是「访客自己那条消息的 id 从 DONE 事件取，START 有就先用」这条裁定的落地点，此前没有任何
+ * 用例真正驱动过 handleSend（mocks.api 没提供 stream，onSend 从未被触发），删掉其中一行
+ * （尤其是最常见主问答路径唯一的 id 来源——DONE 那一行）不会有任何测试转红。
+ *
+ * ⚠️ 两条用例里 START 与 DONE 的 id 取不同的数字：如果两者相同，即便实现错误地只认其中
+ * 一个，断言「setMessageId 被调用为 N」也会退化成永真，分不出到底是哪一行代码起了作用。
+ */
+describe('handleSend：START/DONE → userHandle.setMessageId', () => {
+  it('主问答路径：START.userMessageId 为 null，最终用 DONE 带来的真实 id', async () => {
+    await inboxHandler();
+    const setMessageId = vi.fn();
+    mocks.ui.addUserMessage.mockReturnValueOnce({ setMessageId });
+    mocks.api.stream.mockImplementationOnce(
+      async (_msg: string, _sid: string | null, handlers: ChatStreamHandlers) => {
+        // 主问答路径的真实后端行为：START 恒为 null（用户消息与 AI 回复延迟到流结束才落库）
+        handlers.onStart?.({ sessionId: 'sess-1', suggestHandover: false, knowledgeHits: [], userMessageId: null });
+        handlers.onDone?.(55, 31);
+      },
+    );
+
+    mocks.uiHandlers?.onSend?.('你好');
+    await vi.waitFor(() => expect(setMessageId).toHaveBeenCalled());
+
+    expect(setMessageId).toHaveBeenCalledTimes(1);
+    expect(setMessageId).toHaveBeenCalledWith(31); // DONE 带来的那个，不是 START（START 没值）
+  });
+
+  it('早退分支路径：START.userMessageId 已有真实 id，一收到就立刻用它（不必等 DONE）', async () => {
+    await inboxHandler();
+    const setMessageId = vi.fn();
+    mocks.ui.addUserMessage.mockReturnValueOnce({ setMessageId });
+    mocks.api.stream.mockImplementationOnce(
+      async (_msg: string, _sid: string | null, handlers: ChatStreamHandlers) => {
+        // START 已带真实 id（人工接管静默/关键词触发/知识库未命中兜底三条早退路径）；DONE 故意
+        // 给一个不同的数字，只用来验证"最终用的是 START 先设的那个"这件事本身有判别力——
+        // 不代表真实后端行为（早退路径 DONE 实际会与 START 携带同一个 id）。
+        handlers.onStart?.({ sessionId: 'sess-1', suggestHandover: true, knowledgeHits: [], userMessageId: 47 });
+        handlers.onDone?.(null, 99);
+      },
+    );
+
+    mocks.uiHandlers?.onSend?.('转人工');
+    await vi.waitFor(() => expect(setMessageId).toHaveBeenCalled());
+
+    // 关键断言：第一次调用（START 触发）用的是 47，证明"START 有就先用"真的生效，
+    // 而不是代码只认 DONE、凑巧在这条用例里也拿到一个值。
+    expect(setMessageId.mock.calls[0][0]).toBe(47);
   });
 });
