@@ -338,7 +338,10 @@ const AgentPage: React.FC = () => {
             const newId = res.data;
             setMessages(prev => [...prev, {
                 id: newId,
-                role: 'ASSISTANT',
+                // ⚠️ 必须与下方已读判据的 role 一致（都是 AGENT）。这条消息的 role 是本地
+                // 硬编码的、不来自后端响应，两处不一致的症状是「坐席自己刚发的消息标不上
+                // 已读，刷新一下又对了」。
+                role: 'AGENT',
                 content,
                 createdAt: new Date().toISOString(),
                 attachments: attachments.length ? attachments : undefined,
@@ -390,24 +393,18 @@ const AgentPage: React.FC = () => {
     // （聊天软件通行的已读语义），不是给每条已读消息都打标。selectedSession 为空或该会话
     // 尚无回执（visitorReadMap 里没有该 key）时为 null，不渲染。
     //
-    // ⚠️ 判据用 role === 'ASSISTANT'，不是更符合字面意思的 'AGENT'——这不是写错，原因记录如下：
-    // 已读水位线只在坐席接管期间推进（设计文档 §2.1：AI 对话是「发一句秒回一句」，不存在等
-    // 对方看到的焦虑，AI 阶段不做已读）。而坐席接管后 AI 不再回复，该期间落库的 ASSISTANT
-    // 消息就是坐席消息。所以「id ≤ 水位线的最后一条 ASSISTANT 消息」天然落在坐席消息上，
-    // 语义是正确的。
-    // 之所以不用 AGENT：后端 agentReply 落库写的是 ASSISTANT（ChatServiceImpl:1415），
-    // MessageRole.AGENT 从未被写入过（全仓唯一引用在 ChatController 里标注附件上传者角色，
-    // 与 ChatMessage.role 无关）。那是一个独立缺陷，修它要连带改 LLM 上下文构建
-    // （ChatServiceImpl:1142 按 ASSISTANT 分支拼历史）与反馈校验（ChatFeedbackService:55
-    // 只允许对 ASSISTANT 消息反馈），不在本特性范围。
-    // ⚠️ 若将来 AI 与坐席在同一会话里交替回复，这个判据会失准，届时正解是修根因让 role
-    // 真正区分，而不是在这里加更复杂的启发式。
+    // 判据是 role === 'AGENT'：坐席消息落库写的就是 MessageRole.AGENT
+    // （ChatServiceImpl#agentReply）。⚠️ 上面本地乐观插入的那条消息 role 是前端硬编码的，
+    // 必须与这里保持一致，否则坐席自己刚发的消息标不上已读、要刷新才对——
+    // 见 docs/superpowers/specs/2026-08-20-agent-message-role-design.md §4.2。
+    // 历史沿革：本判据曾经是 'ASSISTANT'，因为那时 agentReply 落库写的是 ASSISTANT、
+    // MessageRole.AGENT 从未被写入。该根因已于 2026-08-20 修复。
     const visitorReadUpTo = selectedSession ? visitorReadMap[selectedSession.sessionId] : undefined;
     // ⚠️ 额外排除 m.pending：那类消息的 id 是本地占位值（Date.now() 兜底，见 SSE message
     // 分支），拿它跟服务端真实水位线比较毫无意义——占位值要么远大于水位线（永远比不中，
     // 该标"已读"的消息反而不标）要么侥幸落在范围内（纯属巧合，标错消息）。
     const lastReadAgentMessageId = visitorReadUpTo == null ? null : messages.reduce<number | null>(
-        (acc, m) => (m.role === 'ASSISTANT' && !m.pending && m.id <= visitorReadUpTo ? m.id : acc),
+        (acc, m) => (m.role === 'AGENT' && !m.pending && m.id <= visitorReadUpTo ? m.id : acc),
         null,
     );
 

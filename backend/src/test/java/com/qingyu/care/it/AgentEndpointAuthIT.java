@@ -103,11 +103,13 @@ class AgentEndpointAuthIT extends AbstractPostgresIT {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(200));
 
-            // getSessionMessages：落库的 ASSISTANT 消息可见（由登录坐席写入，非入参 agentId）
+            // getSessionMessages：落库的 AGENT 消息可见（由登录坐席写入，非入参 agentId）。
+            // ⚠️ 响应体是 SessionMessagesResponse（{messages, visitorReadUpToMessageId}），
+            // 不是裸数组——已读回执特性改的契约，路径必须走 $.data.messages[i]。
             mockMvc.perform(get("/v1/chat/session/" + sessionId + "/messages").header("satoken", token))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data[0].role").value("ASSISTANT"))
-                    .andExpect(jsonPath("$.data[0].content").value("人工回复内容"));
+                    .andExpect(jsonPath("$.data.messages[0].role").value("AGENT"))
+                    .andExpect(jsonPath("$.data.messages[0].content").value("人工回复内容"));
         } finally {
             Long sid = session.getId();
             messageRepository.findBySessionIdOrderByCreatedAtAsc(sid).forEach(messageRepository::delete);

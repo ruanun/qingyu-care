@@ -1119,9 +1119,10 @@ public class ChatServiceImpl implements ChatService {
                 .collect(Collectors.joining("\n\n---\n\n"));
     }
     
-    private List<Message> buildMessages(ChatSession session, String userMessage, String context,
-                                        ChatStrategy strategy, java.util.List<String> skillMarkdowns,
-                                        boolean withCards) {
+    /** package-private 供单测直接构造历史上下文断言，见 ChatAgentMessageRoleTest。 */
+    List<Message> buildMessages(ChatSession session, String userMessage, String context,
+                                ChatStrategy strategy, java.util.List<String> skillMarkdowns,
+                                boolean withCards) {
         List<Message> messages = new ArrayList<>();
 
         // 系统消息 - 策略绑定模板优先，否则全局激活模板
@@ -1139,7 +1140,9 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage msg = history.get(i);
             if (msg.getRole() == MessageRole.USER) {
                 messages.add(new UserMessage(msg.getContent()));
-            } else if (msg.getRole() == MessageRole.ASSISTANT) {
+            } else if (msg.getRole() == MessageRole.ASSISTANT || msg.getRole() == MessageRole.AGENT) {
+                // AGENT（真人坐席）对 LLM 而言同样是助手方发言：会话退回 AI 后，
+                // AI 必须看得到坐席刚说过的话，否则会重复提问或与坐席自相矛盾。
                 messages.add(new AssistantMessage(msg.getContent()));
             }
         }
@@ -1409,10 +1412,11 @@ public class ChatServiceImpl implements ChatService {
         if (session.getStatus() != SessionStatus.AGENT_PROCESSING) {
             throw new InvalidOperationException("该会话不在人工处理状态");
         }
-        // 保存人工客服消息
+        // 保存人工客服消息。role 必须是 AGENT 而非 ASSISTANT：widget 的历史恢复按 role 分派
+        // （history.ts），写成 ASSISTANT 会让访客刷新后把坐席说的话显示成 AI 气泡。
         ChatMessage agentMsg = ChatMessage.builder()
                 .session(session)
-                .role(MessageRole.ASSISTANT)
+                .role(MessageRole.AGENT)
                 .content(message)
                 .build();
         agentMsg = messageRepository.save(agentMsg);

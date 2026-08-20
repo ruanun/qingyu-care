@@ -340,7 +340,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: 50,
         }));
@@ -356,7 +356,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: null,
         }));
@@ -378,7 +378,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('jia', 0), { ...mySession('yi', 0), id: 2 }]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: null,
         }));
@@ -393,5 +393,30 @@ describe('坐席台已读回执', () => {
 
         // 甲的消息区不该出现已读——那条回执不是它的
         expect(screen.queryByTestId('read-mark-50')).not.toBeInTheDocument();
+    });
+
+    it('坐席刚发出的消息（本地乐观渲染）也能被标已读', async () => {
+        // ⚠️ 这条守的是 AgentPage 里硬编码的那个 role：它不来自后端响应，
+        // 判据改成 AGENT 后若这里仍写 ASSISTANT，坐席自己刚发的消息匹配不上判据，
+        // 已读标记要等整页刷新（重新从后端拿到真实 role）才出现。
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({ messages: [], visitorReadUpToMessageId: null }));
+        stubs.agentReply.mockResolvedValue(ok(77));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        const input = await screen.findByPlaceholderText('输入回复内容...');
+        fireEvent.change(input, { target: { value: '这就为您处理' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+
+        await screen.findByText('这就为您处理');
+
+        await act(async () => {
+            sse.onEvent?.('read', JSON.stringify({ sessionId: 's1', upToMessageId: 77 }));
+        });
+
+        expect(await screen.findByTestId('read-mark-77')).toBeInTheDocument();
     });
 });

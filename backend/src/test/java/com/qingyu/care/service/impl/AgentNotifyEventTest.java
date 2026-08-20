@@ -131,7 +131,7 @@ class AgentNotifyEventTest {
         verify(realtimeNotifier).toUserMessage(eq("sess-1"), msgCaptor.capture());
         ChatMessage pushed = msgCaptor.getValue();
         assertThat(pushed.getId()).isEqualTo(99L);
-        assertThat(pushed.getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(pushed.getRole()).isEqualTo(MessageRole.AGENT);
         assertThat(pushed.getContent()).isEqualTo("您好，我是人工客服");
 
         // 没传 attachmentIds：不调用关联（同 ChatAttachmentWiringTest 的"没带附件"用例同语义）
