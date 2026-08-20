@@ -365,9 +365,22 @@ const AgentPage: React.FC = () => {
     // 访客已读渲染：当前会话中 id ≤ 已读水位线的最后一条坐席消息标「已读」——只标最后一条
     // （聊天软件通行的已读语义），不是给每条已读消息都打标。selectedSession 为空或该会话
     // 尚无回执（visitorReadMap 里没有该 key）时为 null，不渲染。
+    //
+    // ⚠️ 判据用 role === 'ASSISTANT'，不是更符合字面意思的 'AGENT'——这不是写错，原因记录如下：
+    // 已读水位线只在坐席接管期间推进（设计文档 §2.1：AI 对话是「发一句秒回一句」，不存在等
+    // 对方看到的焦虑，AI 阶段不做已读）。而坐席接管后 AI 不再回复，该期间落库的 ASSISTANT
+    // 消息就是坐席消息。所以「id ≤ 水位线的最后一条 ASSISTANT 消息」天然落在坐席消息上，
+    // 语义是正确的。
+    // 之所以不用 AGENT：后端 agentReply 落库写的是 ASSISTANT（ChatServiceImpl:1397），
+    // MessageRole.AGENT 从未被写入过（全仓唯一引用在 ChatController 里标注附件上传者角色，
+    // 与 ChatMessage.role 无关）。那是一个独立缺陷，修它要连带改 LLM 上下文构建
+    // （ChatServiceImpl:1142 按 ASSISTANT 分支拼历史）与反馈校验（ChatFeedbackService:55
+    // 只允许对 ASSISTANT 消息反馈），不在本特性范围。
+    // ⚠️ 若将来 AI 与坐席在同一会话里交替回复，这个判据会失准，届时正解是修根因让 role
+    // 真正区分，而不是在这里加更复杂的启发式。
     const visitorReadUpTo = selectedSession ? visitorReadMap[selectedSession.sessionId] : undefined;
     const lastReadAgentMessageId = visitorReadUpTo == null ? null : messages.reduce<number | null>(
-        (acc, m) => (m.role === 'AGENT' && m.id <= visitorReadUpTo ? m.id : acc),
+        (acc, m) => (m.role === 'ASSISTANT' && m.id <= visitorReadUpTo ? m.id : acc),
         null,
     );
 

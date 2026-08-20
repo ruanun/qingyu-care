@@ -293,7 +293,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: 50,
         }));
@@ -309,7 +309,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: null,
         }));
@@ -331,7 +331,7 @@ describe('坐席台已读回执', () => {
         stubs.getMySessions.mockResolvedValue(ok([mySession('jia', 0), { ...mySession('yi', 0), id: 2 }]));
         stubs.getSessionMessages.mockResolvedValue(ok({
             messages: [
-                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+                { id: 50, role: 'ASSISTANT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
             ],
             visitorReadUpToMessageId: null,
         }));
