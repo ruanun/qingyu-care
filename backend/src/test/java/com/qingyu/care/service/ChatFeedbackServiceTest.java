@@ -89,6 +89,20 @@ class ChatFeedbackServiceTest {
                 .isInstanceOf(BusinessException.class);
     }
 
+    /**
+     * 坐席消息不可评价。此前坐席消息的 role 落成 ASSISTANT，能被当作 AI 回复点赞/点踩，
+     * 反馈数据会混进 AI 质量指标；role 修正为 AGENT 之后这条校验自然成立，用例把它钉住。
+     */
+    @Test
+    void 坐席消息不可评价() {
+        ChatSession session = ChatSession.builder().sessionId("s-1").build();
+        ChatMessage agentMsg = ChatMessage.builder().id(12L).session(session)
+                .role(MessageRole.AGENT).content("我是人工客服").build();
+        when(messageRepository.findById(12L)).thenReturn(Optional.of(agentMsg));
+        assertThatThrownBy(() -> service.submitFeedback("s-1", 12L, 1))
+                .isInstanceOf(BusinessException.class);
+    }
+
     @Test
     void 消息不存在_按404处理() {
         when(messageRepository.findById(404L)).thenReturn(Optional.empty());
