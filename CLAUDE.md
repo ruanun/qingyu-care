@@ -121,6 +121,8 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 6. **B 的双向真机联调**：坐席发消息 → widget 展开着 → 坐席端出现「已读」；把 widget **收起**再让坐席发一条 → 坐席端**不该**出现已读。收起是 widget 内部状态，jsdom 里测的是我们自己的桩。
 7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着甲，让乙的访客读消息 → 标记必须落在乙上。这是多会话列表引入的新失效模式，只在真机多开时现形。
 
+⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复，沿革见 `docs/superpowers/specs/2026-08-20-agent-message-role-design.md`。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
