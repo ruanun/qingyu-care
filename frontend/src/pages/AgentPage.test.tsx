@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ⚠️ frontend/ 故意不开 globals：测试文件必须显式 import。
 // ⚠️ src/test/setup.ts 里那行 afterEach(cleanup) 不能删——RTL 只在 afterEach 是全局函数时
 //    才自己注册 cleanup，漏掉的症状是「单个测试跑绿、整套一起跑红」。
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import AgentPage from './AgentPage';
 
 /**
@@ -138,5 +138,213 @@ describe('坐席台我的会话列表', () => {
         expect(await screen.findByTestId('my-session-waiting-2')).toBeInTheDocument();
         // 判别性断言：新会话出现了，但旧会话没有被挤掉
         expect(screen.getByTestId('my-session-mine-1')).toBeInTheDocument();
+    });
+});
+
+/**
+ * 坐席台已读回执上报（功能 A 坐席侧）+ 渲染访客已读（功能 B 坐席侧）。
+ *
+ * 上报条件是「选中了该会话」且「标签页当前可见」两者同时成立——只判选中挡不住
+ * "工作台开着但人去开会了"这类假已读。三个触发点：切换会话、收到该会话新消息、
+ * 标签页从后台切回前台。
+ *
+ * 渲染侧：SSE read 事件必须按载荷里的 sessionId 归位，不能默认标在当前选中会话上——
+ * 工作台是多会话的，坐席可能正看着甲而乙的访客读了消息，这是本轮引入的新失效模式。
+ */
+
+/** 桩标签页可见性。jsdom 下 visibilityState 只读，必须用 defineProperty 覆盖。 */
+function stubVisibility(state: 'visible' | 'hidden') {
+    Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => state,
+    });
+}
+
+describe('坐席台已读回执', () => {
+    it('选中会话且页面可见时上报已读', async () => {
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 2)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 41, role: 'USER', content: '你好', createdAt: '2026-08-20T10:00:00' },
+                { id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' },
+            ],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        // upToMessageId 传「已渲染的最新一条」，不是服务端库里最新的，也不区分角色
+        await waitFor(() => {
+            expect(stubs.markRead).toHaveBeenCalledWith('s1', 42);
+        });
+    });
+
+    it('页面在后台时不上报', async () => {
+        // ⚠️ 守的是「工作台开着但人去开会了」那类假已读。
+        //    只判「选中会话」挡不住它——变异验证时把 visibilityState 条件去掉，本条必须转红。
+        stubVisibility('hidden');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 2)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' },
+            ],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+        await screen.findByText('在吗'); // 等异步链跑完（消息已渲染）再断言，而非提前判定
+
+        expect(stubs.markRead).not.toHaveBeenCalled();
+    });
+
+    it('标签页从后台切回前台时补报已读', async () => {
+        // 触发点三：visibilitychange 转为 visible。选中会话时页面在后台不上报，
+        // 切回前台那一刻应补报一次——不是等下一次切换会话或来新消息才报。
+        stubVisibility('hidden');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [{ id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' }],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+        await screen.findByText('在吗');
+        expect(stubs.markRead).not.toHaveBeenCalled();
+
+        stubVisibility('visible');
+        await act(async () => {
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+
+        await waitFor(() => {
+            expect(stubs.markRead).toHaveBeenCalledWith('s1', 42);
+        });
+    });
+
+    it('收到当前会话的新消息时上报已读', async () => {
+        // 触发点二：SSE message 事件命中当前选中会话。
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({ messages: [], visitorReadUpToMessageId: null }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+        await waitFor(() => expect(stubs.getSessionMessages).toHaveBeenCalled());
+        stubs.markRead.mockClear(); // 清掉「切换会话」触发点可能已产生的调用记录，本条只看新消息触发点
+
+        await act(async () => {
+            sse.onEvent?.('message', JSON.stringify({
+                sessionId: 's1', messageId: 99, role: 'USER', content: '新消息', createdAt: '2026-08-20T10:05:00',
+            }));
+        });
+
+        await waitFor(() => {
+            expect(stubs.markRead).toHaveBeenCalledWith('s1', 99);
+        });
+    });
+
+    it('上报已读成功后刷新我的会话列表，未读徽章不必等轮询就清零', async () => {
+        // 顺带解决 Task 8 遗留问题：选中会话后本地不清零 unreadCount，此前要等 10 秒轮询才消失。
+        stubVisibility('visible');
+        stubs.getMySessions
+            .mockResolvedValueOnce(ok([mySession('s1', 3)])) // 挂载时的初次拉取
+            .mockResolvedValue(ok([mySession('s1', 0)])); // 上报成功后的刷新值
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [{ id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' }],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        expect(await screen.findByText('3')).toBeInTheDocument();
+
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        await waitFor(() => {
+            expect(screen.queryByText('3')).not.toBeInTheDocument();
+        });
+    });
+
+    it('上报失败时只 console.debug，不抛出也不阻断界面', async () => {
+        // fail-soft：坐席正在服务客户，不该被「已读上报失败」打断，故不弹 toast。
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [{ id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' }],
+            visitorReadUpToMessageId: null,
+        }));
+        stubs.markRead.mockRejectedValue(new Error('网络错误'));
+        const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        await waitFor(() => {
+            expect(debugSpy).toHaveBeenCalled();
+        });
+        debugSpy.mockRestore();
+    });
+
+    it('切换会话时从历史响应恢复访客已读水位线，刷新后仍显示已读', async () => {
+        stubVisibility('hidden'); // 与上报动作解耦：恢复逻辑读的是历史响应，不依赖是否上报
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+            ],
+            visitorReadUpToMessageId: 50,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        expect(await screen.findByTestId('read-mark-50')).toBeInTheDocument();
+    });
+
+    it('read 事件命中当前会话时渲染已读标记', async () => {
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+            ],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+        await screen.findByText('您好，有什么可以帮您');
+
+        await act(async () => {
+            sse.onEvent?.('read', JSON.stringify({ sessionId: 's1', upToMessageId: 50 }));
+        });
+
+        expect(await screen.findByTestId('read-mark-50')).toBeInTheDocument();
+    });
+
+    it('收到非当前会话的 read 事件时，标记落在正确的会话上', async () => {
+        // ⚠️ 守 spec §6.6：最容易写成「直接标在当前会话」，在多会话工作台下是错的。
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('jia', 0), { ...mySession('yi', 0), id: 2 }]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 50, role: 'AGENT', content: '您好，有什么可以帮您', createdAt: '2026-08-20T10:00:00' },
+            ],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-jia')); // 正在看「甲」
+        await screen.findByText('您好，有什么可以帮您');
+
+        await act(async () => {
+            sse.onEvent?.('read', JSON.stringify({ sessionId: 'yi', upToMessageId: 50 }));
+        });
+
+        // 甲的消息区不该出现已读——那条回执不是它的
+        expect(screen.queryByTestId('read-mark-50')).not.toBeInTheDocument();
     });
 });

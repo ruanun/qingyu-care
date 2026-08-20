@@ -23,6 +23,11 @@ const AgentPage: React.FC = () => {
     const [mySessions, setMySessions] = useState<AgentSession[]>([]);
     const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    // 访客已读水位线，按 sessionId 归位：{ sessionId: 访客已读到的消息 id }。
+    // 来源有二：切换会话时从 GET .../messages 的 visitorReadUpToMessageId 恢复（刷新后稳定），
+    // 以及 SSE read 事件实时推进。⚠️ SSE read 事件必须按载荷里的 sessionId 写入，不能默认写
+    // 当前选中会话——工作台多会话并存，收到时坐席可能正看着别的会话。
+    const [visitorReadMap, setVisitorReadMap] = useState<Record<string, number>>({});
     const [replyInput, setReplyInput] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [onlineCount, setOnlineCount] = useState(0);
@@ -35,6 +40,13 @@ const AgentPage: React.FC = () => {
     useEffect(() => {
         selectedRef.current = selectedSession;
     }, [selectedSession]);
+
+    // messagesRef 供 visibilitychange 监听器读取「当前已渲染的最新一条消息 id」——
+    // 该监听器注册在挂载时的 useEffect 里，不能直接闭包住会变化的 messages state。
+    const messagesRef = useRef<ChatMessage[]>([]);
+    useEffect(() => {
+        messagesRef.current = messages;
+    }, [messages]);
 
     useEffect(() => {
         fetchWaitingSessions();
@@ -59,14 +71,18 @@ const AgentPage: React.FC = () => {
                 if (event === 'message') {
                     const sid = payload.sessionId as string | undefined;
                     if (selectedRef.current?.sessionId === sid) {
+                        const messageId = payload.messageId as number | undefined;
                         setMessages((prev) => [...prev, {
-                            id: (payload.messageId as number | undefined) ?? Date.now(),
+                            id: messageId ?? Date.now(),
                             role: payload.role as MessageRole,
                             content: payload.content as string,
                             createdAt: payload.createdAt as string,
                             uiParts: parseUiSpec(payload.uiSpec as string | null | undefined),
                             attachments: payload.attachments as Attachment[] | undefined,
                         }]);
+                        // 触发点二：收到当前会话的新消息。messageId 缺失时不上报——
+                        // 那是 Date.now() 兜底的本地临时 id，不是真实水位线。
+                        if (sid && messageId != null) maybeReportRead(sid, messageId);
                     } else if (sid) {
                         // 本地 +1 只是即时反馈的过渡态：真正的未读数以后端聚合值为准
                         // （AgentSessionDTO.unreadCount，按已读水位线现算）。这里立刻发起
@@ -81,6 +97,14 @@ const AgentPage: React.FC = () => {
                 } else if (event === 'session') {
                     // 新待接/结束等 → 刷新待接队列
                     fetchWaitingSessions();
+                } else if (event === 'read') {
+                    // 访客已读回执。⚠️ 必须按载荷里的 sessionId 归位，不能默认写当前选中
+                    // 会话——工作台是多会话的，坐席可能正看着别的会话。
+                    const sid = payload.sessionId as string | undefined;
+                    const upTo = payload.upToMessageId as number | undefined;
+                    if (sid && upTo != null) {
+                        setVisitorReadMap((prev) => ({ ...prev, [sid]: upTo }));
+                    }
                 } else if (event === 'presence') {
                     agentService.getOnlineAgents().then((r) => {
                         if (r.code === 200) setOnlineCount(r.data.length);
@@ -94,7 +118,48 @@ const AgentPage: React.FC = () => {
             if (r.code === 200) setOnlineCount(r.data.length);
         }).catch(() => {});
         return () => conn.close();
+        // maybeReportRead 只读 ref/document，不依赖任何会随渲染变化的值，可安全放心挂载期一次建立
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); // 只在挂载时建一次；用 ref 读当前会话
+
+    // 触发点三：标签页从后台切回前台。只判「选中会话」挡不住「工作台开着但人去开会了」
+    // 这类假已读，必须叠加 visibilitychange——切回前台那一刻才真的补报一次。
+    useEffect(() => {
+        function onVisibilityChange() {
+            if (document.visibilityState !== 'visible') return;
+            const sid = selectedRef.current?.sessionId;
+            if (!sid) return;
+            const list = messagesRef.current;
+            const last = list[list.length - 1];
+            if (last) maybeReportRead(sid, last.id);
+        }
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+        // maybeReportRead 只读 ref/document，不依赖任何会随渲染变化的值，可安全放心挂载期一次建立
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 已读上报：fail-soft，失败只 console.debug、不弹 toast——坐席正在服务客户，不该被
+    // 「已读上报失败」打断。成功后顺带刷新一次「我的会话」列表：后端未读数此时已归零，
+    // 正在看的会话不用等下一轮 10 秒轮询，徽章立刻消失（Task 8 遗留问题的收口）。
+    async function reportRead(sessionId: string, upToMessageId: number) {
+        try {
+            const res = await agentService.markRead(sessionId, upToMessageId);
+            if (res.code !== 200) throw new Error(res.message);
+            fetchMySessions();
+        } catch (error: unknown) {
+            console.debug('上报已读失败:', sessionId, upToMessageId, getErrorMessage(error));
+        }
+    }
+
+    // 上报条件是「选中了该会话」且「标签页当前可见」两者同时成立——只判选中挡不住
+    // "工作台开着但人去开会了"这类假已读。selectedRef 在此处重新核实（而非信任调用方），
+    // 因为切换会话的触发点里，报告发生在一次 await 之后，期间用户可能已经点了别的会话。
+    function maybeReportRead(sessionId: string, upToMessageId: number) {
+        if (selectedRef.current?.sessionId !== sessionId) return;
+        if (document.visibilityState !== 'visible') return;
+        void reportRead(sessionId, upToMessageId);
+    }
 
     async function fetchWaitingSessions() {
         try {
@@ -130,14 +195,26 @@ const AgentPage: React.FC = () => {
             const msgs = await chatService.getSessionMessages(session.sessionId);
             // 历史消息是 ChatMessageDTO：uiSpec 是待解析的 JSON 字符串，attachments 已由后端组装好。
             // ⚠️ msgs.data 是 { messages, visitorReadUpToMessageId } 包装，不再是裸数组。
-            setMessages(msgs.code === 200 ? msgs.data.messages.map((m: ChatMessageEntity) => ({
+            const list = msgs.code === 200 ? msgs.data.messages : [];
+            setMessages(list.map((m: ChatMessageEntity) => ({
                 id: m.id,
                 role: m.role,
                 content: m.content,
                 createdAt: m.createdAt,
                 uiParts: parseUiSpec(m.uiSpec),
                 attachments: m.attachments,
-            })) : []);
+            })));
+            if (msgs.code === 200) {
+                // 刷新后已读状态要稳定：恢复该会话此前的访客已读水位线，而不是等下一条
+                // read 事件才补上。首次尚无回执时是 null，不写入（视同尚无已读）。
+                if (msgs.data.visitorReadUpToMessageId != null) {
+                    const upTo = msgs.data.visitorReadUpToMessageId;
+                    setVisitorReadMap((prev) => ({ ...prev, [session.sessionId]: upTo }));
+                }
+                // 触发点一：切换到该会话。upToMessageId 传「已渲染的最新一条」，不区分角色。
+                const last = list[list.length - 1];
+                if (last) maybeReportRead(session.sessionId, last.id);
+            }
             fetchWaitingSessions();
             // 该会话此时从"待接队列"进入"我的会话"；同时这条刷新会带回此前已接管、
             // 仍在进行中的其它会话——不会因为上面那行 setSelectedSession 只认最新一个
@@ -168,14 +245,25 @@ const AgentPage: React.FC = () => {
         setPendingAttachments([]);
         try {
             const msgs = await chatService.getSessionMessages(session.sessionId);
-            setMessages(msgs.code === 200 ? msgs.data.messages.map((m: ChatMessageEntity) => ({
+            const list = msgs.code === 200 ? msgs.data.messages : [];
+            setMessages(list.map((m: ChatMessageEntity) => ({
                 id: m.id,
                 role: m.role,
                 content: m.content,
                 createdAt: m.createdAt,
                 uiParts: parseUiSpec(m.uiSpec),
                 attachments: m.attachments,
-            })) : []);
+            })));
+            if (msgs.code === 200) {
+                // 刷新后已读状态要稳定：恢复该会话此前的访客已读水位线。首次尚无回执时为 null，不写入。
+                if (msgs.data.visitorReadUpToMessageId != null) {
+                    const upTo = msgs.data.visitorReadUpToMessageId;
+                    setVisitorReadMap((prev) => ({ ...prev, [session.sessionId]: upTo }));
+                }
+                // 触发点一：切换到该会话。upToMessageId 传「已渲染的最新一条」，不区分角色。
+                const last = list[list.length - 1];
+                if (last) maybeReportRead(session.sessionId, last.id);
+            }
         } catch (error: unknown) {
             toast({ title: '加载会话消息失败', variant: 'destructive', description: getErrorMessage(error) });
         }
@@ -273,6 +361,15 @@ const AgentPage: React.FC = () => {
             toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(error) });
         }
     };
+
+    // 访客已读渲染：当前会话中 id ≤ 已读水位线的最后一条坐席消息标「已读」——只标最后一条
+    // （聊天软件通行的已读语义），不是给每条已读消息都打标。selectedSession 为空或该会话
+    // 尚无回执（visitorReadMap 里没有该 key）时为 null，不渲染。
+    const visitorReadUpTo = selectedSession ? visitorReadMap[selectedSession.sessionId] : undefined;
+    const lastReadAgentMessageId = visitorReadUpTo == null ? null : messages.reduce<number | null>(
+        (acc, m) => (m.role === 'AGENT' && m.id <= visitorReadUpTo ? m.id : acc),
+        null,
+    );
 
     return (
         <div className="flex h-full w-full overflow-hidden">
@@ -436,6 +533,14 @@ const AgentPage: React.FC = () => {
                                                 )}
                                             </div>
                                             <Attachments items={msg.attachments} />
+                                            {msg.id === lastReadAgentMessageId && (
+                                                <span
+                                                    data-testid={`read-mark-${msg.id}`}
+                                                    className="text-[10px] text-muted-foreground"
+                                                >
+                                                    已读
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

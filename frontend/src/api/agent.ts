@@ -34,4 +34,10 @@ export const agentService = {
     // 后端聚合值是事实源，见 AgentPage.tsx 里 fetchMySessions 的调用点注释。
     getMySessions: (page = 0, size = 20): Promise<ApiResponse<AgentSession[]>> =>
         api.get('/chat/sessions/mine', { params: { page, size } }),
+
+    // 坐席上报「我已经看到这条了」。upToMessageId 必须是坐席端已渲染的最新一条消息 id
+    // （不区分角色），服务端不替客户端推断这个。返回生效后的水位线（单调不回退）。
+    // 调用方须 fail-soft：失败只 console.debug，不弹 toast——见 AgentPage.tsx 的 reportRead。
+    markRead: (sessionId: string, upToMessageId: number): Promise<ApiResponse<number>> =>
+        api.post(`/chat/session/${sessionId}/read`, { upToMessageId }),
 };
