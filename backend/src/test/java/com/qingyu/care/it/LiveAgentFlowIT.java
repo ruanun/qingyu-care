@@ -100,7 +100,7 @@ class LiveAgentFlowIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.data.status").value("AGENT_PROCESSING"))
                 .andExpect(jsonPath("$.data.agentId").value(agent.getId()));
 
-        // 3. agent/reply：落一条 ASSISTANT 消息（人工回复，绕过 AI）
+        // 3. agent/reply：落一条 AGENT 消息（人工回复，绕过 AI）
         String agentReplyContent = "人工客服回复：已为您处理，请稍等";
         String body = "{\"sessionId\":\"" + sessionId + "\",\"message\":\"" + agentReplyContent + "\"}";
         mockMvc.perform(post("/v1/chat/agent/reply").header("satoken", token)
@@ -117,13 +117,15 @@ class LiveAgentFlowIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.data.status").value("AI_PROCESSING"))
                 .andExpect(jsonPath("$.data.agentId").value(nullValue()));
 
-        // 5. 消息序列：[0] 预置的用户提问，[1] 人工回复（agentReply 落库，角色为 ASSISTANT）
+        // 5. 消息序列：[0] 预置的用户提问，[1] 人工回复（agentReply 落库，角色为 AGENT）。
+        // ⚠️ 响应体是 SessionMessagesResponse（{messages, visitorReadUpToMessageId}），
+        // 不是裸数组——已读回执特性改的契约，路径必须走 $.data.messages[i]。
         mockMvc.perform(get("/v1/chat/session/" + sessionId + "/messages").header("satoken", token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[0].role").value("USER"))
-                .andExpect(jsonPath("$.data[0].content").value("用户提问：能帮我转人工吗？"))
-                .andExpect(jsonPath("$.data[1].role").value("ASSISTANT"))
-                .andExpect(jsonPath("$.data[1].content").value(agentReplyContent));
+                .andExpect(jsonPath("$.data.messages.length()").value(2))
+                .andExpect(jsonPath("$.data.messages[0].role").value("USER"))
+                .andExpect(jsonPath("$.data.messages[0].content").value("用户提问：能帮我转人工吗？"))
+                .andExpect(jsonPath("$.data.messages[1].role").value("AGENT"))
+                .andExpect(jsonPath("$.data.messages[1].content").value(agentReplyContent));
     }
 }
