@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mountUi } from './ui';
+import { restoreHistory } from './history';
 import type { WidgetBrand } from './api';
 
 const brand: WidgetBrand = { appName: '客服', welcomeMessage: '', avatar: '', themeColor: '#6366f1' };
@@ -271,5 +272,88 @@ describe('beginBotMessage 流式渲染', () => {
       .querySelector('.qy-msg.bot .qy-text')!;
     expect(container.children.length).toBe(1);
     expect(container.textContent).toBe('你好');
+  });
+});
+
+describe('markReadUpTo 已读标记', () => {
+  it('按 upToMessageId 只标最后一条已读的访客消息', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('第一条').setMessageId(1);
+    ui.addUserMessage('第二条').setMessageId(2);
+    ui.addUserMessage('第三条').setMessageId(3);
+
+    ui.markReadUpTo(2);
+
+    const root = lastHost()!.shadowRoot!;
+    // 只标最后一条已读的：id=1 虽然也已读，但水位线语义下它被 id=2 蕴含
+    expect(root.querySelectorAll('[data-read-mark]')).toHaveLength(1);
+    expect(root.querySelector('[data-message-id="2"] [data-read-mark]')).not.toBeNull();
+    expect(root.querySelector('[data-message-id="3"] [data-read-mark]')).toBeNull();
+  });
+
+  it('水位线前移后旧标记被清除，不会同时出现两个已读', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('第一条').setMessageId(1);
+    ui.addUserMessage('第二条').setMessageId(2);
+
+    ui.markReadUpTo(1);
+    ui.markReadUpTo(2);
+
+    const root = lastHost()!.shadowRoot!;
+    expect(root.querySelectorAll('[data-read-mark]')).toHaveLength(1);
+    expect(root.querySelector('[data-message-id="2"] [data-read-mark]')).not.toBeNull();
+  });
+
+  it('upToMessageId 小于所有已知 id 时不标记任何消息（零回归）', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('第一条').setMessageId(5);
+
+    ui.markReadUpTo(1);
+
+    const root = lastHost()!.shadowRoot!;
+    expect(root.querySelectorAll('[data-read-mark]')).toHaveLength(0);
+  });
+
+  it('未 setMessageId 的乐观渲染气泡不参与已读判定，不崩', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addUserMessage('还没拿到 id'); // 未调用 setMessageId：id 尚未从服务端响应回填
+
+    expect(() => ui.markReadUpTo(999)).not.toThrow();
+    const root = lastHost()!.shadowRoot!;
+    expect(root.querySelectorAll('[data-read-mark]')).toHaveLength(0);
+  });
+
+  /**
+   * 裁定二：会话恢复出的历史访客消息也必须能被标记已读——history.ts 的 restoreHistory
+   * 必须把消息 id 回填进 addUserMessage 返回的句柄，否则刷新页面后已读标记无处可标，
+   * 而「刷新后已读状态保持」正是这个特性最该稳定的东西。
+   */
+  it('会话恢复后的历史访客消息能被 markReadUpTo 标记', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    restoreHistory(ui, [
+      { id: 101, role: 'USER', content: '第一条历史消息', createdAt: '' },
+      { id: 102, role: 'USER', content: '第二条历史消息', createdAt: '' },
+    ]);
+
+    ui.markReadUpTo(101);
+
+    const root = lastHost()!.shadowRoot!;
+    expect(root.querySelector('[data-message-id="101"] [data-read-mark]')).not.toBeNull();
+    expect(root.querySelector('[data-message-id="102"] [data-read-mark]')).toBeNull();
+  });
+});
+
+describe('onToggle：面板展开/收起回调（main.ts 已读上报的真实触发入口）', () => {
+  it('点击悬浮气泡展开时 onToggle(true)，再次点击收起时 onToggle(false)', () => {
+    const onToggle = vi.fn();
+    mountUi(brand, { onSend: () => {}, onHandover: () => {}, onToggle });
+    const host = lastHost();
+    const bubble = host?.shadowRoot?.querySelector('.qy-bubble') as HTMLButtonElement;
+
+    bubble.dispatchEvent(new Event('click'));
+    expect(onToggle).toHaveBeenLastCalledWith(true);
+
+    bubble.dispatchEvent(new Event('click'));
+    expect(onToggle).toHaveBeenLastCalledWith(false);
   });
 });

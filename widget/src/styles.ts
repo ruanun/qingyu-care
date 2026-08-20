@@ -33,6 +33,7 @@ export function buildStyles(themeColor: string): string {
     }
     .qy-msg.bot .qy-text { background: #fff; border: 1px solid #eee; }
     .qy-msg.user .qy-text { background: ${themeColor}; color: #fff; }
+    .qy-read-mark { font-size: 11px; color: #999; text-align: right; margin-top: 2px; }
     .qy-input { display: flex; border-top: 1px solid #eee; }
     .qy-input textarea {
       flex: 1; border: none; resize: none; padding: 12px; font-size: 14px; outline: none; height: 48px;

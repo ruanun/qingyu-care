@@ -19,6 +19,11 @@ export interface UiHandlers {
   onUploadFile?: (file: File) => Promise<WidgetAttachment>;
   /** 取附件二进制的 blob URL，供消息里的图片预览/文件下载换源；可选，缺省时只渲染骨架不换源 */
   resolveAttachmentUrl?: ResolveAttachmentUrl;
+  /**
+   * 面板展开/收起状态变化时回调（点击悬浮气泡触发），供调用方按「展开 且 页面可见」
+   * 判定是否上报已读；可选——未提供时不影响面板本身的展开/收起行为。
+   */
+  onToggle?: (open: boolean) => void;
 }
 
 export interface BotFeedback {
@@ -32,8 +37,20 @@ export interface StreamingBotMessage {
   finish: (feedback?: BotFeedback) => void;
 }
 
+/**
+ * 一条访客消息的操作句柄，由 addUserMessage 返回，供事后回填服务端生成的真实 messageId。
+ *
+ * ⚠️ 访客发消息是乐观渲染（先上屏、id 由服务端响应带回，ChatMessage 用 IDENTITY 生成策略、
+ * 真实 id 只在 INSERT 那一刻产生），已读标记要按 messageId 定位到具体气泡，必须有办法事后
+ * 把 id 绑到那个 DOM 节点上。形态照既有的 beginBotMessage 返回 StreamingBotMessage。
+ */
+export interface UserMessageHandle {
+  /** 回填该消息的真实 messageId（写进气泡的 data-message-id，供 markReadUpTo 定位）。 */
+  setMessageId: (id: number) => void;
+}
+
 export interface WidgetUi {
-  addUserMessage: (text: string, attachments?: WidgetAttachment[]) => void;
+  addUserMessage: (text: string, attachments?: WidgetAttachment[]) => UserMessageHandle;
   addBotMessage: (text: string, feedback?: BotFeedback, uiParts?: UiPart[], attachments?: WidgetAttachment[]) => void;
   /** 渲染坐席（真人）消息，带「客服」标记以区分 AI 回复 */
   addAgentMessage: (text: string, attachments?: WidgetAttachment[]) => void;
@@ -51,6 +68,12 @@ export interface WidgetUi {
   markOpened: () => void;
   /** 开始一条流式 AI 消息，返回增量渲染句柄（文本追加/插卡片/收尾）。 */
   beginBotMessage: () => StreamingBotMessage;
+  /**
+   * 把 id ≤ upToMessageId 的最后一条访客消息标为「已读」，其余清除标记。
+   * 只标最后一条——水位线语义下它蕴含之前所有条，逐条标是视觉冗余。
+   * 依据 addUserMessage 返回句柄写入的 data-message-id 定位气泡。
+   */
+  markReadUpTo: (upToMessageId: number) => void;
 }
 
 /**
@@ -150,10 +173,12 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   let firstOpen = true;
   bubble.addEventListener('click', () => {
     panel.classList.toggle('open');
-    if (firstOpen && panel.classList.contains('open')) {
+    const open = panel.classList.contains('open');
+    if (firstOpen && open) {
       firstOpen = false;
       if (brand.welcomeMessage) addBotMessage(brand.welcomeMessage);
     }
+    handlers.onToggle?.(open);
   });
 
   const doSend = () => {
@@ -293,9 +318,38 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     };
   }
 
-  function addUserMessage(text: string, attachments?: WidgetAttachment[]) {
+  function addUserMessage(text: string, attachments?: WidgetAttachment[]): UserMessageHandle {
     const row = appendMsg(text, 'user');
     appendAttachmentsIfAny(row, attachments);
+    return {
+      setMessageId(id: number) {
+        row.dataset.messageId = String(id);
+      },
+    };
+  }
+
+  /**
+   * 把 id ≤ upToMessageId 的最后一条访客消息标为已读，其余清除标记。
+   * 先清空全部已有标记再重找目标行——避免水位线前移后旧标记与新标记同时出现。
+   */
+  function markReadUpTo(upToMessageId: number) {
+    msgs.querySelectorAll('[data-read-mark]').forEach((el) => el.remove());
+    const rows = msgs.querySelectorAll<HTMLDivElement>('.qy-msg.user[data-message-id]');
+    // ⚠️ 用 for...of 而非 .forEach：闭包内的赋值不进入外层函数的控制流分析，会让 TS 把
+    // target 的类型窄化成恒为 null（下面 if(target) 直接报 never），for...of 是同一函数
+    // 作用域内的线性循环，赋值能被正确追踪。
+    let target: HTMLDivElement | null = null;
+    for (const row of rows) {
+      const id = Number(row.dataset.messageId);
+      if (!Number.isNaN(id) && id <= upToMessageId) target = row; // 文档序追加，最后一个满足条件的即最新已读
+    }
+    if (target) {
+      const mark = document.createElement('div');
+      mark.setAttribute('data-read-mark', '');
+      mark.className = 'qy-read-mark';
+      mark.textContent = '已读';
+      target.appendChild(mark);
+    }
   }
   function addBotMessage(text: string, feedback?: BotFeedback, uiParts?: UiPart[], attachments?: WidgetAttachment[]) {
     const hasUi = Array.isArray(uiParts) && uiParts.some((p) => p.kind === 'ui' && p.node);
@@ -355,6 +409,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
     setAttachEnabled,
     markOpened,
     beginBotMessage,
+    markReadUpTo,
   };
 }
 

@@ -36,6 +36,11 @@ export interface OpenSessionResponse {
   sessionId: string;
   /** AI_PROCESSING / WAITING_AGENT / AGENT_PROCESSING / ENDED / TIMEOUT */
   status: string;
+  /**
+   * 坐席读到哪了（对方水位线），供刷新后恢复已读标记；无坐席接管或坐席未读过时为 null。
+   * 访客自己的已读水位线不在这里——那是上报出去的，不需要读回来。
+   */
+  agentReadUpToMessageId?: number | null;
   messages: Array<{
     /** 消息 id（对应后端 ChatMessage.id），用于定位该消息挂载的附件 */
     id?: number | null;
@@ -141,6 +146,23 @@ export function createApi(cfg: WidgetConfig) {
     /** inbox SSE 完整 URL（供 sse.ts 连接，推送坐席消息/会话状态/typing） */
     inboxUrl(sessionId: string): string {
       return `${cfg.apiBase}/open/v1/sessions/${sessionId}/inbox`;
+    },
+
+    /**
+     * 访客上报已读进度（水位线单调递增）。fail-soft：失败只 console.debug，绝不打断对话——
+     * 已读回执是锦上添花的功能，不该因网络抖动影响正常聊天。
+     */
+    async markRead(sessionId: string, upToMessageId: number): Promise<void> {
+      try {
+        const r = await fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}/read`, {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ upToMessageId }),
+        });
+        if (!r.ok) console.debug('[Qingyu Widget] 已读上报失败', r.status);
+      } catch (e) {
+        console.debug('[Qingyu Widget] 已读上报失败', e);
+      }
     },
 
     /** 用户正在输入：通知当前接管坐席（节流由调用方控制）；失败静默 */

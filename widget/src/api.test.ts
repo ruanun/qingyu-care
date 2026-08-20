@@ -165,4 +165,29 @@ describe('api', () => {
 
     await expect(createApi(cfg).downloadAttachment(5, 's-1')).rejects.toThrow();
   });
+
+  it('markRead POST 到 /read 端点，请求体带 upToMessageId', async () => {
+    const f = mockFetch(200, { code: 200, message: 'ok', data: 42 });
+    vi.stubGlobal('fetch', f);
+
+    await createApi(cfg).markRead('s-1', 42);
+
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe('https://host/api/open/v1/sessions/s-1/read');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ upToMessageId: 42 });
+    expect((init as any).headers['X-App-Id']).toBe('app_123');
+  });
+
+  it('markRead 非 2xx 时 fail-soft 不抛（已读回执是锦上添花，不该打断对话）', async () => {
+    vi.stubGlobal('fetch', mockFetch(500, {}));
+
+    await expect(createApi(cfg).markRead('s-1', 42)).resolves.toBeUndefined();
+  });
+
+  it('markRead 网络失败静默不抛（fail-soft）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network error')));
+
+    await expect(createApi(cfg).markRead('s-1', 42)).resolves.toBeUndefined();
+  });
 });
