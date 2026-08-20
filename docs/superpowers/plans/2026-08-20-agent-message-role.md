@@ -34,7 +34,7 @@
 - Produces: `ChatMessage.role` 对坐席消息恒为 `MessageRole.AGENT`。Task 2 的前端判据、Task 3 的迁移判据都依赖这一点。`buildMessages` 的可见性从 `private` 变为 package-private，签名不变：
   `List<Message> buildMessages(ChatSession session, String userMessage, String context, ChatStrategy strategy, java.util.List<String> skillMarkdowns, boolean withCards)`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `backend/src/test/java/com/qingyu/care/service/impl/ChatAgentMessageRoleTest.java`：
 
@@ -172,7 +172,7 @@ class ChatAgentMessageRoleTest {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd backend && mvn test -Dtest=ChatAgentMessageRoleTest
@@ -180,7 +180,7 @@ cd backend && mvn test -Dtest=ChatAgentMessageRoleTest
 
 预期两条都 FAIL：第一条断言 `AGENT` 但实际拿到 `ASSISTANT`；第二条**编译失败**（`buildMessages` 此刻还是 `private`）。编译失败也是有效的红——它证明这条测试确实在碰那个方法。
 
-- [ ] **Step 3: 改 ChatServiceImpl 三处**
+- [x] **Step 3: 改 ChatServiceImpl 三处**
 
 `:1415`（`agentReply` 里构建坐席消息），把 `ASSISTANT` 改成 `AGENT`：
 
@@ -215,7 +215,7 @@ cd backend && mvn test -Dtest=ChatAgentMessageRoleTest
             }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 cd backend && mvn test -Dtest=ChatAgentMessageRoleTest
@@ -223,7 +223,7 @@ cd backend && mvn test -Dtest=ChatAgentMessageRoleTest
 
 预期 PASS（2 条）。
 
-- [ ] **Step 5: 更新既有断言 AgentNotifyEventTest**
+- [x] **Step 5: 更新既有断言 AgentNotifyEventTest**
 
 `AgentNotifyEventTest.java:134` 现在断言推给用户的消息 role 是 `ASSISTANT`，改成：
 
@@ -239,7 +239,7 @@ cd backend && mvn test -Dtest=AgentNotifyEventTest
 
 预期 PASS。（这条断言此前会因 Step 3 转红——它是既有守护，不是新写的。）
 
-- [ ] **Step 6: 补 ChatFeedbackServiceTest 的语义用例**
+- [x] **Step 6: 补 ChatFeedbackServiceTest 的语义用例**
 
 在 `ChatFeedbackServiceTest` 的 `用户消息不可评价` 用例后面追加：
 
@@ -261,7 +261,7 @@ cd backend && mvn test -Dtest=AgentNotifyEventTest
 
 `ChatFeedbackService` 的代码**不需要改**（第 55 行 `!= MessageRole.ASSISTANT` 已经能拦住 `AGENT`）。
 
-- [ ] **Step 7: 跑全量后端单测**
+- [x] **Step 7: 跑全量后端单测**
 
 ```bash
 cd backend && mvn test
@@ -269,7 +269,7 @@ cd backend && mvn test
 
 预期 BUILD SUCCESS。⚠️ 若有其它测试转红，八成是它也硬编码了坐席消息的 role——逐个看断言意图再改，**不要**为了让测试变绿把产品代码改回 `ASSISTANT`。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add backend/src/main/java/com/qingyu/care/service/impl/ChatServiceImpl.java \
@@ -297,7 +297,7 @@ buildMessages 同步加 AGENT 分支：少了它，会话退回 AI 后 AI 看不
 - Consumes: Task 1 的 `MessageRole.AGENT`——后端返回的坐席消息 role 已是 `AGENT`
 - Produces: 无下游任务依赖
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `AgentPage.test.tsx` 最后一个 `it(...)` 之后、`});` 之前追加两条。
 
@@ -350,7 +350,7 @@ buildMessages 同步加 AGENT 分支：少了它，会话退回 AI 后 AI 看不
     });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd frontend && pnpm test -- AgentPage
@@ -358,7 +358,7 @@ cd frontend && pnpm test -- AgentPage
 
 预期两条都 FAIL（找不到 `read-mark-50` / `read-mark-77`——判据此刻还是 `ASSISTANT`）。
 
-- [ ] **Step 3: 改判据与乐观渲染**
+- [x] **Step 3: 改判据与乐观渲染**
 
 `AgentPage.tsx:341`，乐观插入的 role：
 
@@ -383,7 +383,7 @@ cd frontend && pnpm test -- AgentPage
         (acc, m) => (m.role === 'AGENT' && !m.pending && m.id <= visitorReadUpTo ? m.id : acc),
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 cd frontend && pnpm test -- AgentPage
@@ -391,7 +391,7 @@ cd frontend && pnpm test -- AgentPage
 
 预期全部 PASS。
 
-- [ ] **Step 5: 跑全量前端测试与 lint**
+- [x] **Step 5: 跑全量前端测试与 lint**
 
 ```bash
 cd frontend && pnpm test && pnpm lint
@@ -399,7 +399,7 @@ cd frontend && pnpm test && pnpm lint
 
 预期测试全绿；lint 的既有 error 基线**零新增**。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add frontend/src/pages/AgentPage.tsx frontend/src/pages/AgentPage.test.tsx
@@ -420,7 +420,7 @@ git commit -m "fix(agent): 坐席台已读判据改用 AGENT，含本地乐观�
 - Consumes: Task 1 确立的「坐席消息 role = AGENT」语义
 - Produces: 无下游任务依赖
 
-- [ ] **Step 1: 写迁移脚本**
+- [x] **Step 1: 写迁移脚本**
 
 ```sql
 -- 把存量坐席消息的 role 从 ASSISTANT 修正为 AGENT。
@@ -453,7 +453,7 @@ SET role = 'AGENT'
 WHERE role = 'ASSISTANT' AND confidence_score IS NULL;
 ```
 
-- [ ] **Step 2: 在本机 dev 库先只跑核对查询**
+- [x] **Step 2: 在本机 dev 库先只跑核对查询**
 
 ```bash
 docker exec qingyu-postgres psql -U postgres -d qingyu_care -c "
@@ -463,14 +463,14 @@ FROM chat_message WHERE role = 'ASSISTANT' AND confidence_score IS NULL ORDER BY
 
 **人工读一遍 content_preview**，确认每一条都是坐席说的话（客服口吻），不是 AI 回复。若出现明显是 AI 生成的长文，**停下**——判据在这个库里不成立，需要重新分析后再动。
 
-- [ ] **Step 3: 执行迁移**
+- [x] **Step 3: 执行迁移**
 
 ```bash
 cd /d/Code/m/qingyu-care && docker exec -i qingyu-postgres psql -U postgres -d qingyu_care \
   < backend/src/main/resources/migration/2026-08-20-fix-agent-message-role.sql
 ```
 
-- [ ] **Step 4: 验证结果与幂等**
+- [x] **Step 4: 验证结果与幂等**
 
 ```bash
 docker exec qingyu-postgres psql -U postgres -d qingyu_care -c "
@@ -479,7 +479,7 @@ SELECT role, count(*) FROM chat_message GROUP BY role ORDER BY role;"
 
 预期出现 `AGENT` 分组。再把 Step 3 原样重跑一次，预期 `UPDATE 0`。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/src/main/resources/migration/2026-08-20-fix-agent-message-role.sql
@@ -501,7 +501,7 @@ git commit -m "chore(db): 存量坐席消息 role 修正为 AGENT 的迁移脚�
 - Consumes: Task 1、Task 2 的最终判据
 - Produces: 无
 
-- [ ] **Step 1: 反转已读回执 spec 的 §2.3**
+- [x] **Step 1: 反转已读回执 spec 的 §2.3**
 
 把 §2.3 里那段以「⚠️ **实施订正：「坐席消息」的判据是 `role === 'ASSISTANT'`...**」开头、到「...是一个先于本特性存在、且本特性没有修的既有问题。」结束的整段，替换为：
 
@@ -512,7 +512,7 @@ git commit -m "chore(db): 存量坐席消息 role 修正为 AGENT 的迁移脚�
 `2026-08-20-agent-message-role-design.md`，本节连同 §9 的记录一并订正。
 ```
 
-- [ ] **Step 2: 把 §9 首条改成已修复并留指针**
+- [x] **Step 2: 把 §9 首条改成已修复并留指针**
 
 把 §9 里那条以「**既有缺陷（非本特性引入，实施中发现）：坐席消息与 AI 消息在 `ChatMessage.role` 上不可区分**」开头的整条，替换为：
 
@@ -525,7 +525,7 @@ git commit -m "chore(db): 存量坐席消息 role 修正为 AGENT 的迁移脚�
   ⚠️ **保留这条记录而不是删掉**：不然下一个人会重新踩「为什么已读判据要用 ASSISTANT」这个坑。
 ```
 
-- [ ] **Step 3: 更新 CLAUDE.md**
+- [x] **Step 3: 更新 CLAUDE.md**
 
 在「### 改动已读回执链路后必须手工验证」小节的七条清单**之后**追加一段：
 
@@ -536,7 +536,7 @@ git commit -m "chore(db): 存量坐席消息 role 修正为 AGENT 的迁移脚�
 刷新一下又对了」。历史沿革见 `docs/superpowers/specs/2026-08-20-agent-message-role-design.md`。
 ```
 
-- [ ] **Step 4: 校验点名脚本仍然自洽**
+- [x] **Step 4: 校验点名脚本仍然自洽**
 
 ```bash
 ./scripts/manual-smoke-hints.sh master...HEAD
@@ -544,7 +544,7 @@ git commit -m "chore(db): 存量坐席消息 role 修正为 AGENT 的迁移脚�
 
 预期 exit 0。⚠️ 该脚本在引用的章节标题找不到时会 exit 1——本任务没有改标题，若报错说明改错了地方。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/superpowers/specs/2026-08-19-message-read-receipt-design.md CLAUDE.md
@@ -564,7 +564,7 @@ git commit -m "docs: 反转已读回执 spec 与 CLAUDE.md 里「判据用 ASSIS
 - Consumes: Task 1-4 全部改动
 - Produces: 无
 
-- [ ] **Step 1: 后端全量单测**
+- [x] **Step 1: 后端全量单测**
 
 ```bash
 cd backend && mvn test
@@ -572,7 +572,7 @@ cd backend && mvn test
 
 预期 BUILD SUCCESS。
 
-- [ ] **Step 2: 前端与 widget 测试**
+- [x] **Step 2: 前端与 widget 测试**
 
 ```bash
 cd frontend && pnpm test
@@ -581,7 +581,7 @@ cd ../widget && pnpm test
 
 两边都预期全绿。widget 源码未改，`buildFreshness` 哨兵应保持绿——**若它转红说明误改了 `widget/src/`**，回退那处改动，不要去重新 build。
 
-- [ ] **Step 3: 重启后端加载新代码**
+- [x] **Step 3: 重启后端加载新代码**
 
 停掉在跑的 dev 后端，重新启动：
 
@@ -589,7 +589,7 @@ cd ../widget && pnpm test
 cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev,demo
 ```
 
-- [ ] **Step 4: 真机复验——访客刷新后坐席消息显示为客服气泡**
+- [x] **Step 4: 真机复验——访客刷新后坐席消息显示为客服气泡**
 
 1. 访客侧打开挂了 widget 的宿主页，展开面板，发一条消息，点「转人工」。
 2. 坐席台（`demo_agent` / `demo123456`）进「人工工作台」，接管该会话，回一条。
@@ -610,12 +610,12 @@ cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev,demo
 修复前的对照证据（同一批坐席消息刷新前后不一致）记在
 `docs/superpowers/specs/2026-08-20-agent-message-role-design.md` §1。
 
-- [ ] **Step 5: 真机复验——已读标记不需要刷新就落在坐席自己刚发的消息上**
+- [x] **Step 5: 真机复验——已读标记不需要刷新就落在坐席自己刚发的消息上**
 
 坐席再发一条，访客侧保持面板展开且标签页在前台。坐席端**不刷新**，那条新消息下方应出现「已读」。
 这条守 Task 2 的接缝：判据与乐观渲染 role 不一致时，现象正是「要刷新一下才出现」。
 
-- [ ] **Step 6: 真机复验——退回 AI 后 AI 看得到坐席说过的话**
+- [x] **Step 6: 真机复验——退回 AI 后 AI 看得到坐席说过的话**
 
 在坐席台点「回归 AI」，然后访客侧问一句与坐席刚才说过的内容相关的问题
 （例如坐席说过「已为您登记退款申请」，就问「我的退款登记好了吗」）。
