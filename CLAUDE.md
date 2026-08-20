@@ -114,7 +114,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 ### 改动已读回执链路后必须手工验证
 自动化测试覆盖不到的七条：
 1. **多标签页并发**：坐席开两个标签页同看一个会话，回执不打架、水位线不回退。jsdom 造不出真实并发。
-2. **Page Visibility 真实行为**：切到别的标签页不上报、切回来立即上报。jsdom 里 `visibilityState` 是测试自己 stub 的，等于在测桩。
+2. **Page Visibility 真实行为**：切到别的标签页不上报、切回来立即上报。jsdom 里 `visibilityState` 是测试自己 stub 的，等于在测桩。⚠️ **这条别再从头摸索——本节末尾有一套已验证通过的真机配方**（2026-08-20 按它验证通过，全程无桩）。
 3. **访客刷新后已读保持**：真机整页刷新 widget，已读标记仍在（走的是历史响应里的 `agentReadUpToMessageId`）。真实浏览器整页刷新会把整个 JS 运行时重建一遍——模块级状态、DOM、SSE 连接全部归零重来；而 jsdom 里所谓的"刷新"只是重新调用一次 init 函数，`isOpen`/已渲染消息/已读水位线缓存等模块级状态原样残留，两者不等价（Task 10 里 `setPanelOpen` 要写在 `stubVisibility` 之前，否则会读到上一个测试遗留的 visibility 状态，就是这类"jsdom 里状态不会随刷新清零"的直接体现）。只有真机整页刷新才能验证「已读确实是从历史响应重建出来的」而不是模块状态凑巧还在。
 4. **多实例下 `read` 事件到达**：`RealtimeHub` 走 Redis pub/sub 桥接，单实例测不出跨实例路径（同 `WebhookQueueIT` 面对的问题）。
 5. **访客界面无视觉噪音**：坐席反复读，访客侧只出现「已读」二字，不冒任何状态提示条。⚠️ 复用 `session` 事件就会踩这条——widget 对 `session` 事件是无条件当文案展示的。「不产生额外文案节点」这部分已由 widget vitest 断言覆盖（守住"不复用 session 事件"这条边界），真机要验的是自动化断言不到的部分：坐席端与访客端真实串起来之后的整体观感——除了「已读」二字出现，不该有闪烁、不该有布局跳动，其余任何东西都不该跟着动。
@@ -122,6 +122,22 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着甲，让乙的访客读消息 → 标记必须落在乙上。这是多会话列表引入的新失效模式，只在真机多开时现形。
 
 ⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复，沿革见 `docs/superpowers/specs/2026-08-20-agent-message-role-design.md`。
+
+**第 2 条（Page Visibility）的真机配方** —— 2026-08-20 摸索并验证通过，复用这套、别重走弯路：
+
+⚠️ **别用 chrome-devtools MCP 驱动这条，那条路根本走不通**：CDP attach 会抑制页面后台化。已实测——程序化 `select_page(bringToFront)`、**人手点标签栏**、乃至 OS 级 `ShowWindow(SW_MINIMIZE)` 最小化整个窗口，只要页面被 CDP attach 着，`visibilityState` 就恒为 `visible`、零个 `visibilitychange`。用 `Emulation.setPageVisibilityOverride` 能让断言变绿，但那是在测自己造的桩。
+
+1. **访客页跑在不接 CDP 的独立 Chrome 实例**：`chrome.exe --user-data-dir=<临时目录> --no-first-run --no-default-browser-check --new-window <url>`，不带调试端口，MCP 看不到它也就不抑制后台化。
+2. **宿主页自带编排脚本**驱动 widget——`attachShadow({mode:'open'})` 所以外部脚本能操作其 DOM：`.qy-bubble` 展开、`textarea` + `.qy-input button:not(.qy-attach-btn)` 发送、`.qy-handover` 转人工。⚠️ 展开后**不能再点气泡**，否则「不上报」会是因为面板收起而非页面隐藏。
+3. **`ShowWindow(hwnd, 6)` 最小化 / `9` 恢复**，并用 `IsIconic` 自证窗口状态真的变了（否则"没推进"可能只是命令没生效）。
+4. **坐席侧全走 curl、不必开坐席页**：`/api/v1/auth/login` 拿 token（请求头名 `satoken`）→ `/api/v1/chat/session/{uuid}/accept` → `/api/v1/chat/agent/reply`。
+5. **判据取数据库** `message_read_receipt.up_to_message_id`，不看 UI。
+
+⚠️ **最容易得出错误结论的一步：必须能区分「消息压根没送达」与「送达了但没上报」**。若 Chrome 在最小化时挂起了 SSE，widget 根本没收到消息，那"不上报"就与可见性判定毫无关系——而这两种情况在水位线上的观测结果**完全相同**（可见时推进 / 最小化时不推进 / 恢复后推进），只看水位线必然误判。办法是给宿主页装两个探针，结果写进 `document.title`（独立实例没有 CDP，但 PowerShell 读得到 `MainWindowTitle`）：`MutationObserver` 观察 `.qy-msgs` 子节点新增 = 消息**渲染到达**时刻；包装 `window.fetch` 拦截 URL 含 `/read` 的请求 = **上报发出**时刻。最小化期间前者增加、后者不动，才坐实了「收到了但没报」。
+
+⚠️ **探针必须事件驱动，绝不能用 `setInterval`**——后台标签的定时器被 Chrome 节流到 1 次/分钟，title 就不更新了，看起来跟"页面被冻结"一模一样。
+
+⚠️ 也试过「摘掉判定重新 build」的变异法，**那条路不划算**：`visibilitychange` 监听器不一起摘就无法归因恢复后的上报，且要动入库产物 `widget.js`。探针法不改产品代码就能直接观测消息到没到，更直接。
 
 ### 前端（frontend/，pnpm）
 ```bash
