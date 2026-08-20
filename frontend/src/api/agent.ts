@@ -17,8 +17,10 @@ export const agentService = {
     acceptSession: (sessionId: string): Promise<ApiResponse<ChatSession>> =>
         api.post(`/chat/session/${sessionId}/accept`),
 
-    // 客服发送消息（去 agentId：后端从登录态取）
-    agentReply: (request: AgentReplyRequest): Promise<ApiResponse<void>> =>
+    // 客服发送消息（去 agentId：后端从登录态取）。data 是落库后的真实消息 id——调用方须用它
+    // 替代本地占位 id 做乐观渲染，绝不能自造 id 再拿去做已读上报，见 AgentPage.tsx 的
+    // handleSendReply 与 lastKnownMessageIdRef 注释。
+    agentReply: (request: AgentReplyRequest): Promise<ApiResponse<number>> =>
         api.post('/chat/agent/reply', request),
 
     // 坐席把会话交还 AI

@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.entity.ChatMessage;
 import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
@@ -78,6 +79,11 @@ class VisitorReadReceiptTest {
         s.setTenantId(1L);
         s.setAppId(appId);
         when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(s));
+        // markVisitorRead 现在会把 upToMessageId 钳到该会话的最大消息 id（clampToMaxMessageId），
+        // 默认给一个远大于本文件其余用例传入值（42/88）的上限，让既有断言不受这条新逻辑干扰；
+        // 需要验证钳制本身的用例会在方法体内覆盖这条默认桩。
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(SESSION_PK))
+                .thenReturn(Optional.of(ChatMessage.builder().id(9999L).build()));
         return s;
     }
 
@@ -121,6 +127,39 @@ class VisitorReadReceiptTest {
 
         verify(readReceiptService).markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 42L);
         verify(realtimeNotifier, never()).readReceiptToAgent(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("上报值钳到该会话实际最大消息id，拒绝把伪造的水位线写库")
+    void 上报值超过会话最大消息id时被钳制() {
+        // 同 AgentReadReceiptTest 的同名用例：接口本身不能信任调用方传来的 upToMessageId，
+        // 一个能任意大的值就能让对端永远看到「已读」、或让未读数永久归零。widget 目前只上报
+        // 服务端给的真实 id 所以没有暴露，但接口本身仍需兜底。
+        session(1L, 100L);
+        TenantContext.setAppId(1L);
+        // 覆盖 session() 里的默认桩：该会话实际只写到 55 号消息
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(SESSION_PK))
+                .thenReturn(Optional.of(ChatMessage.builder().id(55L).build()));
+        long fakeId = 1_700_000_000_000L; // 与真实最大消息 id 数量级悬殊，断言才有判别力
+        when(readReceiptService.markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 55L)).thenReturn(55L);
+
+        chatService.markVisitorRead("sess-1", fakeId);
+
+        verify(readReceiptService).markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 55L);
+        verify(readReceiptService, never()).markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, fakeId);
+    }
+
+    @Test
+    @DisplayName("会话尚无任何消息时钳到0")
+    void 会话无消息时钳到零() {
+        session(1L, 100L);
+        TenantContext.setAppId(1L);
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(SESSION_PK)).thenReturn(Optional.empty());
+        when(readReceiptService.markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 0L)).thenReturn(0L);
+
+        chatService.markVisitorRead("sess-1", 42L);
+
+        verify(readReceiptService).markRead(SESSION_PK, ReaderType.VISITOR, SESSION_PK, 0L);
     }
 
     @Test

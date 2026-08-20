@@ -41,12 +41,14 @@ const AgentPage: React.FC = () => {
         selectedRef.current = selectedSession;
     }, [selectedSession]);
 
-    // messagesRef 供 visibilitychange 监听器读取「当前已渲染的最新一条消息 id」——
-    // 该监听器注册在挂载时的 useEffect 里，不能直接闭包住会变化的 messages state。
-    const messagesRef = useRef<ChatMessage[]>([]);
-    useEffect(() => {
-        messagesRef.current = messages;
-    }, [messages]);
+    // lastKnownMessageIdRef 记录「服务端已确认的、当前会话最新一条消息 id」——已读上报与渲染
+    // 比对只认它，绝不读 messages 数组末尾元素的 id。
+    // ⚠️ 这是本特性合并前审查抓到的必修缺陷：messages 数组里可能混入本地占位 id
+    // （Date.now()，见下方 SSE 兜底分支），一旦被当成水位线上报，会把该会话的未读水位线
+    // 永久推到天文数字——水位线语义只增不减，此后该会话的未读数永远归零，且没有任何报错。
+    // 只在拿到服务端确认的真实 id 时才推进（切会话时取历史消息末尾、SSE messageId 非空、
+    // agentReply 的返回值），切换会话时随之重置，避免残留上一个会话的值。
+    const lastKnownMessageIdRef = useRef<number | null>(null);
 
     useEffect(() => {
         fetchWaitingSessions();
@@ -79,10 +81,16 @@ const AgentPage: React.FC = () => {
                             createdAt: payload.createdAt as string,
                             uiParts: parseUiSpec(payload.uiSpec as string | null | undefined),
                             attachments: payload.attachments as Attachment[] | undefined,
+                            // messageId 缺失时 id 是 Date.now() 兜底的占位值，标记为 pending——
+                            // 不参与已读比对，见 ChatMessage.pending 与 lastKnownMessageIdRef 注释。
+                            pending: messageId == null,
                         }]);
-                        // 触发点二：收到当前会话的新消息。messageId 缺失时不上报——
-                        // 那是 Date.now() 兜底的本地临时 id，不是真实水位线。
-                        if (sid && messageId != null) maybeReportRead(sid, messageId);
+                        // 触发点二：收到当前会话的新消息。messageId 缺失时不上报、也不推进
+                        // lastKnownMessageIdRef——那是 Date.now() 兜底的本地临时 id，不是真实水位线。
+                        if (sid && messageId != null) {
+                            lastKnownMessageIdRef.current = messageId;
+                            maybeReportRead(sid, messageId);
+                        }
                     } else if (sid) {
                         // 本地 +1 只是即时反馈的过渡态：真正的未读数以后端聚合值为准
                         // （AgentSessionDTO.unreadCount，按已读水位线现算）。这里立刻发起
@@ -129,9 +137,9 @@ const AgentPage: React.FC = () => {
             if (document.visibilityState !== 'visible') return;
             const sid = selectedRef.current?.sessionId;
             if (!sid) return;
-            const list = messagesRef.current;
-            const last = list[list.length - 1];
-            if (last) maybeReportRead(sid, last.id);
+            // 只读服务端确认过的最新 id，不读 messages 数组末尾——见 lastKnownMessageIdRef 注释。
+            const lastId = lastKnownMessageIdRef.current;
+            if (lastId != null) maybeReportRead(sid, lastId);
         }
         document.addEventListener('visibilitychange', onVisibilityChange);
         return () => document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -204,6 +212,11 @@ const AgentPage: React.FC = () => {
                 uiParts: parseUiSpec(m.uiSpec),
                 attachments: m.attachments,
             })));
+            // 切换会话即重置 lastKnownMessageIdRef：list 里的 id 全部来自后端持久化实体，天然
+            // 可信；拉取失败时 list 为空，ref 归 null，之后的 visibilitychange 会因取不到 id
+            // 而跳过上报，不会误用上一个会话遗留的水位线值。
+            const last = list[list.length - 1];
+            lastKnownMessageIdRef.current = last ? last.id : null;
             if (msgs.code === 200) {
                 // 刷新后已读状态要稳定：恢复该会话此前的访客已读水位线，而不是等下一条
                 // read 事件才补上。首次尚无回执时是 null，不写入（视同尚无已读）。
@@ -212,7 +225,6 @@ const AgentPage: React.FC = () => {
                     setVisitorReadMap((prev) => ({ ...prev, [session.sessionId]: upTo }));
                 }
                 // 触发点一：切换到该会话。upToMessageId 传「已渲染的最新一条」，不区分角色。
-                const last = list[list.length - 1];
                 if (last) maybeReportRead(session.sessionId, last.id);
             }
             fetchWaitingSessions();
@@ -254,6 +266,9 @@ const AgentPage: React.FC = () => {
                 uiParts: parseUiSpec(m.uiSpec),
                 attachments: m.attachments,
             })));
+            // 同 handleAcceptSession：切换会话即重置为该会话自己的最新真实 id，不留上一个会话的残值。
+            const last = list[list.length - 1];
+            lastKnownMessageIdRef.current = last ? last.id : null;
             if (msgs.code === 200) {
                 // 刷新后已读状态要稳定：恢复该会话此前的访客已读水位线。首次尚无回执时为 null，不写入。
                 if (msgs.data.visitorReadUpToMessageId != null) {
@@ -261,7 +276,6 @@ const AgentPage: React.FC = () => {
                     setVisitorReadMap((prev) => ({ ...prev, [session.sessionId]: upTo }));
                 }
                 // 触发点一：切换到该会话。upToMessageId 传「已渲染的最新一条」，不区分角色。
-                const last = list[list.length - 1];
                 if (last) maybeReportRead(session.sessionId, last.id);
             }
         } catch (error: unknown) {
@@ -310,20 +324,26 @@ const AgentPage: React.FC = () => {
         setPendingAttachments([]);
         setIsSending(true);
         try {
-            await agentService.agentReply({
+            const res = await agentService.agentReply({
                 sessionId: selectedSession.sessionId,
                 message: content,
                 attachmentIds: attachmentIds.length ? attachmentIds : undefined,
             });
+            throwIfFailed(res);
 
-            // 本地乐观追加（坐席不订阅会话消息流，用临时 id 即可）
+            // 本地乐观追加：id 直接用后端返回的落库真实 id，而非本地生成的占位值——
+            // ⚠️ 这是本特性合并前审查抓到的必修缺陷：agentReply 已经 await 完成，真实 id 此刻
+            // 已知，不需要（也不能）再用 Date.now() 占位。这条 id 会被 visibilitychange 等
+            // 触发点当水位线上报，用占位 id 上报会把该会话的未读水位线永久推到天文数字。
+            const newId = res.data;
             setMessages(prev => [...prev, {
-                id: Date.now(),
+                id: newId,
                 role: 'ASSISTANT',
                 content,
                 createdAt: new Date().toISOString(),
                 attachments: attachments.length ? attachments : undefined,
             }]);
+            lastKnownMessageIdRef.current = newId;
             toast({ title: '消息已发送' });
         } catch (error: unknown) {
             setReplyInput(content); // 发送失败回滚输入
@@ -342,6 +362,8 @@ const AgentPage: React.FC = () => {
             setSelectedSession(null);
             setMessages([]);
             setPendingAttachments([]);
+            // 结束的会话立刻从「我的会话」列表移除，不必等最多 10 秒的轮询才消失
+            fetchMySessions();
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(error) });
         }
@@ -357,6 +379,8 @@ const AgentPage: React.FC = () => {
             setMessages([]);
             setPendingAttachments([]);
             fetchWaitingSessions();
+            // 交还的会话同样立刻从「我的会话」列表移除，理由同 handleEndSession
+            fetchMySessions();
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '操作失败', description: getErrorMessage(error) });
         }
@@ -371,7 +395,7 @@ const AgentPage: React.FC = () => {
     // 对方看到的焦虑，AI 阶段不做已读）。而坐席接管后 AI 不再回复，该期间落库的 ASSISTANT
     // 消息就是坐席消息。所以「id ≤ 水位线的最后一条 ASSISTANT 消息」天然落在坐席消息上，
     // 语义是正确的。
-    // 之所以不用 AGENT：后端 agentReply 落库写的是 ASSISTANT（ChatServiceImpl:1397），
+    // 之所以不用 AGENT：后端 agentReply 落库写的是 ASSISTANT（ChatServiceImpl:1415），
     // MessageRole.AGENT 从未被写入过（全仓唯一引用在 ChatController 里标注附件上传者角色，
     // 与 ChatMessage.role 无关）。那是一个独立缺陷，修它要连带改 LLM 上下文构建
     // （ChatServiceImpl:1142 按 ASSISTANT 分支拼历史）与反馈校验（ChatFeedbackService:55
@@ -379,8 +403,11 @@ const AgentPage: React.FC = () => {
     // ⚠️ 若将来 AI 与坐席在同一会话里交替回复，这个判据会失准，届时正解是修根因让 role
     // 真正区分，而不是在这里加更复杂的启发式。
     const visitorReadUpTo = selectedSession ? visitorReadMap[selectedSession.sessionId] : undefined;
+    // ⚠️ 额外排除 m.pending：那类消息的 id 是本地占位值（Date.now() 兜底，见 SSE message
+    // 分支），拿它跟服务端真实水位线比较毫无意义——占位值要么远大于水位线（永远比不中，
+    // 该标"已读"的消息反而不标）要么侥幸落在范围内（纯属巧合，标错消息）。
     const lastReadAgentMessageId = visitorReadUpTo == null ? null : messages.reduce<number | null>(
-        (acc, m) => (m.role === 'ASSISTANT' && m.id <= visitorReadUpTo ? m.id : acc),
+        (acc, m) => (m.role === 'ASSISTANT' && !m.pending && m.id <= visitorReadUpTo ? m.id : acc),
         null,
     );
 

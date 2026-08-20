@@ -50,6 +50,10 @@ export interface ChatMessage {
     createdAt: string;
     uiParts?: UiPart[];
     attachments?: Attachment[];
+    // id 是本地占位值（尚未拿到服务端落库后的真实 id）时为 true。⚠️ 这类消息绝不能参与
+    // 已读水位线的上报或比对——占位值一旦被当成真实水位线写库，该会话的未读数会被永久
+    // 污染（水位线语义只增不减）。见 AgentPage.tsx 的 lastKnownMessageIdRef 注释。
+    pending?: boolean;
 }
 
 // 会话历史消息：GET /chat/session/{id}/messages 返回的 ChatMessageDTO（MM-6 起不再是裸实体，
@@ -67,7 +71,8 @@ export interface ChatMessageEntity {
 // GET /chat/session/{id}/messages 的响应包装（不再是裸 List<ChatMessageDTO>，见后端
 // SessionMessagesResponse 类注释：水位线字段挂不到 List 上，故引入本包装类型）。
 // visitorReadUpToMessageId 是对方（访客）的已读水位线，不带坐席自己的；访客尚未产生任何
-// 已读回执时为 null。该字段目前只负责把类型钉对，消费逻辑（渲染/续接）是另一步的事。
+// 已读回执时为 null。消费方是 AgentPage：切换会话时用它恢复 visitorReadMap，见该文件
+// handleAcceptSession/handleSelectMySession 的调用点注释。
 export interface SessionMessagesResponse {
     messages: ChatMessageEntity[];
     visitorReadUpToMessageId: number | null;

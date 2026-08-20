@@ -24,6 +24,7 @@ const stubs = vi.hoisted(() => ({
     getOnlineAgents: vi.fn(),
     markRead: vi.fn(),
     getSessionMessages: vi.fn(),
+    agentReply: vi.fn(),
 }));
 
 // AgentPage 的 SSE 走内部 fetch + ReadableStream（EventSource 不能带鉴权头，见 lib/sse.ts
@@ -62,6 +63,7 @@ beforeEach(() => {
     // 桩的返回形态必须跟着改，否则这份 mock 本身就是假的。
     stubs.getSessionMessages.mockResolvedValue(ok({ messages: [], visitorReadUpToMessageId: null }));
     stubs.markRead.mockResolvedValue(ok(0));
+    stubs.agentReply.mockResolvedValue(ok(0));
 });
 
 afterEach(() => {
@@ -245,6 +247,51 @@ describe('坐席台已读回执', () => {
         await waitFor(() => {
             expect(stubs.markRead).toHaveBeenCalledWith('s1', 99);
         });
+    });
+
+    it('坐席发送回复后再触发已读上报，用的是后端返回的真实消息id而非本地占位id', async () => {
+        // 回归本特性合并前审查抓到的必修缺陷：坐席回复一条消息 → 前端曾用 Date.now() 占位 id
+        // 乐观追加 → 坐席切到别的标签页再切回来 → visibilitychange 处理器取"已渲染的最后一条"
+        // 上报 → 后端不校验就把这个占位 id（约 1.7e12 量级）当水位线落库。水位线语义只增
+        // 不减，此后该会话的未读数永久归零、没有任何报错。
+        // ⚠️ 真实 id（500）与占位 id 数量级悬殊，特意这样取值让断言具备判别力——
+        // 若两者接近，即便实现退化回 Date.now() 断言也可能凑巧碰对，判别力等于零。
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [{ id: 42, role: 'USER', content: '在吗', createdAt: '2026-08-20T10:01:00' }],
+            visitorReadUpToMessageId: null,
+        }));
+        stubs.agentReply.mockResolvedValue(ok(500)); // 后端落库后的真实消息 id
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+        await screen.findByText('在吗');
+        stubs.markRead.mockClear(); // 清掉「切换会话」触发点已产生的调用记录，本条只看后续的
+
+        const input = screen.getByPlaceholderText('输入回复内容...');
+        fireEvent.change(input, { target: { value: '已处理，请查收' } });
+        await act(async () => {
+            fireEvent.keyDown(input, { key: 'Enter' });
+        });
+        await screen.findByText('已处理，请查收'); // 等 agentReply 的 await 完成、乐观追加渲染出来
+
+        // 触发点三：坐席切到别的标签页再切回来
+        stubVisibility('hidden');
+        await act(async () => {
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        stubVisibility('visible');
+        await act(async () => {
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+
+        await waitFor(() => {
+            expect(stubs.markRead).toHaveBeenCalledWith('s1', 500);
+        });
+        // 判别性断言的另一半：上报值不能是 Date.now() 量级（远大于 100 万）的占位值
+        const reportedIds = stubs.markRead.mock.calls.map((call) => call[1] as number);
+        expect(reportedIds.every((id) => id < 1_000_000)).toBe(true);
     });
 
     it('上报已读成功后刷新我的会话列表，未读徽章不必等轮询就清零', async () => {

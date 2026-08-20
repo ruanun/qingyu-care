@@ -1349,7 +1349,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         long effective = readReceiptService.markRead(
-                session.getId(), ReaderType.AGENT, agentId, upToMessageId);
+                session.getId(), ReaderType.AGENT, agentId, clampToMaxMessageId(session.getId(), upToMessageId));
         realtimeNotifier.readReceiptToUser(sessionId, effective);
         return effective;
     }
@@ -1369,7 +1369,8 @@ public class ChatServiceImpl implements ChatService {
         // readerId 用 chat_session.id：一个会话只有一个访客，用会话 id 即可唯一标识它。
         // ⚠️ 绝不能传 null——PG 唯一约束里 NULL != NULL，会让约束形同虚设
         long effective = readReceiptService.markRead(
-                session.getId(), ReaderType.VISITOR, session.getId(), upToMessageId);
+                session.getId(), ReaderType.VISITOR, session.getId(),
+                clampToMaxMessageId(session.getId(), upToMessageId));
 
         if (session.getAgentId() != null) {
             realtimeNotifier.readReceiptToAgent(
@@ -1378,15 +1379,32 @@ public class ChatServiceImpl implements ChatService {
         return effective;
     }
 
-    @Override
-    @Transactional
-    public void agentReply(String sessionId, String message, Long agentId) {
-        agentReply(sessionId, message, agentId, null);
+    /**
+     * 把调用方上报的水位线钳到该会话<b>实际存在</b>的最大消息 id——接口本身不能信任调用方
+     * 传来的 {@code upToMessageId}。真机复现过的事故：坐席端把本地占位 id（{@code Date.now()}，
+     * 约 1.7e12 量级）当成已渲染的最新消息 id 上报，而水位线语义只增不减，一旦落库，该会话
+     * 此后所有真实消息的 id 都满足不了 {@code id > upToMessageId}，未读数永久归零且没有任何
+     * 报错。客户端本轮已同步修复（不再用占位 id 做上报源），但接口自身仍需兜底——同一个坑对
+     * 访客侧同样成立，只是当前 widget 只上报服务端给的真实 id 才没有暴露。
+     *
+     * @return 不超过该会话最大消息 id 的水位线；会话尚无消息时钳到 0
+     */
+    private long clampToMaxMessageId(Long sessionId, Long upToMessageId) {
+        long maxMessageId = messageRepository.findTopBySessionIdOrderByIdDesc(sessionId)
+                .map(ChatMessage::getId)
+                .orElse(0L);
+        return Math.min(upToMessageId, maxMessageId);
     }
 
     @Override
     @Transactional
-    public void agentReply(String sessionId, String message, Long agentId, List<Long> attachmentIds) {
+    public Long agentReply(String sessionId, String message, Long agentId) {
+        return agentReply(sessionId, message, agentId, null);
+    }
+
+    @Override
+    @Transactional
+    public Long agentReply(String sessionId, String message, Long agentId, List<Long> attachmentIds) {
         ChatSession session = getSession(sessionId);
         if (session.getStatus() != SessionStatus.AGENT_PROCESSING) {
             throw new InvalidOperationException("该会话不在人工处理状态");
@@ -1409,6 +1427,9 @@ public class ChatServiceImpl implements ChatService {
                 "agent.replied", session.getAppId(), session.getTenantId(),
                 session.getSessionId(), null, LocalDateTime.now()));
         realtimeNotifier.toUserMessage(session.getSessionId(), agentMsg);
+        // 返回落库后的真实 id（IDENTITY 生成，save() 时点即产生）：坐席端调用方本轮起改用它
+        // 替代本地占位 id 做乐观渲染，避免把 Date.now() 当水位线上报（见 clampToMaxMessageId 注释）
+        return agentMsg.getId();
     }
 
     @Override

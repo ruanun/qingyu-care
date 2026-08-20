@@ -84,9 +84,16 @@ public class ReadReceiptService {
                     .build());
             return upToMessageId;
         } catch (DataIntegrityViolationException conflict) {
-            // 并发首次回执：另一方刚插进去。重试 UPDATE——本方法不带事务注解，此重试能在
-            // 调用方当前的事务边界内真正提交（markRead 场景）或在新事务内提交
-            // （markReadInNewTransaction 场景）。
+            // 并发首次回执：另一方刚插进去。重试 UPDATE——本方法不带事务注解，谁调用它就在谁的
+            // 事务边界内执行（见类注释）。
+            // ⚠️ 两个调用方的实际结果并不对称：markRead 场景下调用方（markAgentRead/
+            // markVisitorRead）自身不带 @Transactional，上面的 insert 与这里的重试 UPDATE
+            // 各自独立开关自己的仓储事务，insert 失败不连累重试，此重试能真正提交。
+            // 但 markReadInNewTransaction 场景下，insert 与这次重试同属 REQUIRES_NEW 开出的
+            // 同一个物理事务——insert 撞唯一键已经让这个事务落入 PG 的 25P02 aborted 状态，
+            // 同一事务内的任何后续语句（包括这次重试）都会跟着失败，异常会从
+            // markReadInNewTransaction 里抛出，交给调用方（acceptSession）的 fail-soft catch
+            // 兜底吞掉——这是预期行为，不是本方法的缺陷。
             repository.advanceWatermark(
                     sessionId, readerType.name(), readerId, upToMessageId, LocalDateTime.now());
             return currentOrDefault(sessionId, readerType, readerId, upToMessageId);

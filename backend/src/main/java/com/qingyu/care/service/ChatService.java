@@ -136,14 +136,19 @@ public interface ChatService {
 
     /**
      * 客服发送消息（绕过 AI）
+     *
+     * @return 落库后这条坐席消息的真实 id——调用方（管理端）应改用它替代本地占位 id
+     *         做乐观渲染/已读上报，见 {@code AgentPage.tsx} 与 {@code ChatServiceImpl.clampToMaxMessageId} 注释
      */
-    void agentReply(String sessionId, String message, Long agentId);
+    Long agentReply(String sessionId, String message, Long agentId);
 
     /**
      * 客服发送消息（绕过 AI），可携带附件 id（先经 /v1/chat/files 上传拿到）。
      * 附件落点是这条坐席消息本身（同用户消息路径同语义：落点是真正被发送的那条消息）。
+     *
+     * @return 落库后这条坐席消息的真实 id，语义同上
      */
-    void agentReply(String sessionId, String message, Long agentId, List<Long> attachmentIds);
+    Long agentReply(String sessionId, String message, Long agentId, List<Long> attachmentIds);
     
     /**
      * 获取待接管会话列表

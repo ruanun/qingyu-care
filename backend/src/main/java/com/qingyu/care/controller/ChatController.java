@@ -174,13 +174,15 @@ public class ChatController {
     }
 
     @PostMapping("/agent/reply")
-    @Operation(summary = "客服回复", description = "客服发送消息（绕过AI）")
-    public ApiResponse<Void> agentReply(@Valid @RequestBody AgentReplyRequest request) {
+    @Operation(summary = "客服回复", description = "客服发送消息（绕过AI），返回落库后的真实消息 id")
+    public ApiResponse<Long> agentReply(@Valid @RequestBody AgentReplyRequest request) {
         SecurityUtil.requireAgent();
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
-        chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
+        Long messageId = chatService.agentReply(request.getSessionId(), request.getMessage(), agentId,
                 request.getAttachmentIds());
-        return ApiResponse.success("消息已发送", null);
+        // data 带回真实 id：坐席端用它替代本地占位 id 做乐观渲染/已读上报，
+        // 见 ChatServiceImpl.clampToMaxMessageId 类注释记录的真实缺陷
+        return ApiResponse.success("消息已发送", messageId);
     }
 
     @GetMapping("/sessions/mine")

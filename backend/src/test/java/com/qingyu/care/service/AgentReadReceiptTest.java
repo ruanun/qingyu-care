@@ -77,6 +77,11 @@ class AgentReadReceiptTest {
         s.setAgentId(agentId);
         s.setTenantId(1L);
         when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(s));
+        // markAgentRead 现在会把 upToMessageId 钳到该会话的最大消息 id（clampToMaxMessageId），
+        // 默认给一个远大于本文件其余用例传入值（42/77/88）的上限，让既有断言不受这条新逻辑
+        // 干扰；需要验证钳制本身的用例会在各自方法体内覆盖这条默认桩。
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(s.getId()))
+                .thenReturn(Optional.of(ChatMessage.builder().id(9999L).build()));
         return s;
     }
 
@@ -163,6 +168,39 @@ class AgentReadReceiptTest {
 
         verify(readReceiptService).markReadInNewTransaction(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
         verify(readReceiptService, never()).markRead(acceptSession.getId(), ReaderType.AGENT, ME, 77L);
+    }
+
+    @Test
+    @DisplayName("上报值钳到该会话实际最大消息id，拒绝把本地占位id当水位线写库")
+    void 上报值超过会话最大消息id时被钳制() {
+        // 回归本特性合并前审查抓到的必修缺陷：坐席端曾把 Date.now() 占位 id（~1.7e12 量级）
+        // 当成已渲染的最新消息 id 上报。接口本身不能信任调用方传来的 upToMessageId——
+        // 客户端本轮已同步修复，但这层服务端兜底同样必须存在（同一个坑对访客侧一样成立）。
+        ChatSession s = session(ME, SessionStatus.AGENT_PROCESSING);
+        // 覆盖 session() 里的默认桩：该会话实际只写到 55 号消息
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(s.getId()))
+                .thenReturn(Optional.of(ChatMessage.builder().id(55L).build()));
+        long fakeId = 1_700_000_000_000L; // 与真实最大消息 id 数量级悬殊，断言才有判别力
+        when(readReceiptService.markRead(s.getId(), ReaderType.AGENT, ME, 55L)).thenReturn(55L);
+
+        chatService.markAgentRead("sess-1", ME, fakeId);
+
+        // 必须钳到 55，绝不能把 fakeId 原样传给 readReceiptService——否则水位线被推到天文
+        // 数字，此后该会话所有真实消息都满足不了 id > upToMessageId，未读数永久归零
+        verify(readReceiptService).markRead(s.getId(), ReaderType.AGENT, ME, 55L);
+        verify(readReceiptService, never()).markRead(s.getId(), ReaderType.AGENT, ME, fakeId);
+    }
+
+    @Test
+    @DisplayName("会话尚无任何消息时钳到0")
+    void 会话无消息时钳到零() {
+        ChatSession s = session(ME, SessionStatus.AGENT_PROCESSING);
+        when(messageRepository.findTopBySessionIdOrderByIdDesc(s.getId())).thenReturn(Optional.empty());
+        when(readReceiptService.markRead(s.getId(), ReaderType.AGENT, ME, 0L)).thenReturn(0L);
+
+        chatService.markAgentRead("sess-1", ME, 42L);
+
+        verify(readReceiptService).markRead(s.getId(), ReaderType.AGENT, ME, 0L);
     }
 
     @Test
