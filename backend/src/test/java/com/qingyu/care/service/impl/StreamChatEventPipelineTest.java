@@ -155,16 +155,22 @@ class StreamChatEventPipelineTest {
                 ChatSession.builder().sessionId("s1").build(), "问题", "你好", 0.8, "[1,2]");
 
         assertThat(done.type()).isEqualTo(ChatStreamEvent.Type.DONE);
-        // 第 2 次 save 是 AI 消息，id=2；DONE 必须带真实落库 id 而非占位值
-        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isEqualTo(2L);
+        // 第 1 次 save 是用户消息 id=1，第 2 次 save 是 AI 消息 id=2；
+        // DONE 必须一并带上两者的真实落库 id 而非占位值——契约补齐（Task 7 追加）：DONE 排在
+        // 落库之后构造，是主问答路径唯一能拿到真实 userMessageId 的地方（START 那里恒为 null）
+        ChatStreamEvent.Done payload = (ChatStreamEvent.Done) done.payload();
+        assertThat(payload.messageId()).isEqualTo(2L);
+        assertThat(payload.userMessageId()).isEqualTo(1L);
     }
 
     @Test
-    void 空回复不落库且DONE的消息id为null() {
+    void 空回复不落库且DONE的消息id与访客消息id均为null() {
         ChatStreamEvent done = service.persistStreamedMessages(
                 ChatSession.builder().sessionId("s2").build(), "问题", "", 0.0, null);
 
-        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isNull();
+        ChatStreamEvent.Done payload = (ChatStreamEvent.Done) done.payload();
+        assertThat(payload.messageId()).isNull();
+        assertThat(payload.userMessageId()).isNull();
         verify(messageRepository, never()).save(any());
     }
 
@@ -176,7 +182,9 @@ class StreamChatEventPipelineTest {
                 ChatSession.builder().sessionId("s3").build(), "问题", "你好", 0.5, null);
 
         assertThat(done.type()).isEqualTo(ChatStreamEvent.Type.DONE);
-        assertThat(((ChatStreamEvent.Done) done.payload()).messageId()).isNull();
+        ChatStreamEvent.Done payload = (ChatStreamEvent.Done) done.payload();
+        assertThat(payload.messageId()).isNull();
+        assertThat(payload.userMessageId()).isNull();
     }
 
     @Test
@@ -214,25 +222,36 @@ class StreamChatEventPipelineTest {
     }
 
     /**
-     * 契约补齐（Task 7）：主问答路径（检索命中/允许无知识）此刻拿不到真实落库 userMessageId
-     * ——该路径的用户消息与 AI 回复整轮一起延迟到流结束才落库（见 persistStreamedMessages
-     * 的 rawResponse.isEmpty() 判断），是「停止生成不落库」契约的一部分（见上方两条用例：
-     * 客户端取消订阅/模型流失败均不落库）。提前单独落库用户消息来换取这里的真实 id，
-     * 会把这两条已钉住的行为一并打破，故本路径的 START 明确记录为已知限制，不是遗漏。
+     * 契约补齐（Task 7，控制者裁定后追加）：主问答路径（检索命中/允许无知识）的 START 事件
+     * 此刻拿不到真实落库 userMessageId——该路径的用户消息与 AI 回复整轮一起延迟到流结束才
+     * 落库（见 persistStreamedMessages 的 rawResponse.isEmpty() 判断），是「停止生成不落库」
+     * 契约的一部分（见上方两条用例：客户端取消订阅/模型流失败均不落库）。提前单独落库用户
+     * 消息来换取 START 这里的真实 id，会把这两条已钉住的行为一并打破。
+     * <p>但这不等于 widget 在这条路径上永远拿不到 userMessageId——DONE 排在落库之后构造，
+     * 必然带真实值，widget 侧策略是「START 有就先用，没有就等 DONE」。本用例把这个
+     * <b>有意的不对称</b>钉成一条测试：START 为 null，DONE 补上真实 id。若把 DONE 的
+     * userMessageId 拿掉/传错，本用例必须转红（已实测变异验证，见 task-7-report.md）。
      */
     @Test
-    void 主问答路径的START事件userMessageId为null_已知限制() {
+    void 主问答路径_START的userMessageId为null_DONE补上真实id() {
         stubPipelineSession("s10");
         stubTransactionPassThrough();
         stubSaveWithIdSequence();
         when(modelRouterService.streamWithFallback(any(), any())).thenReturn(
                 Flux.just(SpringAiResponses.of("你好", 5)));
 
-        StepVerifier.create(service.streamChat(
-                        ChatRequest.builder().sessionId("s10").message("在吗").build(), tokens -> { }, tokens -> { }))
-                .assertNext(e -> assertThat(((ChatStreamEvent.Start) e.payload()).userMessageId()).isNull())
-                .thenConsumeWhile(e -> true)
-                .verifyComplete();
+        List<ChatStreamEvent> events = service.streamChat(
+                        ChatRequest.builder().sessionId("s10").message("在吗").build(), tokens -> { }, tokens -> { })
+                .collectList().block();
+
+        ChatStreamEvent startEvt = events.stream()
+                .filter(e -> e.type() == ChatStreamEvent.Type.START).findFirst().orElseThrow();
+        ChatStreamEvent doneEvt = events.stream()
+                .filter(e -> e.type() == ChatStreamEvent.Type.DONE).findFirst().orElseThrow();
+
+        assertThat(((ChatStreamEvent.Start) startEvt.payload()).userMessageId()).isNull();
+        // 第 1 次 save 是用户消息，stubSaveWithIdSequence 按序分配 id=1
+        assertThat(((ChatStreamEvent.Done) doneEvt.payload()).userMessageId()).isEqualTo(1L);
     }
 
     @Test

@@ -381,7 +381,7 @@ public class ChatServiceImpl implements ChatService {
                     ChatStreamEvent.start(session.getSessionId(), noHitStreakHandover, List.of(),
                             fallbackIds.userMessageId()),
                     ChatStreamEvent.delta(strategy.getFallbackMessage()),
-                    ChatStreamEvent.done(fallbackIds.aiMessageId()));
+                    ChatStreamEvent.done(fallbackIds.aiMessageId(), fallbackIds.userMessageId()));
         }
 
         String context = buildContext(relevantDocs);
@@ -415,14 +415,16 @@ public class ChatServiceImpl implements ChatService {
                     return spec.stream().chatResponse();
                 });
 
-        // ⚠️ userMessageId 此处为 null：本路径的用户消息与 AI 回复整轮一起延迟到流结束才落库
-        // （ChatMessage 用 IDENTITY 生成策略，真实 id 只在 INSERT 时产生），是「停止生成不落库」
-        // 契约的一部分——客户端在 AI 尚未产出任何内容前取消/模型报错时，连用户自己这条消息也不落库
-        // （StreamChatEventPipelineTest 的「客户端取消订阅」「模型流失败」两条用例已钉住这个行为）。
-        // 提前把用户消息单独落库来换取这里的真实 id，会把这条已测试的取舍连带打破，
-        // 已知限制：widget 在「检索命中/允许无知识」这条最常见路径下暂时拿不到 userMessageId，
-        // 与人工接管静默 / 关键词触发转人工 / 知识库未命中兜底三个早退分支不同（那三支用户消息
-        // 在构造 START 前已经落库，均为真实 id）。
+        // ⚠️ userMessageId 此处（START）为 null：本路径的用户消息与 AI 回复整轮一起延迟到流
+        // 结束才落库（ChatMessage 用 IDENTITY 生成策略，真实 id 只在 INSERT 时产生），是
+        // 「停止生成不落库」契约的一部分——客户端在 AI 尚未产出任何内容前取消/模型报错时，连
+        // 用户自己这条消息也不落库（StreamChatEventPipelineTest 的「客户端取消订阅」「模型流
+        // 失败」两条用例已钉住这个行为）。提前把用户消息单独落库来换取这里的真实 id，会把这条
+        // 已测试的取舍连带打破，不在本次改动范围内。
+        // 这是<b>有意的不对称</b>：本轮结束时 persistStreamedMessages 落库之后构造的 DONE 事件
+        // 必然带真实 userMessageId（见该方法与 ChatStreamEvent.Done 的 javadoc），widget 侧
+        // 策略是 START 有就先用、没有就等 DONE——不是「这条路径永远拿不到」，只是拿到得比别的
+        // 早退分支晚一点。
         ChatStreamEvent startEvent =
                 ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits, null);
 
@@ -517,7 +519,7 @@ public class ChatServiceImpl implements ChatService {
                 } else if (resp.getContent() != null && !resp.getContent().isEmpty()) {
                     events.add(ChatStreamEvent.delta(resp.getContent()));
                 }
-                events.add(ChatStreamEvent.done(resp.getMessageId()));
+                events.add(ChatStreamEvent.done(resp.getMessageId(), resp.getUserMessageId()));
             } finally {
                 TenantContext.clear();   // 必须无条件清理
             }
@@ -539,14 +541,16 @@ public class ChatServiceImpl implements ChatService {
      * 出现转人工提示条），否则相对非流式 chat() 会是行为回退。
      * <p>userMessageId 由调用方传入：这两条路的用户消息在调用本方法前已经落库
      * （{@code persistUserMessageDuringHandover}/{@code triggerKeywordHandoverIfHit}），
-     * 与主问答路径（此刻拿不到真实 id，见 {@code streamChat} 构造 startEvent 处）不同。
+     * 与主问答路径（START 此刻拿不到真实 id，见 {@code streamChat} 构造 startEvent 处）不同——
+     * 同一个真实 id 在这两条早退路径上 START 与 DONE 都带，二者本就一致，不存在 START/DONE
+     * 不对称的问题。
      */
     private Flux<ChatStreamEvent> earlyReturn(ChatSession session, String text, boolean suggestHandover,
                                               Long userMessageId) {
         return Flux.just(
                 ChatStreamEvent.start(session.getSessionId(), suggestHandover, List.of(), userMessageId),
                 ChatStreamEvent.delta(text),
-                ChatStreamEvent.done(null));
+                ChatStreamEvent.done(null, userMessageId));
     }
 
     /**
@@ -654,6 +658,10 @@ public class ChatServiceImpl implements ChatService {
                                             List<Long> attachmentIds,
                                             Long tenantId, Long appId, DocumentVisibility accessLevel) {
         Long savedId = null;
+        // DONE 排在本方法落库之后才构造，只要落了库就必然拿到真实的用户消息 id——这正是
+        // START 那个「主问答路径恒为 null」的已知限制（见 ChatStreamEvent.Start 的 javadoc）
+        // 在这里补齐的地方，widget 兜底从 DONE 取。
+        Long savedUserMessageId = null;
         try {
             if (!rawResponse.isEmpty()) {
                 UiSpecService.ParseResult parsed = uiSpecService.parse(rawResponse);
@@ -675,6 +683,7 @@ public class ChatServiceImpl implements ChatService {
                             saveMessages(session, userMessage, parsed.plainText(), confidence,
                                     hitDocumentIds, null, false, uiSpecJson, attachmentIds, true));
                     savedId = ids.aiMessageId();
+                    savedUserMessageId = ids.userMessageId();
                 } finally {
                     if (needsContext) {
                         // 恢复原值而非 clear()：见上方 M-2 javadoc
@@ -687,7 +696,7 @@ public class ChatServiceImpl implements ChatService {
         } catch (Exception e) {
             log.warn("流式消息落库失败 sessionId={}: {}", session.getSessionId(), e.getMessage());
         }
-        return ChatStreamEvent.done(savedId);
+        return ChatStreamEvent.done(savedId, savedUserMessageId);
     }
 
     /**

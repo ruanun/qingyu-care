@@ -50,10 +50,19 @@ class ChatStreamSseMapperTest {
 
     @Test
     void done的messageId为空时序列化为null() {
-        ServerSentEvent<String> sse = mapper.toSse(ChatStreamEvent.done(null));
+        ServerSentEvent<String> sse = mapper.toSse(ChatStreamEvent.done(null, null));
 
         assertThat(sse.event()).isEqualTo("done");
-        assertThat(sse.data()).isEqualTo("{\"messageId\":null}");
+        assertThat(sse.data()).isEqualTo("{\"messageId\":null,\"userMessageId\":null}");
+    }
+
+    @Test
+    void done携带访客消息真实id() {
+        // 契约补齐（Task 7 追加）：DONE 排在落库之后构造，只要落了库就一律带真实 userMessageId
+        ServerSentEvent<String> sse = mapper.toSse(ChatStreamEvent.done(42L, 199L));
+
+        assertThat(sse.event()).isEqualTo("done");
+        assertThat(sse.data()).isEqualTo("{\"messageId\":42,\"userMessageId\":199}");
     }
 
     @Test
