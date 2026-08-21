@@ -46,6 +46,18 @@ public class AiSkill extends BaseTenantEntity {
     @Builder.Default
     private Set<Long> toolIds = new LinkedHashSet<>();
 
+    /**
+     * 绑定的 MCP 工具 id 集合（{@code mcp_tool.id}），与 toolIds 并列。
+     *
+     * <p>独立字段而非混进 toolIds：两者指向不同的表，混用会让「这个 id 该去哪张表查」
+     * 变成猜测。
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "ai_skill_mcp_tool", joinColumns = @JoinColumn(name = "skill_id"))
+    @Column(name = "mcp_tool_id")
+    @Builder.Default
+    private Set<Long> mcpToolIds = new LinkedHashSet<>();
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean enabled = true;

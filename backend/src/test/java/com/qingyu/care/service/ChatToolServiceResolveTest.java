@@ -6,6 +6,9 @@ import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
+import com.qingyu.care.repository.McpServerRepository;
+import com.qingyu.care.repository.McpToolRepository;
+import com.qingyu.care.service.mcp.McpToolExecutor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -23,10 +26,14 @@ class ChatToolServiceResolveTest {
     @Mock AiToolRepository toolRepository;
     @Mock AiSkillRepository skillRepository;
     @Mock SharedCredentialMasker credentialMasker;
+    @Mock McpToolRepository mcpToolRepository;
+    @Mock McpServerRepository mcpServerRepository;
+    @Mock McpToolExecutor mcpToolExecutor;
 
     private ChatToolService service() {
         return new ChatToolService(toolRepository, skillRepository,
-                (m, u, a, b, t) -> "", new ObjectMapper(), credentialMasker);
+                (m, u, a, b, t) -> "", new ObjectMapper(), credentialMasker,
+                mcpToolRepository, mcpServerRepository, mcpToolExecutor);
     }
 
     @Test

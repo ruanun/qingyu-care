@@ -6,10 +6,17 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.entity.McpServer;
+import com.qingyu.care.entity.McpTool;
+import com.qingyu.care.enums.McpToolStatus;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
+import com.qingyu.care.repository.McpServerRepository;
+import com.qingyu.care.repository.McpToolRepository;
+import com.qingyu.care.service.mcp.McpToolCallback;
+import com.qingyu.care.service.mcp.McpToolExecutor;
 import com.qingyu.care.service.tool.HttpToolCallback;
 import com.qingyu.care.service.tool.HttpToolExecutor;
 import lombok.RequiredArgsConstructor;
@@ -19,8 +26,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,6 +47,9 @@ public class ChatToolService {
     private final HttpToolExecutor httpToolExecutor;
     private final ObjectMapper objectMapper;
     private final SharedCredentialMasker credentialMasker;
+    private final McpToolRepository mcpToolRepository;
+    private final McpServerRepository mcpServerRepository;
+    private final McpToolExecutor mcpToolExecutor;
 
     /** 运行时解析包：待注入系统提示的 skill 正文 + 待挂载的工具回调。 */
     public record ToolBundle(List<String> skillMarkdowns, List<ToolCallback> toolCallbacks) {
@@ -61,6 +73,7 @@ public class ChatToolService {
         }
         List<String> markdowns = new ArrayList<>();
         Set<Long> toolIds = new LinkedHashSet<>();
+        Set<Long> mcpToolIds = new LinkedHashSet<>();
         for (AiSkill s : skills) {
             if (s.getContent() != null && !s.getContent().isBlank()) {
                 markdowns.add(s.getContent());
@@ -68,14 +81,56 @@ public class ChatToolService {
             if (s.getToolIds() != null) {
                 toolIds.addAll(s.getToolIds());
             }
+            if (s.getMcpToolIds() != null) {
+                mcpToolIds.addAll(s.getMcpToolIds());
+            }
         }
         List<ToolCallback> callbacks = new ArrayList<>();
+        Set<String> exposedNames = new LinkedHashSet<>();
         if (!toolIds.isEmpty()) {
             for (AiTool t : resolveTools(toolIds)) {
+                if (!exposedNames.add(t.getName())) {
+                    log.warn("工具名重复，跳过 HTTP 工具 {}", t.getName());
+                    continue;
+                }
                 callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
             }
         }
+        if (!mcpToolIds.isEmpty()) {
+            callbacks.addAll(resolveMcpCallbacks(mcpToolIds, exposedNames));
+        }
         return new ToolBundle(markdowns, callbacks);
+    }
+
+    /**
+     * 解析 MCP 工具为 callback。
+     *
+     * <p><b>只读门槛与 DEPRECATED 过滤都落在这条查询上</b>，不在界面上拦——界面拦得住的
+     * 东西，接口层拦不住。
+     *
+     * <p>查询是 filter-bound 的普通 JPA 查询：McpTool 继承 BaseTenantEntity，@Filter 会
+     * 挡掉别的租户的 id。⚠️ <b>不要改成 native</b>，本期没有平台共享，绕过过滤器只会引入
+     * 跨租户越权（那正是共享工具那条路径反复出问题的地方）。
+     */
+    private List<ToolCallback> resolveMcpCallbacks(Set<Long> mcpToolIds, Set<String> exposedNames) {
+        List<McpTool> tools =
+                mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(mcpToolIds, McpToolStatus.ACTIVE);
+        List<ToolCallback> out = new ArrayList<>();
+        Map<Long, McpServer> serverCache = new LinkedHashMap<>();
+        for (McpTool t : tools) {
+            McpServer server = serverCache.computeIfAbsent(t.getMcpServerId(),
+                    id -> mcpServerRepository.findById(id).orElse(null));
+            if (server == null || !Boolean.TRUE.equals(server.getEnabled())) {
+                continue;
+            }
+            String exposed = McpToolCallback.exposedName(server, t);
+            if (!exposedNames.add(exposed)) {
+                log.warn("工具名重复，跳过 MCP 工具 {}", exposed);
+                continue;
+            }
+            out.add(new McpToolCallback(server, t, mcpToolExecutor, objectMapper));
+        }
+        return out;
     }
 
     /**

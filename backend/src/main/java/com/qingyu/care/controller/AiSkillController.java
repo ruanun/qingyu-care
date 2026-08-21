@@ -47,6 +47,7 @@ public class AiSkillController {
         if (skill.getDescription() != null) existing.setDescription(skill.getDescription());
         if (skill.getContent() != null) existing.setContent(skill.getContent());
         if (skill.getToolIds() != null) existing.setToolIds(skill.getToolIds());
+        if (skill.getMcpToolIds() != null) existing.setMcpToolIds(skill.getMcpToolIds());
         if (skill.getEnabled() != null) existing.setEnabled(skill.getEnabled());
         return ApiResponse.success("技能已更新", chatToolService.saveSkill(existing));
     }
