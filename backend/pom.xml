@@ -78,7 +78,21 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-tika-document-reader</artifactId>
         </dependency>
-        
+
+        <!-- MCP 客户端。刻意不用 spring-ai-starter-mcp-client*：starter 会带
+             McpClientAutoConfiguration，它按静态 yaml 建连接，与「运行时按租户配置建、
+             用完即弃」的设计冲突。
+             ⚠️ 只能用 webflux 这条线：httpclient 版基于 JDK HttpClient，不支持自定义
+             DNS 解析，SSRF 的钉 IP 防护会静默失效（详见 MCP 设计文档 §9）。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>mcp-spring-webflux</artifactId>
+        </dependency>
+
         <!-- Sa-Token 权限认证。Boot 4 需用 spring-boot4 系列 starter：
              与 boot3 版同为 1.45.0、jar 内只有占位类，差异纯在 POM
              （依赖 sa-token-jackson3 而非 sa-token-jackson），业务 API 不变。 -->
