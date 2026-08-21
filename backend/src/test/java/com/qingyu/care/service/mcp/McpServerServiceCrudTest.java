@@ -5,6 +5,7 @@ import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.McpTool;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
+import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -36,6 +37,8 @@ class McpServerServiceCrudTest {
     private McpToolRepository toolRepository;
     @Mock
     private McpToolExecutor executor;
+    @Mock
+    private AiSkillRepository skillRepository;
 
     @InjectMocks
     private McpServerService service;

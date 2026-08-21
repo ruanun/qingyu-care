@@ -2,11 +2,13 @@ package com.qingyu.care.service.mcp;
 
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
+import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.McpTool;
 import com.qingyu.care.enums.McpToolStatus;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
+import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +36,7 @@ public class McpServerService {
     private final McpServerRepository serverRepository;
     private final McpToolRepository toolRepository;
     private final McpToolExecutor executor;
+    private final AiSkillRepository skillRepository;
 
     /**
      * 按当前应用收窄的 server 列表。
@@ -174,5 +177,54 @@ public class McpServerService {
         server.setLastSyncError(null);
         serverRepository.save(server);
         return toolRepository.findByMcpServerId(serverId);
+    }
+
+    /** 统计有多少 skill 绑定了该 server 的工具，供前端删除确认弹窗显示。 */
+    public long countSkillsUsing(Long serverId) {
+        Set<Long> owned = ownedToolIds(serverId);
+        if (owned.isEmpty()) {
+            return 0;
+        }
+        return skillRepository.findAll().stream()
+                .filter(s -> s.getMcpToolIds() != null
+                        && s.getMcpToolIds().stream().anyMatch(owned::contains))
+                .count();
+    }
+
+    /**
+     * 删除 server：连带删工具行，<b>并摘掉 skill 里指向它们的绑定</b>。
+     *
+     * <p>⚠️ 不清理绑定的后果是静默降级：resolve() 的 filter-bound 查询查不到就自然跳过，
+     * 不报错也不打日志——skill 在界面上看起来仍绑着 N 个工具，实际挂给 LLM 的少了几个。
+     * 同「删站点勾选删文档必须逐篇走 deleteDocument」是同一类问题。
+     *
+     * <p>⚠️ 遍历 skill 用普通 JPA 查询即可：删除发生在请求线程、TenantContext 齐备，
+     * @Filter 会挡掉别的租户；<b>不要为此写 native SQL</b>，那会连别人的 skill 一起扫到。
+     */
+    @Transactional
+    public void deleteServer(Long serverId) {
+        McpServer server = getServer(serverId);
+        Set<Long> owned = ownedToolIds(serverId);
+
+        if (!owned.isEmpty()) {
+            for (AiSkill skill : skillRepository.findAll()) {
+                if (skill.getMcpToolIds() == null || skill.getMcpToolIds().isEmpty()) {
+                    continue;
+                }
+                if (skill.getMcpToolIds().removeIf(owned::contains)) {
+                    skillRepository.save(skill);
+                }
+            }
+        }
+        toolRepository.deleteByMcpServerId(serverId);
+        serverRepository.delete(server);
+    }
+
+    private Set<Long> ownedToolIds(Long serverId) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (McpTool t : toolRepository.findByMcpServerId(serverId)) {
+            ids.add(t.getId());
+        }
+        return ids;
     }
 }

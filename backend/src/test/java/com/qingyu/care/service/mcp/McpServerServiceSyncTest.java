@@ -4,6 +4,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.McpTool;
 import com.qingyu.care.enums.McpToolStatus;
+import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
 import org.junit.jupiter.api.*;
@@ -34,6 +35,8 @@ class McpServerServiceSyncTest {
     private McpToolRepository toolRepository;
     @Mock
     private McpToolExecutor executor;
+    @Mock
+    private AiSkillRepository skillRepository;
 
     @InjectMocks
     private McpServerService service;
