@@ -50,6 +50,8 @@ MCP 工具本质上什么都能做（改订单、发邮件、删数据），而�
 
 只读门槛落在 `resolve()` 的查询条件上（§5.3），不是在界面上拦——界面拦得住的东西，接口层拦不住。
 
+⚠️ **摩擦要在 UI 层解决，不能在安全层让步**：一个 20 工具的 server 逐个点只读会很烦，但答案不是「`readOnlyHint=true` 就自动标只读」（那等于信任远端自报），而是界面上提供**批量标注**——「按远端建议全选」一次点完，租户仍是那个做决定的人。见 §7.2。
+
 ### 2.4 连接不缓存：解析走数据库，调用才连远端
 
 工具调用 MVP 的 §11 把「MCP 连接缓存的生命周期」列为待核实，一直没解。既然工具清单已经落库（§2.6），`ChatToolService.resolve()` 就**根本不需要连远端**——直接从 `mcp_tool` 行造 `ToolCallback`，保持它现在这样的纯数据库操作。连接只在 LLM **真的调用**某个工具的那一刻建立，用完即弃。
@@ -85,7 +87,8 @@ MCP 工具本质上什么都能做（改订单、发邮件、删数据），而�
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `name` | varchar(100) NOT NULL | 服务器名。**限定为合法标识符**（`[A-Za-z][A-Za-z0-9_]*`），因为它要参与 LLM 可见的工具名，见 §5.2 |
+| `name` | varchar(100) NOT NULL | 显示名，**可中文**（如「订单系统」）。仅界面展示，不参与任何标识 |
+| `code` | varchar(50) NOT NULL | 标识符，`[a-z][a-z0-9_]*`，租户内唯一。**参与 LLM 可见的工具名**，见 §5.2。新建时可由 `name` 自动生成草稿供用户改，但落库前必须校验格式 |
 | `description` | varchar(500) | 用途描述，仅界面展示 |
 | `transport` | varchar(20) NOT NULL | `STREAMABLE_HTTP` \| `SSE`，默认前者 |
 | `url` | varchar(1000) NOT NULL | 远端端点 |
@@ -174,9 +177,11 @@ private Set<Long> mcpToolIds = new LinkedHashSet<>();
 
 ### 5.2 LLM 可见的工具名加命名空间
 
-**暴露名 = `{server.name}__{tool.name}`**（双下划线分隔）。
+**暴露名 = `{server.code}__{tool.name}`**（双下划线分隔）。
 
-理由：同一个 skill 可能绑两个 server 的同名工具（`search`、`query`、`get_user` 撞名概率很高），不加命名空间会让 LLM 收到两个同名工具，行为未定义。`server.name` 已在 §3.1 限定为合法标识符，拼出来仍是合法工具名。
+理由：同一个 skill 可能绑两个 server 的同名工具（`search`、`query`、`get_user` 撞名概率很高），不加命名空间会让 LLM 收到两个同名工具，行为未定义。
+
+⚠️ **用 `code` 而不是 `name`**：工具名必须是合法标识符，但不该因此逼租户把服务器叫 `order_system` 而不是「订单系统」——那是把数据模型的便利转嫁给用户。`name` 保持可中文的显示名，`code` 承担标识职责（范式同 `Tenant.code`）。
 
 调用时用 `tool.name`（原名）发给远端，前缀只存在于暴露给 LLM 的那一层。
 
@@ -202,9 +207,13 @@ List<McpTool> tools = mcpToolRepository
 
 后果是**安全降级且完全静默**：一个可写工具会重新出现在 `resolve()` 的结果里被 LLM 调用。必须有专门的单测钉住「同步后 `readOnly` 保持租户标注值」。
 
-### 6.2 SSRF 守卫套不上 MCP 传输层
+### 6.2 用错传输实现，SSRF 守卫静默失去 rebinding 防护
 
-见 §9。这是本设计唯一的前置阻塞项。
+§9 已实测确认守卫能套上，但**只在 webflux 那条线上成立**。若图省事换成 httpclient 版传输（JDK `HttpClient`），它不支持自定义 DNS 解析——代码照常编译、连接照常建立、功能照常可用，**只是钉 IP 那层没了**，退回到「校验时是公网、连接时翻内网」可绕过的状态。
+
+同理，漏掉 `followRedirect(false)` 会让 302 把请求带去未经校验的主机。
+
+这两条都是**静默失效**：没有报错、没有日志、功能表现完全正常。守护方式是在 `McpConnectionFactory` 上写明这两处的理由（同 `RestClientHttpToolExecutor` 的类注释），并在实施时保留一条断言「构造出的连接器带自定义 resolver」的单测。
 
 ### 6.3 只读门槛写在界面而非解析处
 
@@ -241,12 +250,15 @@ List<McpTool> tools = mcpToolRepository
 | POST | `/servers/{id}/sync` | 同步工具清单 |
 | GET | `/servers/{id}/tools` | 该 server 的工具清单 |
 | PUT | `/tools/{id}/read-only` | 租户标注只读位 |
+| PUT | `/tools/read-only/batch` | 批量标注（§2.3 的摩擦缓解，请求体为 `{toolIds: [], readOnly: bool}`）。⚠️ 每个 id 都要过租户守卫，不能因为是批量就只校验第一个 |
 
 ⚠️ `PUT /servers/{id}` 会被 `PutEndpointBodyRegistrationTest` 要求登记；`McpServerUpdateRequest` 会被另外三道哨兵各查一遍。凭据类字段（`authHeader`）的判空必须是 `!= null && !isBlank()`——前端不回显凭据、编辑弹窗把该字段初始化为空串却照样提交，只判 `!= null` 挡不住。
 
 ### 7.2 前端
 
-新页面「MCP 服务」（应用级配置页，外包 `<RequireApp>`）：服务器列表 + 新建/编辑弹窗（URL / 传输 / 凭据 / 超时）+「同步工具」按钮（显示 `lastSyncedAt` 与 `lastSyncError`）+ 展开查看工具清单（`DEPRECATED` 徽标、只读标注开关）。
+新页面「MCP 服务」（应用级配置页，外包 `<RequireApp>`）：服务器列表 + 新建/编辑弹窗（显示名 / `code` / URL / 传输 / 凭据 / 超时）+「同步工具」按钮（显示 `lastSyncedAt` 与 `lastSyncError`）+ 展开查看工具清单（`DEPRECATED` 徽标、只读标注开关）。
+
+**工具清单必须支持批量标注只读**（§2.3）：至少一个「按远端建议全选」——把所有 `readOnlyHint = true` 的工具一次标为只读。没有它，接一个 20 工具的 server 要点 20 次，用户会转而要求「自动信任远端」，安全判据就是这样一步步被磨掉的。
 
 Skill 编辑页的工具勾选区分两组：「HTTP 工具」与「MCP 工具」（后者按 server 分组显示）。
 
@@ -277,21 +289,33 @@ Skill 编辑页的工具勾选区分两组：「HTTP 工具」与「MCP 工具�
 
 1. **真连一个 MCP server** 走完「登记 → 同步 → 标只读 → 绑进 skill → 对话触发」，确认出站请求带着配置的凭据。理由同平台共享工具那条：凭据若在某个环节被清掉，症状是第三方返 401、模型拿着错误响应继续编答案，**全程无异常无日志**。
 2. **`DEPRECATED` 路径**：远端下线一个工具后再同步，确认是标记而非删行，且界面上有提示。
-3. **SSRF**：把 server URL 指向 `169.254.169.254` 或内网地址，确认被拒（§9 的结论决定这条能拒到什么程度）。
+3. **SSRF**：把 server URL 指向 `169.254.169.254` 或内网地址，确认被拒；再用一个 TTL=0、解析结果会翻转的域名验证 rebinding 也被挡（§9 已确认防护强度与 `RestClientHttpToolExecutor` 对等，这条验的是实现有没有真的照做）。
 
-## 9. 前置技术验证（实现前必须先做）
+## 9. SSRF 守卫：技术验证结论（2026-08-21 已实测）
 
-**这是本设计唯一的阻塞项，结论会影响 §4.1 的实现方式甚至 §2.2 的传输取舍。**
+现有的 SSRF 硬门槛不是简单的地址校验，而是 `SsrfGuard.resolveAndValidate(host)` + **自定义 Apache `DnsResolver` 把校验期解析出的 IP 钉进连接期** + `disableRedirectHandling()`，专门防 DNS rebinding / TOCTOU（见 `RestClientHttpToolExecutor` 的类注释）。MCP server 的 URL 由租户填写，与工具 URL 同等危险，**不能降格处理**。
 
-现有的 SSRF 硬门槛不是简单的地址校验，而是 `SsrfGuard.resolveAndValidate(host)` + **自定义 Apache `DnsResolver` 把校验期解析出的 IP 钉进连接期** + `disableRedirectHandling()`，专门防 DNS rebinding / TOCTOU（见 `RestClientHttpToolExecutor` 的类注释）。
+**结论：可以套上同等强度的守卫，不需要降级方案。** 实测四条：
 
-而 MCP 传输层用的是 Spring AI 自己的 HTTP 客户端。MCP server 的 URL 由租户填写，与工具 URL 同等危险，**不能降格处理**。
+1. **传输层的 HTTP 客户端可以由我们完全接管**。`javap` 确认
+   `WebClientStreamableHttpTransport.builder(WebClient$Builder)` 与
+   `.webClientBuilder(WebClient$Builder)` 都接受外部传入的 builder——底层连接器是我们的。
+2. **Reactor Netty 支持钉住解析结果**。`reactor-netty-core:1.3.6` 的
+   `reactor.netty.transport.ClientTransport` 上有 `public T resolver(io.netty.resolver.AddressResolverGroup<?>)`，
+   与 Apache HttpClient 的 `DnsResolver` 是同一类能力。`HttpClient.followRedirect(boolean)` 提供禁重定向。
+3. **引入 webflux 不会把本应用切成 reactive**。这是最需要实测的一条（classpath 推导型行为，纸面推理最容易翻车）。加依赖后真启动，日志为
+   `Starting Servlet engine: [Apache Tomcat/11.0.22]`，真实请求 `/api/widget.js` 返回 200。
+   因为 `spring-boot-starter-web` 带着 `DispatcherServlet`，`WebApplicationType` 仍判定 SERVLET。
+4. **不引 starter 就没有自动配置介入**。启动日志中无任何 MCP 自动配置输出。
 
-**要验证的**：能否给 `WebClientStreamableHttpTransport` 套上同等强度的守卫。最可能的路子是 WebClient + Reactor Netty 的自定义 `AddressResolverGroup`（把已校验的 IP 钉进连接期），外加禁用重定向跟随。
+**由此确定的实施要点**：
 
-**若验不通**，降级方案是「只允许 https + 出站前 `SsrfGuard` 校验解析地址」，接受挡不住 DNS rebinding。**降级必须显式写进本文与 CLAUDE.md**，不能默默接受——两者的防护强度差一个量级。
+- 依赖用 **`org.springframework.ai:spring-ai-mcp` + `org.springframework.ai:mcp-spring-webflux`**（版本由现有 `spring-ai-bom` 托管，勿写 version）。
+- ⚠️ **不要用 `spring-ai-starter-mcp-client*`**：starter 会带 `McpClientAutoConfiguration`，它按静态 yaml 建连接，与 §2.4「运行时按租户配置建、用完即弃」冲突。
+- ⚠️ **不能用 httpclient 版传输**（`spring-ai-autoconfigure-mcp-client-httpclient` 那条线）：它基于 JDK `HttpClient`，**不支持自定义 DNS 解析**，钉不住 IP。这条排除是硬性的，不是偏好。
+- `McpConnectionFactory` 的形状：`SsrfGuard.resolveAndValidate(host)` 拿到已校验地址 → 构造只对该 host 返回这批地址、其余 fail-closed 的 `AddressResolverGroup` → `HttpClient.create().resolver(...).followRedirect(false)` → `ReactorClientHttpConnector` → `WebClient.Builder` → `WebClientStreamableHttpTransport`。逐段对应 `RestClientHttpToolExecutor` 的既有做法。
 
-> 备注：若某个传输实现基于 JDK `HttpClient`，它**不支持自定义 DNS 解析**，那条路直接排除。
+> spike 期间临时加进 `pom.xml` 的两个依赖已回滚，实施时重新加。
 
 ## 10. 范围外（后续可能）
 
