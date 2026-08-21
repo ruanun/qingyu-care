@@ -116,9 +116,17 @@ public class ChatToolService {
      * {@code @Filter} 只拦截查询，不拦截主键加载）。这条路径的安全性本来只靠一个隐式不变量
      * ——「本租户的 McpTool.mcpServerId 只可能指向本租户的 McpServer」（由 Task 6 的同步逻辑
      * 建立）——是传递信任而非显式防御。故取到 server 后必须再用
-     * {@link TenantOwnershipGuard#belongsToCurrentContext} 显式校验一次归属，同本仓库其它
-     * findById 越权面的治理范式（{@code getTool}/{@code getSkill}）。读出的 server 含明文
-     * authHeader，校验绝不能省。
+     * {@link TenantOwnershipGuard#mutableInCurrentContext} 显式校验一次归属。
+     *
+     * <p>⚠️ <b>必须用写级守卫，不能用读级的 {@code belongsToCurrentContext}</b>——本仓库对两者的
+     * 取舍标准不是「读操作还是写操作」，而是「这个实体带不带密钥」：{@code getTool}（本文件）与
+     * {@code McpServerService.getServer} 对同样含明文 authHeader 的实体都用
+     * {@code mutableInCurrentContext}，只有无密钥的 {@code getSkill} 才用读级守卫。原因是
+     * {@code belongsToCurrentContext} 对 {@code entityTenantId == null} 无条件放行（那条豁免是
+     * 为「平台默认配置=有意共享」设计的），而本期 MCP 没有平台共享（{@code McpServer.scope} 恒为
+     * {@code TENANT}）——库里任何 {@code tenantId} 为 null 的 {@code McpServer} 行只可能是
+     * {@code TenantContext} 为空时误建（本仓库反复出过的「tenantId 静默落 NULL」事故模式），
+     * 用读级守卫会让这类误建行的明文 authHeader 被任意租户的对话链路取用去发起出站请求。
      */
     private List<ToolCallback> resolveMcpCallbacks(Set<Long> mcpToolIds, Set<String> exposedNames) {
         List<McpTool> tools =
@@ -136,7 +144,7 @@ public class ChatToolService {
                 log.warn("MCP server {} 已停用，跳过工具 {}", server.getCode(), t.getName());
                 continue;
             }
-            if (!TenantOwnershipGuard.belongsToCurrentContext(server.getTenantId(), server.getAppId())) {
+            if (!TenantOwnershipGuard.mutableInCurrentContext(server.getTenantId(), server.getAppId())) {
                 log.warn("MCP server {} 不属于当前租户上下文，跳过工具 mcpToolId={}", server.getId(), t.getId());
                 continue;
             }

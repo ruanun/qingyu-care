@@ -162,4 +162,22 @@ class ChatToolServiceMcpTest {
 
         assertThat(bundle.toolCallbacks()).isEmpty();
     }
+
+    @Test
+    @DisplayName("tenantId 为 null 的 McpServer（误建/脏数据）在有租户上下文时该工具不进 callbacks——"
+            + "写级守卫才会拒绝，读级守卫会对 null 无条件放行，这是本轮修复要挡住的回归")
+    void resolve_skipsWhenServerTenantIdIsNull() {
+        TenantContext.setTenantId(1L);
+        AiSkill skill = AiSkill.builder().name("售后").content("SOP").mcpToolIds(Set.of(10L)).build();
+        McpServer orphan = server("order");
+        orphan.setTenantId(null); // TenantContext 为空时误建的脏数据，不是「平台共享」
+        when(skillRepository.findByEnabledTrue()).thenReturn(List.of(skill));
+        when(mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(anyCollection(), eq(McpToolStatus.ACTIVE)))
+                .thenReturn(List.of(mcpTool()));
+        when(mcpServerRepository.findById(1L)).thenReturn(Optional.of(orphan));
+
+        var bundle = service().resolve();
+
+        assertThat(bundle.toolCallbacks()).isEmpty();
+    }
 }
