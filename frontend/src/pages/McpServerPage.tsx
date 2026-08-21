@@ -369,7 +369,10 @@ const McpServerPage: React.FC = () => {
                                 <Input
                                     type="number"
                                     value={editing?.timeoutMs ?? 10000}
-                                    onChange={(e) => setEditing({ ...editing, timeoutMs: parseInt(e.target.value, 10) })}
+                                    onChange={(e) => {
+                                        const v = parseInt(e.target.value, 10);
+                                        setEditing({ ...editing, timeoutMs: Number.isNaN(v) ? undefined : v });
+                                    }}
                                 />
                             </div>
                         </div>
@@ -390,7 +393,10 @@ const McpServerPage: React.FC = () => {
                         <Input
                             type="number"
                             value={editing?.maxResponseChars ?? 4000}
-                            onChange={(e) => setEditing({ ...editing, maxResponseChars: parseInt(e.target.value, 10) })}
+                            onChange={(e) => {
+                                const v = parseInt(e.target.value, 10);
+                                setEditing({ ...editing, maxResponseChars: Number.isNaN(v) ? undefined : v });
+                            }}
                         />
                     </div>
                     <DialogFooter>

@@ -261,8 +261,7 @@ List<McpTool> tools = mcpToolRepository
 | DELETE | `/servers/{id}` | 删除（连带删除其 `mcp_tool` 行 **并清理 skill 绑定**，见 §6.6） |
 | POST | `/servers/{id}/sync` | 同步工具清单 |
 | GET | `/servers/{id}/tools` | 该 server 的工具清单 |
-| PUT | `/tools/{id}/read-only` | 租户标注只读位 |
-| PUT | `/tools/read-only/batch` | 批量标注（§2.3 的摩擦缓解，请求体为 `{toolIds: [], readOnly: bool}`）。⚠️ 每个 id 都要过租户守卫，不能因为是批量就只校验第一个 |
+| PUT | `/tools/read-only` | 标注只读位，请求体为 `{toolIds: [], readOnly: bool}`；单条标注复用同一端点，传一元素数组（§2.3 的摩擦缓解本就要求批量能力，实现时未拆出单条专用端点）。⚠️ 每个 id 都要过租户守卫，不能因为是批量就只校验第一个 |
 
 ⚠️ `PUT /servers/{id}` 会被 `PutEndpointBodyRegistrationTest` 要求登记；`McpServerUpdateRequest` 会被另外三道哨兵各查一遍。凭据类字段（`authHeader`）的判空必须是 `!= null && !isBlank()`——前端不回显凭据、编辑弹窗把该字段初始化为空串却照样提交，只判 `!= null` 挡不住。
 

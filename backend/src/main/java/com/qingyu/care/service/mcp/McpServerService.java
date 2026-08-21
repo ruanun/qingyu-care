@@ -134,8 +134,20 @@ public class McpServerService {
      *
      * <p>⚠️ 失败时只写 lastSyncError、<b>一行工具都不动</b>：一次网络抖动不该让整套工具
      * 集体变 DEPRECATED 进而从对话里消失（语义同 WebPageSyncService 的「抓取失败保留旧内容」）。
+     *
+     * <p>⚠️ <b>本方法刻意不带 {@code @Transactional}</b>（复核终审 Finding 1）：带上它时，
+     * catch 块里 {@code server.setLastSyncError(...); serverRepository.save(server);} 这次
+     * 写入会在紧接着的 {@code throw new BusinessException(...)} 后被 Spring 默认回滚规则丢弃
+     * ——{@code BusinessException extends RuntimeException}，方法级 {@code @Transactional}
+     * 遇到未捕获的 unchecked 异常一律整体回滚，与「保留哪次 save」无关，行内 save 与外层事务
+     * 提交与否是两件事。后果是 {@code lastSyncError} 永远落不了库：界面的琥珀色警示条、
+     * 服务列表的失败图标全部沦为死代码，运营看不到任何失败原因。三条 repository 调用各自
+     * 已有 Spring Data JPA 默认的方法级事务会立即提交，去掉外层 {@code @Transactional} 不影响
+     * 单条 save 的原子性；代价是成功路径的多次 save 不再共享同一事务，可接受
+     * ——同 {@link com.qingyu.care.service.web.SiteCrawlService#startCrawl} 的取舍。
+     * 顺带关闭一条 deferred minor：不再让一次可能长达 {@code timeoutMs} 的出站网络往返占着
+     * 数据库连接。
      */
-    @Transactional
     public List<McpTool> sync(Long serverId) {
         McpServer server = getServer(serverId);
 

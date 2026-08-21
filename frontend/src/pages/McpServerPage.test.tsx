@@ -258,6 +258,41 @@ describe('McpServerPage 删除', () => {
     });
 });
 
+describe('McpServerPage 数值输入清空', () => {
+    /**
+     * 复核终审 Finding 4：`parseInt('', 10)` 是 `NaN`，`JSON.stringify` 会把它序列化成
+     * `null`；create 路径上显式的 JSON null 会覆盖实体的 `@Builder.Default`，撞上
+     * `timeoutMs`/`maxResponseChars` 的 `nullable = false` 约束，后端 500 而非字段级错误提示
+     * （update 路径无害，控制器的 `!= null` 守卫会跳过，仅 create 直接收实体反序列化）。
+     *
+     * 变异实验：把 onChange 里的 `Number.isNaN(v) ? undefined : v` 改回裸
+     * `parseInt(e.target.value, 10)`，本条必须转红——payload.timeoutMs 会是 `NaN` 而非
+     * `undefined`。
+     */
+    it('清空超时输入框后保存，提交的是 undefined 而非 NaN', async () => {
+        mockApi.createServer.mockResolvedValue(ok({ ...server1, id: 2 }));
+        await renderPage();
+
+        fireEvent.click(screen.getByRole('button', { name: /添加 MCP 服务/ }));
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByPlaceholderText('如：订单系统'), { target: { value: '新服务' } });
+        fireEvent.change(within(dialog).getByPlaceholderText('order'), { target: { value: 'neworder' } });
+        fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/mcp'), {
+            target: { value: 'https://x/mcp' },
+        });
+        // 两个 number 输入框：超时(ms) 在前，响应截断长度在后
+        const [timeoutInput] = within(dialog).getAllByRole('spinbutton');
+        fireEvent.change(timeoutInput, { target: { value: '' } });
+
+        fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
+
+        await waitFor(() => expect(mockApi.createServer).toHaveBeenCalled());
+        const payload = mockApi.createServer.mock.calls[0][0] as Partial<McpServer>;
+        expect(payload.timeoutMs).toBeUndefined();
+        expect(Number.isNaN(payload.timeoutMs)).toBe(false);
+    });
+});
+
 describe('McpServerPage 传输方式', () => {
     // R7：SSE 传输本期不可用（后端 McpConnectionFactory.create 对 SSE 直接抛
     // UnsupportedOperationException：WebFluxSseClientTransport 没有 base-URL setter，
