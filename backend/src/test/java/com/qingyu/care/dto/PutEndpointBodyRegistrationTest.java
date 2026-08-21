@@ -79,6 +79,11 @@ class PutEndpointBodyRegistrationTest {
                         + "Jackson 缺字段即 null，判空语义天然成立；且它只有 enabled/config 两个字段，"
                         + "服务层 updateRule 逐个判空");
 
+        exemptions.put(McpToolReadOnlyRequest.class,
+                "全量覆盖：toolIds/readOnly 都是 @NotEmpty/@NotNull 必填（@Valid 校验），控制器把两个值"
+                        + "整体传给 mcpServerService.markReadOnly，没有任何 if (x != null) 分支，"
+                        + "不存在判空恒真的失效模式");
+
         return exemptions;
     }
 

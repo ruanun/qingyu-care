@@ -7,6 +7,7 @@ import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.Application;
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.KnowledgeBase;
+import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import org.junit.jupiter.api.DisplayName;
@@ -94,7 +95,8 @@ class UpdateRequestFieldCoverageTest {
             AiToolUpdateRequest.class, AiTool.class,
             AiSkillUpdateRequest.class, AiSkill.class,
             ChatStrategyUpdateRequest.class, ChatStrategy.class,
-            KnowledgeBaseUpdateRequest.class, KnowledgeBase.class);
+            KnowledgeBaseUpdateRequest.class, KnowledgeBase.class,
+            McpServerUpdateRequest.class, McpServer.class);
 
     /**
      * 白名单：DTO 简单类名 → （字段名 → 刻意排除的理由）。理由是给人读的，必须能回答
@@ -145,6 +147,15 @@ class UpdateRequestFieldCoverageTest {
                 + "它曾经在改名字这条路径上被静默打回 true（DTO 的 enabled 写了 = true 初始化器使判空恒真），"
                 + "停用的知识库因此会被一次改名重新启用");
         whitelist.put("KnowledgeBaseUpdateRequest", knowledgeBase);
+
+        Map<String, String> mcpServer = new HashMap<>();
+        mcpServer.put("scope", "客户端可控字段，同 AiTool.scope/AiModelConfig.scope 的既有教训——本期恒为 "
+                + "TENANT，为将来平台共享预留，不放入 DTO 防止将来放开后重蹈自封 PLATFORM 的覆辙");
+        mcpServer.put("lastSyncedAt", "同步产生的系统时间戳，由 McpServerService.sync 同步成功时写入，"
+                + "不该由客户端 PUT 设置");
+        mcpServer.put("lastSyncError", "同步产生的系统状态字段，由 McpServerService.sync 写入/清空，"
+                + "不该由客户端 PUT 设置");
+        whitelist.put("McpServerUpdateRequest", mcpServer);
 
         return whitelist;
     }
