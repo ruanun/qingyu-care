@@ -4,6 +4,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.McpTool;
+import com.qingyu.care.enums.McpToolStatus;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.McpServerRepository;
@@ -13,8 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Optional;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.regex.Pattern;
 
 /**
@@ -112,5 +113,66 @@ public class McpServerService {
             updated++;
         }
         return updated;
+    }
+
+    /**
+     * 手动同步远端工具清单。请求线程内执行（一次往返、秒级，不进长任务池）。
+     *
+     * <p>三条分支：
+     * <ul>
+     *   <li>远端有、库里有 → 更新 description/inputSchema/readOnlyHint，status 置 ACTIVE
+     *   <li>远端有、库里无 → 新建，readOnly=false（未知一律当可写）
+     *   <li>库里有、远端无 → 标 DEPRECATED，<b>不删行</b>——工具可能已被 skill 绑定，
+     *       删行会让绑定悬空（resolve 查不到、界面也看不到，运营无从得知）
+     * </ul>
+     *
+     * <p>⚠️ <b>绝不覆盖 readOnly</b>：它是租户的安全标注，被远端的 schema 更新顺手冲掉，
+     * 等于静默把一个可写工具放回只读白名单。
+     *
+     * <p>⚠️ 失败时只写 lastSyncError、<b>一行工具都不动</b>：一次网络抖动不该让整套工具
+     * 集体变 DEPRECATED 进而从对话里消失（语义同 WebPageSyncService 的「抓取失败保留旧内容」）。
+     */
+    @Transactional
+    public List<McpTool> sync(Long serverId) {
+        McpServer server = getServer(serverId);
+
+        List<McpToolDescriptor> remote;
+        try {
+            remote = executor.listTools(server);
+        } catch (Exception e) {
+            server.setLastSyncError(e.getMessage());
+            serverRepository.save(server);
+            log.warn("MCP 同步失败 serverId={} 原因={}", serverId, e.getClass().getSimpleName());
+            throw new BusinessException("同步失败：" + e.getMessage());
+        }
+
+        Set<String> remoteNames = new LinkedHashSet<>();
+        for (McpToolDescriptor d : remote) {
+            remoteNames.add(d.name());
+            McpTool tool = toolRepository.findByMcpServerIdAndName(serverId, d.name())
+                    .orElseGet(() -> McpTool.builder()
+                            .mcpServerId(serverId)
+                            .name(d.name())
+                            .readOnly(false) // 未知一律当可写、不挂载
+                            .build());
+            tool.setDescription(d.description());
+            tool.setInputSchema(d.inputSchemaJson());
+            tool.setReadOnlyHint(d.readOnlyHint());
+            tool.setStatus(McpToolStatus.ACTIVE);
+            // ⚠️ 这里刻意不碰 tool.setReadOnly(...)，见方法注释
+            toolRepository.save(tool);
+        }
+
+        for (McpTool local : toolRepository.findByMcpServerId(serverId)) {
+            if (!remoteNames.contains(local.getName()) && local.getStatus() != McpToolStatus.DEPRECATED) {
+                local.setStatus(McpToolStatus.DEPRECATED);
+                toolRepository.save(local);
+            }
+        }
+
+        server.setLastSyncedAt(LocalDateTime.now());
+        server.setLastSyncError(null);
+        serverRepository.save(server);
+        return toolRepository.findByMcpServerId(serverId);
     }
 }
