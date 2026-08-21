@@ -11,6 +11,7 @@ import ModelConfigPage from './pages/ModelConfigPage';
 import ToolConfigPage from './pages/ToolConfigPage';
 import SkillConfigPage from './pages/SkillConfigPage';
 import StrategyConfigPage from './pages/StrategyConfigPage';
+import McpServerPage from './pages/McpServerPage';
 import LoginPage from './pages/LoginPage';
 import UserListPage from './pages/UserListPage';
 import ApplicationListPage from './pages/ApplicationListPage';
@@ -64,6 +65,7 @@ function App() {
           <Route path="ai-models" element={<RequireApp><ModelConfigPage /></RequireApp>} />
           <Route path="ai-tools" element={<RequireApp><ToolConfigPage /></RequireApp>} />
           <Route path="ai-skills" element={<RequireApp><SkillConfigPage /></RequireApp>} />
+          <Route path="mcp" element={<RequireApp><McpServerPage /></RequireApp>} />
           <Route path="handover-rules" element={<RequireApp><HandoverRulePage /></RequireApp>} />
           <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
           <Route path="ab-tests" element={<RequireApp><AbTestPage /></RequireApp>} />
