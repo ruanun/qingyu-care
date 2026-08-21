@@ -23,6 +23,8 @@ export interface AiSkill {
     description: string | null;
     content: string | null;
     toolIds: number[];
+    /** 绑定的 MCP 工具 id 集合（{@code mcp_tool.id}），与 toolIds 并列，见后端 AiSkill 实体 */
+    mcpToolIds: number[];
     enabled: boolean;
     createdAt: string;
     updatedAt: string;

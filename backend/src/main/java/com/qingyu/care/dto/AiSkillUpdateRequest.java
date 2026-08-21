@@ -50,5 +50,7 @@ public class AiSkillUpdateRequest {
     private String description;
     private String content;
     private Set<Long> toolIds;
+    /** ⚠️ 不写初始化器：UpdateRequestNoInitializerTest 会强制这一条 */
+    private Set<Long> mcpToolIds;
     private Boolean enabled;
 }

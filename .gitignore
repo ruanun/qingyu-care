@@ -43,3 +43,6 @@ test-output/
 
 # Cygwin/Git Bash 崩溃转储（脚本跑挂时会掉在当前目录）
 *.stackdump
+
+# Superpowers SDD 工作区（ledger/简报/review 包，纯临时产物）
+.superpowers/

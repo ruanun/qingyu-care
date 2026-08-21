@@ -11,12 +11,16 @@ import {
 } from '@/components/ui/dialog';
 import { aiSkillService, aiToolService } from '@/api/chat-tool';
 import type { AiSkill, AiTool } from '@/api/chat-tool';
+import { mcpApi } from '@/api/mcp';
+import type { McpServer, McpTool } from '@/api/mcp';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 const SkillConfigPage: React.FC = () => {
     const [skills, setSkills] = useState<AiSkill[]>([]);
     const [tools, setTools] = useState<AiTool[]>([]);
+    const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+    const [mcpToolsByServer, setMcpToolsByServer] = useState<Record<number, McpTool[]>>({});
     const [isLoading, setIsLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editing, setEditing] = useState<Partial<AiSkill> | null>(null);
@@ -25,9 +29,21 @@ const SkillConfigPage: React.FC = () => {
     const fetchAll = async () => {
         try {
             setIsLoading(true);
-            const [s, t] = await Promise.all([aiSkillService.list(), aiToolService.list()]);
+            const [s, t, ms] = await Promise.all([aiSkillService.list(), aiToolService.list(), mcpApi.listServers()]);
             throwIfFailed(s); setSkills(s.data);
             throwIfFailed(t); setTools(t.data);
+            throwIfFailed(ms); setMcpServers(ms.data);
+
+            const toolLists = await Promise.all(ms.data.map((srv) => mcpApi.listTools(srv.id)));
+            const map: Record<number, McpTool[]> = {};
+            ms.data.forEach((srv, i) => {
+                const res = toolLists[i];
+                throwIfFailed(res);
+                // 与后端 ChatToolService.resolveMcpCallbacks 的过滤条件保持一致：
+                // 只读 + ACTIVE + 所属 server 未停用——列出勾不上的工具只会让人以为是 bug。
+                map[srv.id] = res.data.filter((mt) => mt.readOnly === true && mt.status === 'ACTIVE' && srv.enabled);
+            });
+            setMcpToolsByServer(map);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
             toast({ variant: 'destructive', title: '加载失败', description: msg });
@@ -81,13 +97,19 @@ const SkillConfigPage: React.FC = () => {
         }
     };
 
-    const openCreate = () => { setEditing({ name: '', description: '', content: '', toolIds: [], enabled: true }); setIsDialogOpen(true); };
+    const openCreate = () => { setEditing({ name: '', description: '', content: '', toolIds: [], mcpToolIds: [], enabled: true }); setIsDialogOpen(true); };
     const openEdit = (s: AiSkill) => { setEditing({ ...s }); setIsDialogOpen(true); };
 
     const toggleTool = (toolId: number) => {
         const cur = editing?.toolIds || [];
         const next = cur.includes(toolId) ? cur.filter((x) => x !== toolId) : [...cur, toolId];
         setEditing({ ...editing, toolIds: next });
+    };
+
+    const toggleMcpTool = (toolId: number) => {
+        const cur = editing?.mcpToolIds || [];
+        const next = cur.includes(toolId) ? cur.filter((x) => x !== toolId) : [...cur, toolId];
+        setEditing({ ...editing, mcpToolIds: next });
     };
 
     return (
@@ -117,7 +139,7 @@ const SkillConfigPage: React.FC = () => {
                             <Card key={s.id} className={cn('flex flex-col hover:shadow-md', !s.enabled && 'opacity-60')}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-center justify-between mb-2">
-                                        <Badge variant="secondary" className="text-[10px]">{(s.toolIds?.length || 0)} 个工具</Badge>
+                                        <Badge variant="secondary" className="text-[10px]">{(s.toolIds?.length || 0) + (s.mcpToolIds?.length || 0)} 个工具</Badge>
                                         <Switch checked={s.enabled} onCheckedChange={() => handleToggle(s)} />
                                     </div>
                                     <CardTitle className="text-lg">{s.name}</CardTitle>
@@ -127,8 +149,8 @@ const SkillConfigPage: React.FC = () => {
                                     <p className="text-[11px] text-muted-foreground/70 line-clamp-3 whitespace-pre-wrap">{s.content}</p>
                                 </CardContent>
                                 <CardFooter className="pt-2 flex justify-end gap-2 border-t mt-auto">
-                                    <Button variant="outline" size="sm" onClick={() => openEdit(s)}><Edit2 className="w-3 h-3" /></Button>
-                                    <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(s.id)}><Trash2 className="w-3 h-3" /></Button>
+                                    <Button variant="outline" size="sm" aria-label="编辑技能" onClick={() => openEdit(s)}><Edit2 className="w-3 h-3" /></Button>
+                                    <Button variant="outline" size="sm" aria-label="删除技能" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(s.id)}><Trash2 className="w-3 h-3" /></Button>
                                 </CardFooter>
                             </Card>
                         ))}
@@ -149,7 +171,7 @@ const SkillConfigPage: React.FC = () => {
                         <Input value={editing?.description || ''} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
                         <label className="text-sm font-medium">正文（Markdown）</label>
                         <textarea className="w-full min-h-[160px] rounded-md border px-3 py-2 text-sm" value={editing?.content || ''} onChange={(e) => setEditing({ ...editing, content: e.target.value })} placeholder="当用户咨询退货时：\n1. 先用 query_order 查询订单状态\n2. ..." />
-                        <label className="text-sm font-medium">绑定工具</label>
+                        <label className="text-sm font-medium">HTTP 工具</label>
                         <div className="border rounded-md p-3 space-y-2 max-h-[140px] overflow-y-auto">
                             {tools.length === 0 ? (
                                 <p className="text-xs text-muted-foreground">尚无工具，请先到「工具」页创建</p>
@@ -163,6 +185,37 @@ const SkillConfigPage: React.FC = () => {
                                     <span className="text-muted-foreground text-xs truncate">{t.description}</span>
                                 </label>
                             ))}
+                        </div>
+
+                        <label className="text-sm font-medium">MCP 工具</label>
+                        <p className="text-xs text-muted-foreground/70">
+                            只列出已在「MCP 服务」页标注为只读、状态为已启用的工具；需要更多工具，请先去该页标注只读。
+                        </p>
+                        <div className="border rounded-md p-3 space-y-3 max-h-[160px] overflow-y-auto">
+                            {mcpServers.every((srv) => (mcpToolsByServer[srv.id] || []).length === 0) ? (
+                                <p className="text-xs text-muted-foreground">尚无可勾选的 MCP 工具</p>
+                            ) : mcpServers.map((srv) => {
+                                const toolsForServer = mcpToolsByServer[srv.id] || [];
+                                if (toolsForServer.length === 0) return null;
+                                return (
+                                    <div key={srv.id} className="space-y-1">
+                                        <p className="text-[11px] font-medium text-muted-foreground">{srv.name}</p>
+                                        {toolsForServer.map((mt) => {
+                                            const exposedName = `${srv.code}__${mt.name}`;
+                                            return (
+                                                <label key={mt.id} className="flex items-center gap-2 text-sm cursor-pointer pl-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={(editing?.mcpToolIds || []).includes(mt.id)}
+                                                        onChange={() => toggleMcpTool(mt.id)}
+                                                    />
+                                                    <span className="font-mono">{exposedName}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                     <DialogFooter>

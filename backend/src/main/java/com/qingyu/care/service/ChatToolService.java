@@ -6,10 +6,17 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.entity.McpServer;
+import com.qingyu.care.entity.McpTool;
+import com.qingyu.care.enums.McpToolStatus;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.AiToolRepository;
+import com.qingyu.care.repository.McpServerRepository;
+import com.qingyu.care.repository.McpToolRepository;
+import com.qingyu.care.service.mcp.McpToolCallback;
+import com.qingyu.care.service.mcp.McpToolExecutor;
 import com.qingyu.care.service.tool.HttpToolCallback;
 import com.qingyu.care.service.tool.HttpToolExecutor;
 import lombok.RequiredArgsConstructor;
@@ -19,8 +26,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,6 +47,9 @@ public class ChatToolService {
     private final HttpToolExecutor httpToolExecutor;
     private final ObjectMapper objectMapper;
     private final SharedCredentialMasker credentialMasker;
+    private final McpToolRepository mcpToolRepository;
+    private final McpServerRepository mcpServerRepository;
+    private final McpToolExecutor mcpToolExecutor;
 
     /** 运行时解析包：待注入系统提示的 skill 正文 + 待挂载的工具回调。 */
     public record ToolBundle(List<String> skillMarkdowns, List<ToolCallback> toolCallbacks) {
@@ -61,6 +73,7 @@ public class ChatToolService {
         }
         List<String> markdowns = new ArrayList<>();
         Set<Long> toolIds = new LinkedHashSet<>();
+        Set<Long> mcpToolIds = new LinkedHashSet<>();
         for (AiSkill s : skills) {
             if (s.getContent() != null && !s.getContent().isBlank()) {
                 markdowns.add(s.getContent());
@@ -68,14 +81,81 @@ public class ChatToolService {
             if (s.getToolIds() != null) {
                 toolIds.addAll(s.getToolIds());
             }
+            if (s.getMcpToolIds() != null) {
+                mcpToolIds.addAll(s.getMcpToolIds());
+            }
         }
         List<ToolCallback> callbacks = new ArrayList<>();
+        Set<String> exposedNames = new LinkedHashSet<>();
         if (!toolIds.isEmpty()) {
             for (AiTool t : resolveTools(toolIds)) {
+                if (!exposedNames.add(t.getName())) {
+                    log.warn("工具名重复，跳过 HTTP 工具 {}", t.getName());
+                    continue;
+                }
                 callbacks.add(new HttpToolCallback(t, httpToolExecutor, objectMapper));
             }
         }
+        if (!mcpToolIds.isEmpty()) {
+            callbacks.addAll(resolveMcpCallbacks(mcpToolIds, exposedNames));
+        }
         return new ToolBundle(markdowns, callbacks);
+    }
+
+    /**
+     * 解析 MCP 工具为 callback。
+     *
+     * <p><b>只读门槛与 DEPRECATED 过滤都落在这条查询上</b>，不在界面上拦——界面拦得住的
+     * 东西，接口层拦不住。
+     *
+     * <p>查询是 filter-bound 的普通 JPA 查询：McpTool 继承 BaseTenantEntity，@Filter 会
+     * 挡掉别的租户的 id。⚠️ <b>不要改成 native</b>，本期没有平台共享，绕过过滤器只会引入
+     * 跨租户越权（那正是共享工具那条路径反复出问题的地方）。
+     *
+     * <p>⚠️ <b>取 server 用的 {@code findById} 不受 @Filter 保护</b>（Hibernate 6 的
+     * {@code @Filter} 只拦截查询，不拦截主键加载）。这条路径的安全性本来只靠一个隐式不变量
+     * ——「本租户的 McpTool.mcpServerId 只可能指向本租户的 McpServer」（由 Task 6 的同步逻辑
+     * 建立）——是传递信任而非显式防御。故取到 server 后必须再用
+     * {@link TenantOwnershipGuard#mutableInCurrentContext} 显式校验一次归属。
+     *
+     * <p>⚠️ <b>必须用写级守卫，不能用读级的 {@code belongsToCurrentContext}</b>——本仓库对两者的
+     * 取舍标准不是「读操作还是写操作」，而是「这个实体带不带密钥」：{@code getTool}（本文件）与
+     * {@code McpServerService.getServer} 对同样含明文 authHeader 的实体都用
+     * {@code mutableInCurrentContext}，只有无密钥的 {@code getSkill} 才用读级守卫。原因是
+     * {@code belongsToCurrentContext} 对 {@code entityTenantId == null} 无条件放行（那条豁免是
+     * 为「平台默认配置=有意共享」设计的），而本期 MCP 没有平台共享（{@code McpServer.scope} 恒为
+     * {@code TENANT}）——库里任何 {@code tenantId} 为 null 的 {@code McpServer} 行只可能是
+     * {@code TenantContext} 为空时误建（本仓库反复出过的「tenantId 静默落 NULL」事故模式），
+     * 用读级守卫会让这类误建行的明文 authHeader 被任意租户的对话链路取用去发起出站请求。
+     */
+    private List<ToolCallback> resolveMcpCallbacks(Set<Long> mcpToolIds, Set<String> exposedNames) {
+        List<McpTool> tools =
+                mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(mcpToolIds, McpToolStatus.ACTIVE);
+        List<ToolCallback> out = new ArrayList<>();
+        Map<Long, McpServer> serverCache = new LinkedHashMap<>();
+        for (McpTool t : tools) {
+            McpServer server = serverCache.computeIfAbsent(t.getMcpServerId(),
+                    id -> mcpServerRepository.findById(id).orElse(null));
+            if (server == null) {
+                log.warn("MCP server 不存在，跳过工具 mcpToolId={}", t.getId());
+                continue;
+            }
+            if (!Boolean.TRUE.equals(server.getEnabled())) {
+                log.warn("MCP server {} 已停用，跳过工具 {}", server.getCode(), t.getName());
+                continue;
+            }
+            if (!TenantOwnershipGuard.mutableInCurrentContext(server.getTenantId(), server.getAppId())) {
+                log.warn("MCP server {} 不属于当前租户上下文，跳过工具 mcpToolId={}", server.getId(), t.getId());
+                continue;
+            }
+            String exposed = McpToolCallback.exposedName(server, t);
+            if (!exposedNames.add(exposed)) {
+                log.warn("工具名重复，跳过 MCP 工具 {}", exposed);
+                continue;
+            }
+            out.add(new McpToolCallback(server, t, mcpToolExecutor, objectMapper));
+        }
+        return out;
     }
 
     /**

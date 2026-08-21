@@ -128,7 +128,7 @@ Spring AI 默认开启内部工具执行循环（`ToolCallingManager`），模�
 1. **流式工具调用**（`streamChat()` 带工具 + 多轮 token 聚合计量）——主产品面（widget / 开放 SSE），紧随 MVP。
 2. **Skill 命中触发/路由**（description 向量或 LLM 选 skill）——skill 数量多、全量注入撑爆上下文时上。
 3. **写/动作类工具 + 敏感工具人工确认流**（挂起-恢复）。
-4. **MCP 接入**（Spring AI 1.1.8 MCP 客户端把远端工具转 `ToolCallback`）。
+4. ~~**MCP 接入**（Spring AI 1.1.8 MCP 客户端把远端工具转 `ToolCallback`）~~ ✅ **已完成（2026-08-21）**。原描述写于 1.1.8 时期，实际接入按 2.0 重新核实、不用官方 starter、自建 client，详见 `docs/superpowers/specs/2026-08-21-mcp-integration-design.md`。
 5. **插件机制**（打包 skill+工具+配置为可安装/停用单元；再上层才是 tgo 式独立插件运行时/市场）。
 6. **平台共享工具/skill**（`OwnerScope.PLATFORM`，仿 `AiModelConfig` 共享模型回退语义）。
 7. **Skill 与 ChatStrategy 场景绑定**（按场景暴露不同 skill/工具）。
@@ -138,4 +138,4 @@ Spring AI 默认开启内部工具执行循环（`ToolCallingManager`），模�
 
 - Spring AI **1.1.8** 里 `ChatClient` 的 `.toolCallbacks(...)` 与自定义 `ToolCallback` / `ToolDefinition` 的确切 API（进入 writing-plans / 实现前用 context7 对 1.1.8 核实，勿照搬旧版）。
 - Spring AI 内部工具执行循环（`ToolCallingManager`）默认开启的确认，及其对 `ChatResponse` usage 聚合的行为。
-- MCP（若日后启用）连接缓存的生命周期。
+- ~~MCP（若日后启用）连接缓存的生命周期~~ ✅ **已闭合（2026-08-21）**：答案是**不缓存**——工具清单已落库，`ChatToolService.resolve()` 只读数据库不连远端，连接只在工具被调用那一刻建立、用完即弃。详见 `docs/superpowers/specs/2026-08-21-mcp-integration-design.md` §2.4。
