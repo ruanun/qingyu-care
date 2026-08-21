@@ -111,6 +111,14 @@ public class ChatToolService {
      * <p>查询是 filter-bound 的普通 JPA 查询：McpTool 继承 BaseTenantEntity，@Filter 会
      * 挡掉别的租户的 id。⚠️ <b>不要改成 native</b>，本期没有平台共享，绕过过滤器只会引入
      * 跨租户越权（那正是共享工具那条路径反复出问题的地方）。
+     *
+     * <p>⚠️ <b>取 server 用的 {@code findById} 不受 @Filter 保护</b>（Hibernate 6 的
+     * {@code @Filter} 只拦截查询，不拦截主键加载）。这条路径的安全性本来只靠一个隐式不变量
+     * ——「本租户的 McpTool.mcpServerId 只可能指向本租户的 McpServer」（由 Task 6 的同步逻辑
+     * 建立）——是传递信任而非显式防御。故取到 server 后必须再用
+     * {@link TenantOwnershipGuard#belongsToCurrentContext} 显式校验一次归属，同本仓库其它
+     * findById 越权面的治理范式（{@code getTool}/{@code getSkill}）。读出的 server 含明文
+     * authHeader，校验绝不能省。
      */
     private List<ToolCallback> resolveMcpCallbacks(Set<Long> mcpToolIds, Set<String> exposedNames) {
         List<McpTool> tools =
@@ -120,7 +128,16 @@ public class ChatToolService {
         for (McpTool t : tools) {
             McpServer server = serverCache.computeIfAbsent(t.getMcpServerId(),
                     id -> mcpServerRepository.findById(id).orElse(null));
-            if (server == null || !Boolean.TRUE.equals(server.getEnabled())) {
+            if (server == null) {
+                log.warn("MCP server 不存在，跳过工具 mcpToolId={}", t.getId());
+                continue;
+            }
+            if (!Boolean.TRUE.equals(server.getEnabled())) {
+                log.warn("MCP server {} 已停用，跳过工具 {}", server.getCode(), t.getName());
+                continue;
+            }
+            if (!TenantOwnershipGuard.belongsToCurrentContext(server.getTenantId(), server.getAppId())) {
+                log.warn("MCP server {} 不属于当前租户上下文，跳过工具 mcpToolId={}", server.getId(), t.getId());
                 continue;
             }
             String exposed = McpToolCallback.exposedName(server, t);

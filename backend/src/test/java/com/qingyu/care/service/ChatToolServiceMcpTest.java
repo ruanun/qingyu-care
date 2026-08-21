@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.entity.McpServer;
@@ -11,6 +12,7 @@ import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
 import com.qingyu.care.service.mcp.McpToolExecutor;
 import com.qingyu.care.service.tool.HttpToolExecutor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,6 +54,17 @@ class ChatToolServiceMcpTest {
         McpServer s = McpServer.builder().name("订单系统").code(code).url("https://x/mcp").build();
         s.setId(1L);
         return s;
+    }
+
+    private McpTool mcpTool() {
+        McpTool tool = McpTool.builder().mcpServerId(1L).name("query_order").inputSchema("{}").readOnly(true).build();
+        tool.setId(10L);
+        return tool;
+    }
+
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
     }
 
     @Test
@@ -101,5 +114,52 @@ class ChatToolServiceMcpTest {
         var bundle = service().resolve();
 
         assertThat(bundle.toolCallbacks()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("server 已停用时该工具不进 callbacks")
+    void resolve_skipsWhenServerDisabled() {
+        AiSkill skill = AiSkill.builder().name("售后").content("SOP").mcpToolIds(Set.of(10L)).build();
+        McpServer disabled = server("order");
+        disabled.setEnabled(false);
+        when(skillRepository.findByEnabledTrue()).thenReturn(List.of(skill));
+        when(mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(anyCollection(), eq(McpToolStatus.ACTIVE)))
+                .thenReturn(List.of(mcpTool()));
+        when(mcpServerRepository.findById(1L)).thenReturn(Optional.of(disabled));
+
+        var bundle = service().resolve();
+
+        assertThat(bundle.toolCallbacks()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("server 查不到时跳过且不抛异常")
+    void resolve_skipsWhenServerMissing() {
+        AiSkill skill = AiSkill.builder().name("售后").content("SOP").mcpToolIds(Set.of(10L)).build();
+        when(skillRepository.findByEnabledTrue()).thenReturn(List.of(skill));
+        when(mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(anyCollection(), eq(McpToolStatus.ACTIVE)))
+                .thenReturn(List.of(mcpTool()));
+        when(mcpServerRepository.findById(1L)).thenReturn(Optional.empty());
+
+        var bundle = service().resolve();
+
+        assertThat(bundle.toolCallbacks()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("server 不属于当前租户上下文时该工具不进 callbacks（findById 不受 @Filter 保护，须显式校验）")
+    void resolve_skipsWhenServerBelongsToAnotherTenant() {
+        TenantContext.setTenantId(1L);
+        AiSkill skill = AiSkill.builder().name("售后").content("SOP").mcpToolIds(Set.of(10L)).build();
+        McpServer other = server("order");
+        other.setTenantId(2L); // 属于别的租户
+        when(skillRepository.findByEnabledTrue()).thenReturn(List.of(skill));
+        when(mcpToolRepository.findByIdInAndStatusAndReadOnlyTrue(anyCollection(), eq(McpToolStatus.ACTIVE)))
+                .thenReturn(List.of(mcpTool()));
+        when(mcpServerRepository.findById(1L)).thenReturn(Optional.of(other));
+
+        var bundle = service().resolve();
+
+        assertThat(bundle.toolCallbacks()).isEmpty();
     }
 }
