@@ -128,6 +128,9 @@ class McpServerServiceSyncTest {
     void sync_failure_leavesToolsUntouched() {
         McpTool existing = McpTool.builder().mcpServerId(1L).name("query_order").build();
         when(executor.listTools(server)).thenThrow(new IllegalStateException("连接超时"));
+        // 把 existing 真正接进 mock 链路：正确实现的失败分支根本不会调用它，
+        // 用 lenient() 避免被判 UnnecessaryStubbing。
+        lenient().when(toolRepository.findByMcpServerId(1L)).thenReturn(List.of(existing));
 
         assertThatThrownBy(() -> service.sync(1L)).isInstanceOf(RuntimeException.class);
 
