@@ -38,7 +38,19 @@ Spring AI 2.0 提供了 `McpToolCallbackAutoConfiguration`、`SyncMcpToolCallbac
 
 ### 2.2 只支持远端 HTTP 类传输，不做 stdio
 
-支持 `STREAMABLE_HTTP`（主）与 `SSE`（兼容旧 server）。
+> ⚠️ **本节实施后与原计划有出入，2026-08-21 收尾时改写**：原计划是 `STREAMABLE_HTTP`（主）与
+> `SSE`（兼容旧 server）都支持。实施发现 **`SSE` 本期做不出来**，见下方修正说明；`McpTransport`
+> 枚举仍保留 `SSE` 值供将来 SDK 修好后再接线。
+
+**只接线 `STREAMABLE_HTTP`；`SSE` 保留枚举值但不接线，请求时直接拒绝**：`McpConnectionFactory.create()`
+遇到 `server.transport == SSE` 直接抛 `UnsupportedOperationException`，前端「传输方式」下拉里
+该选项禁用不可选（仍可见，标注「暂不支持」）。
+
+**不接线的原因**：Spring AI MCP SDK 的 `WebFluxSseClientTransport` 只有 `sseEndpoint(String)`，
+**没有 base-URL setter**——`javap` 证实 base URL 只能来自 `WebClient.Builder.baseUrl(...)`，而
+`McpConnectionFactory` 的构造方式是只设 `clientConnector`（承载 SSRF 守卫）不设 `baseUrl`，硬接
+只会做出一个对着相对路径 `/sse` 发请求、**静默连不上**的分支。该类本身也已被 SDK 标
+`@Deprecated(forRemoval=true)`——不值得为一个即将移除的 API 补一层 baseUrl 转接。
 
 **stdio 不做**：它要求在平台服务器上 `fork` 子进程执行租户填写的命令行，等于给租户一个远程命令执行入口，比现有 `HttpToolCallback` 的 SSRF 面严重一个量级。多租户 SaaS 下没有安全的做法。
 
@@ -90,7 +102,7 @@ MCP 工具本质上什么都能做（改订单、发邮件、删数据），而�
 | `name` | varchar(100) NOT NULL | 显示名，**可中文**（如「订单系统」）。仅界面展示，不参与任何标识 |
 | `code` | varchar(50) NOT NULL | 标识符，`[a-z][a-z0-9_]*`，租户内唯一。**参与 LLM 可见的工具名**，见 §5.2。新建时可由 `name` 自动生成草稿供用户改，但落库前必须校验格式 |
 | `description` | varchar(500) | 用途描述，仅界面展示 |
-| `transport` | varchar(20) NOT NULL | `STREAMABLE_HTTP` \| `SSE`，默认前者 |
+| `transport` | varchar(20) NOT NULL | `STREAMABLE_HTTP` \| `SSE`，默认前者。⚠️ `SSE` 枚举值保留但本期不接线，见 §2.2 修正说明 |
 | `url` | varchar(1000) NOT NULL | 远端端点 |
 | `authHeader` | varchar(1000) | 静态鉴权头，格式同 `AiTool.authHeader`（`"Header-Name: value"`）。明文存储，与 `AiTool.authHeader` / `AiModelConfig.apiKey` 同属既有技术债，本期不单独治理 |
 | `timeoutMs` | int NOT NULL | 默认 **10000**（比 HTTP 工具的 5000 宽，因为多一次 `initialize` 握手） |

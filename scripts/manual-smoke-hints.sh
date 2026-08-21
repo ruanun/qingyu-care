@@ -39,6 +39,7 @@ readonly RULES=(
   'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml|ChatStrategy|HybridRetrieval|RetrievalScope|KeywordSearchDao::### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
   'AiTool|ChatToolService|SharedCredentialMasker|AiToolRepository::### 平台共享工具（`AiTool.scope`）'
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::### 改动已读回执链路后必须手工验证'
+  'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::### 改动 MCP 接入链路后必须手工验证'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then

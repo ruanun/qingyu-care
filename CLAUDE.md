@@ -139,6 +139,13 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 
 ⚠️ 也试过「摘掉判定重新 build」的变异法，**那条路不划算**：`visibilitychange` 监听器不一起摘就无法归因恢复后的上报，且要动入库产物 `widget.js`。探针法不改产品代码就能直接观测消息到没到，更直接。
 
+### 改动 MCP 接入链路后必须手工验证
+自动化测试覆盖不到的四条：
+1. **真连一个 MCP server**：走完「登记 → 同步 → 标只读 → 绑进 skill → 对话触发」，确认出站请求带着配置的凭据。⚠️ 凭据若在某个环节被清掉，症状同平台共享工具那条——第三方返 401，模型拿着错误响应继续编答案，**全程无异常无日志**。
+2. **`DEPRECATED` 路径**：远端下线一个工具后再同步，确认是标记而非删行、界面上有提示、且该工具从 skill 的可勾选列表消失。
+3. **SSRF**：URL 指向 `169.254.169.254` 确认被拒；再用一个 TTL=0、解析结果会翻转的域名验证 rebinding 也被挡。
+4. **凭据不被空串清空**：编辑 server 只改名字保存，确认 `authHeader` 仍在（前端不回显凭据）。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -263,6 +270,54 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    租户建 skill 绑定它 → 发一句触发工具的对话 → **确认出站请求头里带着那个平台凭据**。理由：
    脱敏若误伤运行时路径，症状是第三方返 401、模型拿着错误响应继续编答案、**全程无异常无
    日志**，只有真机能发现。
+
+### MCP 接入（`service/mcp/`）
+
+远端 MCP server 的工具清单同步进 `mcp_server`/`mcp_tool` 两张表（均继承
+`BaseTenantEntity`），运行时由 `ChatToolService.resolve()` 与现有 HTTP 工具合并进同一份
+`toolCallbacks`。设计文档：`docs/superpowers/specs/2026-08-21-mcp-integration-design.md`。
+
+⚠️ 容易写错的地方：
+
+1. **连接不缓存**：`resolve()` 只读数据库，不连远端——工具清单已经落库，解析阶段根本不需要
+   MCP 协议往返。连接只在 LLM **真的调用**某个工具那一刻由 `McpConnectionFactory` 建立，
+   `McpToolCallback.call()` 用完即关（`McpConnection.close()` 同时关 `McpSyncClient` 与
+   `PinnedAddressResolverGroup`，二者缺一都会在长期运行下泄漏——用户自定义的
+   `AddressResolverGroup` 不会被 Reactor Netty 或 SDK 自动关闭）。换来的是省掉一整类连接池
+   生命周期 bug（按租户缓存的失效策略、陈旧连接、跨租户串号），代价是每次调用多一次
+   `initialize` 握手。
+2. **只读门槛落在 `resolveMcpCallbacks()` 的查询条件上，不在界面拦**：
+   `McpToolRepository.findByIdInAndStatusAndReadOnlyTrue` 同时卡 `readOnly = true` 与
+   `status = ACTIVE`。界面把可写工具置灰挡不住接口层直接提交 `mcpToolIds`，门槛必须落在这条
+   查询里。
+3. **同步绝不覆盖 `readOnly`**：`McpTool.readOnly` 是租户自己标注的安全判据；`readOnlyHint`
+   （远端 annotation 自报、可选不填、不可信）只作界面默认建议值。`McpServerService.sync()`
+   每次刷新 `description`/`inputSchema`/`readOnlyHint` 时刻意不碰 `readOnly`——一旦被顺手带
+   进 upsert，后果是安全降级且完全静默：一个可写工具重新出现在 `resolve()` 结果里被 LLM
+   调用。
+4. **远端工具消失时标 `DEPRECATED`，不删行**：工具可能已被某个 skill 的 `mcpToolIds` 绑定，
+   删行会让绑定悬空（`resolve()` 查不到、界面也看不到，运营无从得知）。同步失败时同理更
+   保守——只写 `lastSyncError`，一行工具都不动，一次网络抖动不该让整套工具集体从对话里
+   消失。
+5. **LLM 可见的工具名 = `{server.code}__{tool.name}`**（双下划线）：避免两个 server 挂同名
+   工具（`search`/`query` 撞名概率很高）让 LLM 收到语义不明的重复工具名。前缀只存在于暴露
+   给 LLM 的那一层，`McpToolCallback.call()` 发给远端用的是原始 `tool.getName()`。
+6. **SSRF 守卫只能套在 webflux 传输上**：`McpConnectionFactory` 用
+   `WebClientStreamableHttpTransport`（Reactor Netty）配合自定义 `PinnedAddressResolverGroup`
+   把 `SsrfGuard` 校验期解析出的 IP 钉进连接期，语义同 `RestClientHttpToolExecutor`。**换成
+   httpclient 版传输会静默失去这层防护**——它基于 JDK `HttpClient`，不支持自定义 DNS
+   解析，代码照常编译、连接照常建立、功能照常可用，只是钉 IP 那层没了，退回「校验时公网、
+   连接时翻内网」可绕过的状态。同理漏掉 `.followRedirect(false)` 会让 302 把请求带去未经
+   校验的主机。
+7. **删 `McpServer` 必须同时清理 skill 绑定**：`McpServerService.deleteServer` 在删工具行前
+   先遍历所有 `AiSkill` 摘掉指向这些工具 id 的绑定。漏了的后果是静默降级——`resolve()` 的
+   filter-bound 查询查不到就自然跳过，不报错不打日志，skill 界面上仍显示绑着 N 个工具，
+   实际挂给 LLM 的少了几个。
+8. **SSE 传输本期不支持**：`McpTransport.SSE` 枚举值保留，但 `McpConnectionFactory.create()`
+   遇到它直接抛 `UnsupportedOperationException`，前端下拉里该选项禁用不可选。原因是 MCP
+   SDK 的 `WebFluxSseClientTransport` 已标 `@Deprecated(forRemoval=true)`，且只有
+   `sseEndpoint(String)`、没有 base-URL setter——硬接只会做出一个对着相对路径发请求、静默
+   连不上的分支。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
