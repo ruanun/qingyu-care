@@ -76,6 +76,10 @@ public class McpConnectionFactory {
                 .endpoint(server.getUrl())
                 .build();
 
+        // ⚠️ 这才是给慢工具封顶的那一层：SDK 内部是 Reactor 的 .timeout(...)，语义是**单个
+        // JSON-RPC 请求的响应总时长上限**，远端持续吐进度也不豁免（实测见
+        // McpTimeoutSemanticsTest）。因此一次 callTool 实际能跑多久 ≈ 2×timeoutMs——
+        // initialize 与 tools/call 是两次请求、各自享有独立的一份，不是共用一个预算。
         McpSyncClient client = McpClient.sync(transport)
                 .requestTimeout(Duration.ofMillis(server.getTimeoutMs()))
                 .build();
@@ -105,6 +109,11 @@ public class McpConnectionFactory {
                 // 只设 responseTimeout 时连接阶段仍走 Netty 默认 30s，租户配的 timeoutMs 对
                 // 「地址不可达/端口不通」这种最常见的错误配置形态完全不生效，必须显式钉连接超时。
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, timeoutMs)
+                // ⚠️ 这层**不是**响应总时长，是「相邻两次网络读之间的最大间隔」（底层就是
+                // ReadTimeoutHandler，请求发出后装上、响应完全收完才卸掉）。所以远端只要
+                // 持续吐字节（SSE 进度/心跳），它永远不触发——真正给慢工具封顶的是
+                // create() 里 SDK 那层 requestTimeout。两层同名不同义，见
+                // McpTimeoutSemanticsTest 的三条真实 TCP 时序实验。
                 .responseTimeout(Duration.ofMillis(timeoutMs));
     }
 

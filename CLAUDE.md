@@ -329,6 +329,16 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
     对它没有任何约束。曾是 `varchar(1000)`，真机接入 context7 时整个 server 接不进来。
     `McpToolLongDescriptionIT` 守住新建库；**存量库另需跑迁移 SQL**——`ddl-auto: update`
     只加列、不改已有列的类型，改了注解也不会动线上那一列，症状与改之前一模一样。
+11. **`timeoutMs` 是「单次请求的响应总时长」，不是连接超时**：同一个值同时喂给 Netty 的
+    `responseTimeout` 与 MCP SDK 的 `requestTimeout`，两者同名不同义——前者是**相邻两次
+    网络读之间的最大间隔**（`ReadTimeoutHandler`），远端只要持续吐字节就永不触发；真正给
+    慢工具封顶的是后者（SDK 内部是 Reactor 的 `.timeout(...)`，**总时长，吐进度也不豁免**）。
+    两个推论：一次 `callTool` 的实际耗时上限 ≈ `2×timeoutMs`（`initialize` 与 `tools/call`
+    是两次请求、各享独立一份，**不是**共用一个预算）；同步工具清单永远撞不上它（毫秒级
+    往返），所以「同步正常但工具调用失败」是这条的典型症状，别去查连通性。
+    `McpTimeoutSemanticsTest` 起真实 HTTP server 用 TCP 时序把两层分别钉住（静默必被 Netty
+    掐断 / 持续心跳能穿透那层 / 心跳救不了 SDK 那层），变异验证过：摘掉 `responseTimeout`
+    只有「静默」那条转红，另两条仍绿——这正说明它们分属两层。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
