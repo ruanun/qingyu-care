@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { throwIfFailed } from '@/lib/apiResult';
 import { Sparkles, Plus, Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -57,6 +57,33 @@ const SkillConfigPage: React.FC = () => {
         fetchAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    /**
+     * 真正会挂给 LLM 的 MCP 工具 id 集合。
+     *
+     * <p>mcpToolsByServer 已按「只读 + ACTIVE + server 未停用」过滤过（与后端
+     * ChatToolService.resolveMcpCallbacks 同条件），这里直接摊平复用，不再重写一遍判据。
+     */
+    const usableMcpToolIds = useMemo(
+        () => new Set(Object.values(mcpToolsByServer).flat().map((mt) => mt.id)),
+        [mcpToolsByServer],
+    );
+
+    /**
+     * 卡片计数只算真正生效的工具，并把失效的绑定数显式摆出来。
+     *
+     * <p>⚠️ <b>不能拿 mcpToolIds.length 直接当数</b>：远端下线工具时同步只标 DEPRECATED、
+     * 刻意不删行（删了会让绑定悬空），所以 skill 上的绑定必然残留。直接计数的后果是
+     * 「卡片显示绑着 N 个，实际 LLM 一个都拿不到」，且无任何提示——真机冒烟实拍过。
+     */
+    const countTools = (s: AiSkill) => {
+        const boundMcpIds = s.mcpToolIds || [];
+        const usable = boundMcpIds.filter((id) => usableMcpToolIds.has(id)).length;
+        return {
+            effective: (s.toolIds?.length || 0) + usable,
+            stale: boundMcpIds.length - usable,
+        };
+    };
 
     const handleToggle = async (s: AiSkill) => {
         try {
@@ -135,11 +162,20 @@ const SkillConfigPage: React.FC = () => {
                     </Card>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {skills.map((s) => (
+                        {skills.map((s) => {
+                            const { effective, stale } = countTools(s);
+                            return (
                             <Card key={s.id} className={cn('flex flex-col hover:shadow-md', !s.enabled && 'opacity-60')}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-center justify-between mb-2">
-                                        <Badge variant="secondary" className="text-[10px]">{(s.toolIds?.length || 0) + (s.mcpToolIds?.length || 0)} 个工具</Badge>
+                                        <div className="flex items-center gap-1.5">
+                                            <Badge variant="secondary" className="text-[10px]">{effective} 个工具</Badge>
+                                            {stale > 0 && (
+                                                <Badge variant="destructive" className="text-[10px]" title="这些 MCP 工具已被远端下线或取消只读标注，不会挂给 AI；请到「MCP 服务」页处理后重新编辑本技能">
+                                                    {stale} 个已失效
+                                                </Badge>
+                                            )}
+                                        </div>
                                         <Switch checked={s.enabled} onCheckedChange={() => handleToggle(s)} />
                                     </div>
                                     <CardTitle className="text-lg">{s.name}</CardTitle>
@@ -153,7 +189,8 @@ const SkillConfigPage: React.FC = () => {
                                     <Button variant="outline" size="sm" aria-label="删除技能" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(s.id)}><Trash2 className="w-3 h-3" /></Button>
                                 </CardFooter>
                             </Card>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>

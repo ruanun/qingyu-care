@@ -4,6 +4,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.McpTool;
 import com.qingyu.care.enums.McpToolStatus;
+import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.AiSkillRepository;
 import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
 import java.util.Optional;
@@ -142,5 +144,40 @@ class McpServerServiceSyncTest {
         verify(toolRepository, never()).save(any());
         assertThat(server.getLastSyncError()).contains("连接超时");
         assertThat(server.getLastSyncedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("⚠️ 写库失败同样要落 lastSyncError，不能只覆盖拉取失败")
+    void sync_persistFailure_isAlsoRecordedAsSyncError() {
+        when(executor.listTools(server)).thenReturn(List.of(
+                new McpToolDescriptor("query_order", "查订单", "{}", null)));
+        when(toolRepository.findByMcpServerIdAndName(1L, "query_order")).thenReturn(Optional.empty());
+        // 真机冒烟实拍：接一个描述超过列宽的公共 MCP server，这里抛的就是它
+        when(toolRepository.save(any(McpTool.class))).thenThrow(
+                new DataIntegrityViolationException("value too long for type character varying(1000)"));
+
+        // 原实现只把 executor.listTools 包进 try，写库阶段抛出的异常直接穿透到
+        // GlobalExceptionHandler：返回 500、原始 SQL 回给客户端，而 lastSyncError 一片空白
+        // ——界面的琥珀色警示条不亮，运营只看到一个没有原因的报错。
+        assertThatThrownBy(() -> service.sync(1L))
+                .isInstanceOf(BusinessException.class)
+                // 库表结构不回给客户端：全量异常进服务端日志即可
+                .hasMessageNotContaining("character varying");
+
+        assertThat(server.getLastSyncError()).isNotBlank().doesNotContain("character varying");
+        assertThat(server.getLastSyncedAt()).isNull();
+        verify(serverRepository).save(server);
+    }
+
+    @Test
+    @DisplayName("⚠️ 失败原因超列宽必须先截断——落库那步再炸会把原因彻底丢掉")
+    void sync_overlongFailureMessage_isTruncatedToColumnWidth() {
+        when(executor.listTools(server)).thenThrow(new IllegalStateException("x".repeat(5000)));
+
+        assertThatThrownBy(() -> service.sync(1L)).isInstanceOf(BusinessException.class);
+
+        // lastSyncError 自己是 varchar(1000)：不截断则 catch 块里那次 save 会再抛一次
+        // DataIntegrityViolationException，把「已经处理好的失败」重新变成 500 且不留任何原因
+        assertThat(server.getLastSyncError()).isNotNull().hasSizeLessThanOrEqualTo(1000);
     }
 }

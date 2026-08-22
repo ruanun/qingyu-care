@@ -13,6 +13,7 @@ import com.qingyu.care.repository.McpServerRepository;
 import com.qingyu.care.repository.McpToolRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,9 @@ public class McpServerService {
 
     /** code 参与 LLM 可见的工具名，必须是合法标识符 */
     private static final Pattern CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]*$");
+
+    /** 与 {@code McpServer.lastSyncError} 的列宽一致，见 {@link #recordSyncFailure} */
+    private static final int MAX_SYNC_ERROR_LENGTH = 1000;
 
     private final McpServerRepository serverRepository;
     private final McpToolRepository toolRepository;
@@ -155,40 +159,82 @@ public class McpServerService {
         try {
             remote = executor.listTools(server);
         } catch (Exception e) {
-            server.setLastSyncError(e.getMessage());
-            serverRepository.save(server);
-            log.warn("MCP 同步失败 serverId={} 原因={}", serverId, e.getClass().getSimpleName());
-            throw new BusinessException("同步失败：" + e.getMessage());
+            throw recordSyncFailure(server, serverId, e);
         }
 
-        Set<String> remoteNames = new LinkedHashSet<>();
-        for (McpToolDescriptor d : remote) {
-            remoteNames.add(d.name());
-            McpTool tool = toolRepository.findByMcpServerIdAndName(serverId, d.name())
-                    .orElseGet(() -> McpTool.builder()
-                            .mcpServerId(serverId)
-                            .name(d.name())
-                            .readOnly(false) // 未知一律当可写、不挂载
-                            .build());
-            tool.setDescription(d.description());
-            tool.setInputSchema(d.inputSchemaJson());
-            tool.setReadOnlyHint(d.readOnlyHint());
-            tool.setStatus(McpToolStatus.ACTIVE);
-            // ⚠️ 这里刻意不碰 tool.setReadOnly(...)，见方法注释
-            toolRepository.save(tool);
-        }
-
-        for (McpTool local : toolRepository.findByMcpServerId(serverId)) {
-            if (!remoteNames.contains(local.getName()) && local.getStatus() != McpToolStatus.DEPRECATED) {
-                local.setStatus(McpToolStatus.DEPRECATED);
-                toolRepository.save(local);
+        try {
+            Set<String> remoteNames = new LinkedHashSet<>();
+            for (McpToolDescriptor d : remote) {
+                remoteNames.add(d.name());
+                McpTool tool = toolRepository.findByMcpServerIdAndName(serverId, d.name())
+                        .orElseGet(() -> McpTool.builder()
+                                .mcpServerId(serverId)
+                                .name(d.name())
+                                .readOnly(false) // 未知一律当可写、不挂载
+                                .build());
+                tool.setDescription(d.description());
+                tool.setInputSchema(d.inputSchemaJson());
+                tool.setReadOnlyHint(d.readOnlyHint());
+                tool.setStatus(McpToolStatus.ACTIVE);
+                // ⚠️ 这里刻意不碰 tool.setReadOnly(...)，见方法注释
+                toolRepository.save(tool);
             }
+
+            for (McpTool local : toolRepository.findByMcpServerId(serverId)) {
+                if (!remoteNames.contains(local.getName()) && local.getStatus() != McpToolStatus.DEPRECATED) {
+                    local.setStatus(McpToolStatus.DEPRECATED);
+                    toolRepository.save(local);
+                }
+            }
+        } catch (Exception e) {
+            throw recordSyncFailure(server, serverId, e);
         }
 
         server.setLastSyncedAt(LocalDateTime.now());
         server.setLastSyncError(null);
         serverRepository.save(server);
         return toolRepository.findByMcpServerId(serverId);
+    }
+
+    /**
+     * 记录同步失败原因并构造对外异常。<b>拉取阶段与写库阶段都必须走这里</b>。
+     *
+     * <p>⚠️ 早先只有拉取阶段被 try 包住，写库阶段的异常直接穿透到 {@code GlobalExceptionHandler}
+     * ——真机接入 context7 时实拍到的形态：HTTP 500、原始 SQL 回给客户端，而 {@code lastSyncError}
+     * 一片空白，界面的琥珀色警示条与列表失败图标全部不亮，运营只看到一个没有原因的报错。
+     *
+     * <p>⚠️ <b>消息必须截断</b>：{@code lastSyncError} 自己是 {@code varchar(1000)}，
+     * 不截断则这次 save 会再抛一次 {@code DataIntegrityViolationException}，把「已经处理好的
+     * 失败」重新变成 500 且连原因都留不下——正是本方法要修的那个形态，换个位置复发。
+     *
+     * <p>⚠️ <b>数据库异常不把原始消息回给客户端</b>：那是库表结构与 SQL 语句，租户既看不懂也
+     * 修不了；全量异常进服务端日志，界面只留可读原因。远端返回的错误则原样保留——那是运营
+     * 唯一能自助排查的线索（凭据过期、工具下线等）。
+     *
+     * <p>⚠️ 写库阶段失败时<b>已写入的工具行不会回滚</b>：{@code sync()} 刻意不带
+     * {@code @Transactional}（见方法注释），逐条 save 各自提交。库里因此可能留下半截状态，
+     * 重新同步一次即可收敛——这是「失败原因必须落库」与「不长时间占着数据库连接」之间的取舍。
+     */
+    private BusinessException recordSyncFailure(McpServer server, Long serverId, Exception e) {
+        boolean isDataAccess = e instanceof DataAccessException;
+        String reason = isDataAccess
+                ? "工具清单写入数据库失败，请联系平台管理员查看服务端日志"
+                : String.valueOf(e.getMessage());
+        server.setLastSyncError(truncateSyncError(reason));
+        serverRepository.save(server);
+        if (isDataAccess) {
+            log.warn("MCP 同步写库失败 serverId={}", serverId, e);
+        } else {
+            log.warn("MCP 同步失败 serverId={} 原因={}", serverId, e.getClass().getSimpleName());
+        }
+        return new BusinessException("同步失败：" + reason);
+    }
+
+    /** 截到 {@code McpServer.lastSyncError} 的列宽以内。 */
+    private String truncateSyncError(String reason) {
+        return reason.length() <= MAX_SYNC_ERROR_LENGTH
+                ? reason
+                : reason.substring(0, MAX_SYNC_ERROR_LENGTH);
     }
 
     /** 统计有多少 skill 绑定了该 server 的工具，供前端删除确认弹窗显示。 */
