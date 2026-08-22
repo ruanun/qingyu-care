@@ -168,3 +168,53 @@ describe('SkillConfigPage MCP 工具勾选', () => {
         );
     });
 });
+
+/**
+ * 卡片上的工具计数。
+ *
+ * <p>真机冒烟实拍：远端下线工具后再同步，绑定的三个工具全被标 DEPRECATED、一个都挂不上了，
+ * 而卡片依旧显示「3 个工具」，编辑弹窗里也看不到这些已失效的绑定——运营看到「绑着 3 个」，
+ * 实际 LLM 一个都拿不到，全程无任何提示。这与「删 server 必须同时清理 skill 绑定」要防的
+ * 是同一类静默降级，只是入口换成了 DEPRECATED 路径（那条路径刻意不删行，绑定因此必然残留，
+ * 所以计数不能拿 mcpToolIds 的长度直接当数）。
+ *
+ * <p>判据与上面那组、与后端 {@code ChatToolService.resolveMcpCallbacks} 三处保持一致。
+ */
+describe('SkillConfigPage 卡片工具计数', () => {
+    /** 绑上四个：一个有效 + 三种失效各一 */
+    const bindAll = () =>
+        mockSkillApi.list.mockResolvedValue(ok([{ ...skill, mcpToolIds: [10, 11, 12, 20] }]));
+
+    /**
+     * 变异实验：把计数改回 `toolIds.length + mcpToolIds.length`，本条必须转红。
+     */
+    it('已 DEPRECATED / 未标只读 / 所属 server 已停用的绑定都不计入「N 个工具」', async () => {
+        bindAll();
+        await renderPage();
+
+        expect(screen.getByText('1 个工具')).toBeInTheDocument();
+        expect(screen.queryByText('4 个工具')).not.toBeInTheDocument();
+    });
+
+    /**
+     * 只断言计数，会让「干脆不显示失效绑定」也算通过——那仍是静默降级，
+     * 只是把数字从错的改成了沉默。必须同时把失效数量显式摆出来。
+     */
+    it('存在失效绑定时显式提示失效数量', async () => {
+        bindAll();
+        await renderPage();
+
+        expect(screen.getByText('3 个已失效')).toBeInTheDocument();
+    });
+
+    /**
+     * 对照组：没有它，上一条在「无条件渲染失效徽标」的错误实现下也会绿。
+     */
+    it('绑定全部有效时不出现失效提示', async () => {
+        mockSkillApi.list.mockResolvedValue(ok([{ ...skill, mcpToolIds: [10] }]));
+        await renderPage();
+
+        expect(screen.getByText('1 个工具')).toBeInTheDocument();
+        expect(screen.queryByText(/已失效/)).not.toBeInTheDocument();
+    });
+});

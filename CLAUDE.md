@@ -318,6 +318,17 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    SDK 的 `WebFluxSseClientTransport` 已标 `@Deprecated(forRemoval=true)`，且只有
    `sseEndpoint(String)`、没有 base-URL setter——硬接只会做出一个对着相对路径发请求、静默
    连不上的分支。
+9. **同步失败必须落 `lastSyncError`，拉取与写库两个阶段都算**：两条路径都走
+   `recordSyncFailure`。早先只有拉取阶段被 try 包住，写库阶段的异常直接穿透到
+   `GlobalExceptionHandler`——HTTP 500、原始 SQL 回给客户端，而 `lastSyncError` 一片空白，
+   界面的琥珀色警示条与列表失败图标全部沦为死代码。⚠️ 消息**必须截断**：`lastSyncError`
+   自己是 `varchar(1000)`，不截断则 catch 里那次 save 会再抛一次，把「已处理好的失败」重新
+   变成 500 且连原因都留不下（同一个坑换个位置复发）。⚠️ 写库阶段失败时**已写入的行不回滚**
+   （`sync()` 刻意不带 `@Transactional`），库里会留半截状态，重新同步一次即收敛。
+10. **`McpTool.description` 必须是 `text`，不能设列宽**：长度由第三方 server 决定，MCP 规范
+    对它没有任何约束。曾是 `varchar(1000)`，真机接入 context7 时整个 server 接不进来。
+    `McpToolLongDescriptionIT` 守住新建库；**存量库另需跑迁移 SQL**——`ddl-auto: update`
+    只加列、不改已有列的类型，改了注解也不会动线上那一列，症状与改之前一模一样。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。

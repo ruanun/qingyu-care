@@ -45,7 +45,16 @@ public class McpTool extends BaseTenantEntity {
     private String name;
 
     /** 来自远端，每次同步覆盖 */
-    @Column(length = 1000)
+    /**
+     * 远端自报的工具说明，整段喂给 LLM 作选型依据。
+     *
+     * <p>⚠️ <b>必须是 text，不能设列宽</b>：长度由第三方 server 决定，MCP 规范对它没有任何约束。
+     * 曾经是 {@code varchar(1000)}，真机接入 context7 时直接抛
+     * {@code value too long for type character varying(1000)}，整个 server 接不进来
+     * （同 {@link #inputSchema} 一样是外部来源、不可预估长度的字段）。
+     * 由 {@code McpToolLongDescriptionIT} 守护；存量库另需迁移 SQL，见该 IT 类注释。
+     */
+    @Column(columnDefinition = "text")
     private String description;
 
     /**

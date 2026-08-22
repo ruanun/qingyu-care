@@ -1,0 +1,30 @@
+-- ============================================================
+-- mcp_tool.description 由 varchar(1000) 放宽为 text（2026-08-22 真机冒烟实拍的缺陷）
+--
+-- 背景：description 存的是**远端 MCP server 自报的工具说明**，长度完全由第三方决定，
+-- MCP 规范对它没有任何长度约束。原先建成 varchar(1000)，接入 context7（公共 MCP
+-- server）时同步直接抛：
+--     value too long for type character varying(1000)
+-- 后果不止「接不进来」——异常发生在 sync() 的失败处理之外，lastSyncError 一片空白、
+-- lastSyncedAt 停在上次成功时间，界面的琥珀色警示条与列表失败图标全部不亮，
+-- 运营只看到一个没有原因的 500。同批已把写库阶段纳入失败记录（McpServerService.recordSyncFailure）。
+--
+-- 为什么需要这个脚本：JPA 的 ddl-auto: update **只加列、不改已有列的类型**。实体注解
+-- 已改成 @Column(columnDefinition = "text")，但存量库里那一列仍是 varchar(1000)，
+-- 应用照常启动、照常同步短描述的 server，只在接入描述超长的 server 时才炸——
+-- 与改之前一模一样，且没有任何启动期提示。新建库（含 Testcontainers 起的 IT 库）
+-- 按实体定义建表，不受影响，故 McpToolLongDescriptionIT 覆盖不到本脚本。
+--
+-- 幂等：varchar(1000) → text 是放宽，重复执行无害（已是 text 时 PostgreSQL 直接跳过重写）。
+-- 无数据丢失风险：既有值全部 ≤1000 字符，天然满足 text。
+--
+-- 一次性手动执行（项目未接入 Flyway/Liquibase）：
+--   docker exec -i qingyu-postgres psql -U postgres -d qingyu_care \
+--     < backend/src/main/resources/migration/2026-08-22-mcp-tool-description-to-text.sql
+--
+-- 执行后自检（预期 data_type = text）：
+--   SELECT data_type FROM information_schema.columns
+--    WHERE table_name = 'mcp_tool' AND column_name = 'description';
+-- ============================================================
+
+ALTER TABLE mcp_tool ALTER COLUMN description TYPE text;
