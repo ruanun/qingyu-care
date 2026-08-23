@@ -129,13 +129,22 @@ public class OpenApiImportService {
      * <p>⚠️ 必须算上平台共享工具：{@code ChatToolService.resolve()} 遇到重名会静默跳过其中
      * 一个（只 log.warn），所以与共享工具重名的工具即便导进去了也挂不上 LLM。
      *
-     * <p>appId 为 null（未选应用）时把 null 传给 {@code findByAppId} 不会抛异常——生成的
-     * {@code app_id = NULL} 恒不匹配任何行，等价于「自有部分为空」，效果同
-     * {@code ChatToolService.listTools()} 的显式短路。
+     * <p>⚠️ appId 为 null（未选应用）时必须显式短路、绝不能把 null 传给
+     * {@code findByAppId}：{@code findByAppId} 是方法名派生查询（无 {@code @Query}），
+     * Spring Data JPA 对派生查询的 null 参数会把等值条件**改写成 {@code IS NULL}**，
+     * 不是「恒不匹配」的 {@code = NULL}。而 {@code X-App-Id} 在 {@code TenantInterceptor}
+     * 里是可选头、{@code AiToolController} 没有角色限制，appId 为 null 常见于平台管理员
+     * 场景（此时 tenantId 也为 null）——不短路的话，这条查询会变成
+     * {@code app_id IS NULL}，把所有 app-less 的行（可能属于任意租户）当成「本应用自有」
+     * 查出来，构成跨租户越权读取工具名。语义同 {@code ChatToolService.listTools()} 的
+     * 显式短路，不能省略这一步。
      */
     private Set<String> existingNames() {
         Set<String> names = new LinkedHashSet<>();
-        toolRepository.findByAppId(TenantContext.getAppId()).forEach(t -> names.add(t.getName()));
+        Long appId = TenantContext.getAppId();
+        if (appId != null) {
+            toolRepository.findByAppId(appId).forEach(t -> names.add(t.getName()));
+        }
         toolRepository.findAllSharedTools().forEach(t -> names.add(t.getName()));
         return names;
     }

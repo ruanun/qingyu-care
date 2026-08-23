@@ -1,5 +1,6 @@
 package com.qingyu.care.service.openapi;
 
+import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.openapi.OpenApiImportRequest;
 import com.qingyu.care.dto.openapi.OpenApiParseRequest;
 import com.qingyu.care.dto.openapi.OpenApiParseResponse;
@@ -8,6 +9,7 @@ import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.repository.AiToolRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -33,6 +35,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class OpenApiImportServiceTest {
 
+    private static final Long APP_ID = 1L;
+
     @Mock
     private OpenApiSchemaFetcher schemaFetcher;
     @Mock
@@ -51,12 +55,18 @@ class OpenApiImportServiceTest {
                 schemaFetcher, toolRepository);
     }
 
+    // ⚠️ TenantContext 是静态 ThreadLocal，Surefire 同线程顺序跑同一个类里的多个测试方法，
+    // 不清理会把这条测试设的 appId 残留给下一条——同「@Async 里必须 clear()」那条规矩。
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
+
     @Test
     void 粘贴文本时不发任何出站请求() {
         service = service();
         OpenApiParseRequest req = new OpenApiParseRequest();
         req.setSchemaText(SCHEMA);
-        when(toolRepository.findByAppId(any())).thenReturn(List.of());
         when(toolRepository.findAllSharedTools()).thenReturn(List.of());
 
         OpenApiParseResponse res = service.parse(req);
@@ -78,7 +88,6 @@ class OpenApiImportServiceTest {
         service = service();
         OpenApiParseRequest req = new OpenApiParseRequest();
         req.setSchemaText(SCHEMA);
-        when(toolRepository.findByAppId(any())).thenReturn(List.of());
         when(toolRepository.findAllSharedTools()).thenReturn(List.of());
 
         OpenApiParseResponse res = service.parse(req);
@@ -88,8 +97,26 @@ class OpenApiImportServiceTest {
     }
 
     @Test
+    void appId为null时不查自有工具() {
+        // 本方法故意不调用 TenantContext.setAppId：appId 缺省（如平台管理员未选应用）时
+        // 必须短路、不能查 findByAppId——它是方法名派生查询，null 参数会被 Spring Data JPA
+        // 改写成 app_id IS NULL 而非恒不匹配，不短路就会把任意租户的 app-less 行当成
+        // 「本应用自有」查出来，见 OpenApiImportService#existingNames 的注释。
+        service = service();
+        OpenApiParseRequest req = new OpenApiParseRequest();
+        req.setSchemaText(SCHEMA);
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+
+        OpenApiParseResponse res = service.parse(req);
+
+        assertThat(res.candidates()).hasSize(1);
+        verify(toolRepository, never()).findByAppId(any());
+    }
+
+    @Test
     void 与既有工具重名的候选被标记冲突() {
         service = service();
+        TenantContext.setAppId(APP_ID);
         OpenApiParseRequest req = new OpenApiParseRequest();
         req.setSchemaText(SCHEMA);
         AiTool existing = new AiTool();
@@ -105,13 +132,13 @@ class OpenApiImportServiceTest {
     @Test
     void 与平台共享工具重名同样算冲突() {
         // ChatToolService.resolve() 里同名工具会被静默跳过其中一个（只 log.warn），
-        // 所以共享工具的名字同样是「占用」状态，不检出来的话导进去也挂不上
+        // 所以共享工具的名字同样是「占用」状态，不检出来的话导进去也挂不上。
+        // 不需要设 appId：本测试只关心共享工具这一路，自有工具列表始终为空。
         service = service();
         OpenApiParseRequest req = new OpenApiParseRequest();
         req.setSchemaText(SCHEMA);
         AiTool shared = new AiTool();
         shared.setName("listOrders");
-        when(toolRepository.findByAppId(any())).thenReturn(List.of());
         when(toolRepository.findAllSharedTools()).thenReturn(List.of(shared));
 
         OpenApiParseResponse res = service.parse(req);
@@ -121,8 +148,8 @@ class OpenApiImportServiceTest {
 
     @Test
     void 导入时强制租户归属且套用统一配置() {
+        // 不需要设 appId：本测试不关心冲突检测，自有工具列表始终为空。
         service = service();
-        when(toolRepository.findByAppId(any())).thenReturn(List.of());
         when(toolRepository.findAllSharedTools()).thenReturn(List.of());
         when(toolRepository.saveAll(any())).thenAnswer(inv -> new ArrayList<>(inv.getArgument(0)));
 
@@ -138,8 +165,12 @@ class OpenApiImportServiceTest {
         ArgumentCaptor<List<AiTool>> captor = ArgumentCaptor.forClass(List.class);
         verify(toolRepository).saveAll(captor.capture());
         AiTool saved = captor.getValue().get(0);
-        // scope 是客户端可控字段，必须由服务层强制 TENANT——不清掉的话租户能自封 PLATFORM，
-        // 让自己的工具连同 authHeader 出现在所有租户的共享列表里（ai_tool 上的真实事故）
+        // ⚠️ 文档性断言，不构成回归保护：OpenApiToolCandidate 与 OpenApiImportRequest 都
+        // 没有 scope 字段，客户端结构性地没有通道覆盖它——把 importTools() 里那行
+        // setScope(TENANT) 整个删掉，AiTool.scope 字段自带的初始化器
+        // `= OwnerScope.TENANT` 会让本断言照样通过。真正的保护来自这条结构事实本身；
+        // 这里只是记录「此路径落库必须是 TENANT」这个契约，与直接收 AiTool 实体、
+        // scope 客户端可写的 create 端点不是同一类风险。
         assertThat(saved.getScope()).isEqualTo(OwnerScope.TENANT);
         assertThat(saved.getAuthHeader()).isEqualTo("Authorization: Bearer x");
         assertThat(saved.getTimeoutMs()).isEqualTo(8000);
@@ -150,6 +181,7 @@ class OpenApiImportServiceTest {
     void 导入时再检一次冲突_有冲突则整批拒绝() {
         // parse 与 import 是两次请求，中间可能有并发创建；且界面拦得住的东西接口层拦不住
         service = service();
+        TenantContext.setAppId(APP_ID);
         AiTool existing = new AiTool();
         existing.setName("listOrders");
         when(toolRepository.findByAppId(any())).thenReturn(List.of(existing));
