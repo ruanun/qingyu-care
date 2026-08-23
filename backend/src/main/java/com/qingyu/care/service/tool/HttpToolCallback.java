@@ -9,8 +9,6 @@ import org.springframework.ai.tool.definition.DefaultToolDefinition;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -53,7 +51,7 @@ public class HttpToolCallback implements ToolCallback {
     public String call(String toolInput) {
         try {
             Map<String, Object> args = parseArgs(toolInput);
-            String url = fillTemplate(tool.getUrlTemplate(), args);
+            String url = UrlTemplateFiller.fill(tool.getUrlTemplate(), args);
             String body = "POST".equalsIgnoreCase(tool.getHttpMethod()) ? toolInput : null;
             // 审计：记录工具名与参数键（不记值，避免泄露）
             log.info("调用工具 {} 参数键={}", tool.getName(), args.keySet());
@@ -75,16 +73,6 @@ public class HttpToolCallback implements ToolCallback {
             return Map.of();
         }
         return mapper.readValue(toolInput, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
-    }
-
-    /** 把 {key} 占位符用 URL 编码后的参数值替换。 */
-    private String fillTemplate(String template, Map<String, Object> args) {
-        String url = template;
-        for (Map.Entry<String, Object> e : args.entrySet()) {
-            String enc = URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8);
-            url = url.replace("{" + e.getKey() + "}", enc);
-        }
-        return url;
     }
 
     private String truncate(String s, int max) {
