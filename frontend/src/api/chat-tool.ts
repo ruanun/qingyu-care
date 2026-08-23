@@ -45,3 +45,32 @@ export const aiSkillService = {
     update: (id: number, data: Partial<AiSkill>): Promise<ApiResponse<AiSkill>> => api.put(`/ai-skills/${id}`, data),
     remove: (id: number): Promise<ApiResponse<void>> => api.delete(`/ai-skills/${id}`),
 };
+
+export interface OpenApiToolCandidate {
+    name: string;
+    description: string;
+    httpMethod: string;
+    urlTemplate: string;
+    inputSchema: string;
+    warnings: string[];
+    nameConflict: boolean;
+}
+
+export interface OpenApiParseResponse {
+    candidates: OpenApiToolCandidate[];
+    /** 「压根没能成为候选」的说明：被跳过的方法、非对象请求体、超上限截断 */
+    globalWarnings: string[];
+    truncated: boolean;
+}
+
+export const openApiImportService = {
+    parse: (data: { schemaText?: string; schemaUrl?: string; baseUrl?: string }):
+        Promise<ApiResponse<OpenApiParseResponse>> => api.post('/ai-tools/openapi/parse', data),
+    import: (data: {
+        candidates: OpenApiToolCandidate[];
+        authHeader?: string;
+        timeoutMs?: number;
+        maxResponseChars?: number;
+        enabled?: boolean;
+    }): Promise<ApiResponse<AiTool[]>> => api.post('/ai-tools/openapi/import', data),
+};
