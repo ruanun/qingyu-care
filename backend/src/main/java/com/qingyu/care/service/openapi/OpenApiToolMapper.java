@@ -49,6 +49,14 @@ public class OpenApiToolMapper {
     static final int MAX_NAME = 64;
     /** $ref 递归深度上限，超出即降级为 object */
     static final int MAX_REF_DEPTH = 5;
+    /**
+     * AiTool.urlTemplate 的列宽。带 ~45 个以上 query 参数的端点就可能超（每个约
+     * {@code name={name}} 2n+4 字符），报表/搜索类 API 达到这个量级不算罕见。不设防会让
+     * {@code saveAll} 抛 {@code DataIntegrityViolationException}，被
+     * {@code GlobalExceptionHandler} 接成 HTTP 500 + 完整 INSERT 语句回给客户端——同
+     * CLAUDE.md「MCP 接入」第 9 条记录的坑。
+     */
+    static final int MAX_URL_TEMPLATE = 1000;
 
     private final ObjectMapper objectMapper;
 
@@ -89,22 +97,37 @@ public class OpenApiToolMapper {
                     break outer;
                 }
 
-                OpenApiToolCandidate candidate = toCandidate(api, path, item, method, op, base, usedNames);
-                if (candidate == null) {
-                    // toCandidate 不接收 globalWarnings（它只装候选级 warning），
-                    // requestBody 无法表达这条全局 warning 由本行紧接着补上
-                    globalWarnings.add("已跳过 %s %s：请求体不是对象结构，当前工具模型无法表达"
-                            .formatted(method, path));
+                ToCandidateResult result = toCandidate(api, path, item, method, op, base, usedNames);
+                if (result.candidate() == null) {
+                    // toCandidate 不接收 globalWarnings（它只装候选级 warning），具体原因由
+                    // result.skipReason() 给出——urlTemplate 超长、requestBody 引用无法解析、
+                    // requestBody 不是对象结构，三种原因文案不同，不能再用一句话囫囵带过。
+                    globalWarnings.add("已跳过 %s %s：%s".formatted(method, path, result.skipReason()));
                     continue;
                 }
-                candidates.add(candidate);
+                candidates.add(result.candidate());
             }
         }
         return new MapResult(candidates, globalWarnings, truncated);
     }
 
-    /** @return null 表示该 operation 无法表达、应跳过 */
-    private OpenApiToolCandidate toCandidate(OpenAPI api, String path, PathItem item, PathItem.HttpMethod method,
+    /**
+     * {@link #toCandidate} 的结果：{@code candidate} 为 null 表示该 operation 无法表达、
+     * 应跳过，此时 {@code skipReason} 给出具体原因，供 {@link #map} 拼进全局 warning。
+     * 不能用一句写死的话囫囵带过——urlTemplate 超长、requestBody 引用无法解析、requestBody
+     * 不是对象结构是三种不同的原因，文案含糊会把用户引向错误的排查方向。
+     */
+    private record ToCandidateResult(OpenApiToolCandidate candidate, String skipReason) {
+        static ToCandidateResult of(OpenApiToolCandidate candidate) {
+            return new ToCandidateResult(candidate, null);
+        }
+
+        static ToCandidateResult skip(String reason) {
+            return new ToCandidateResult(null, reason);
+        }
+    }
+
+    private ToCandidateResult toCandidate(OpenAPI api, String path, PathItem item, PathItem.HttpMethod method,
             Operation op, String baseUrl, Set<String> usedNames) {
         OpenApiToolCandidate c = new OpenApiToolCandidate();
         List<String> warnings = new ArrayList<>();
@@ -113,18 +136,24 @@ public class OpenApiToolMapper {
         c.setHttpMethod(method.name());
         c.setDescription(description(op, method, path, warnings));
 
-        List<Parameter> params = mergeParameters(item, op);
+        List<Parameter> params = mergeParameters(item, op, api.getComponents(), warnings);
         warnIgnoredParams(params, warnings);
-        c.setUrlTemplate(buildUrlTemplate(baseUrl, path, params));
-
-        ObjectNode schema = buildInputSchema(api, op, params, method, warnings);
-        if (schema == null) {
-            return null; // requestBody 无法表达 → 跳过整个 operation
+        String urlTemplate = buildUrlTemplate(baseUrl, path, params);
+        if (urlTemplate.length() > MAX_URL_TEMPLATE) {
+            return ToCandidateResult.skip("urlTemplate 超过 " + MAX_URL_TEMPLATE + " 字上限（实际 "
+                    + urlTemplate.length() + " 字，通常是参数过多导致），当前工具模型无法容纳，"
+                    + "请精简参数或分多个端点导入");
         }
-        c.setInputSchema(objectMapper.writeValueAsString(schema));
+        c.setUrlTemplate(urlTemplate);
+
+        SchemaResult schemaResult = buildInputSchema(api, op, params, method, warnings);
+        if (schemaResult.schema() == null) {
+            return ToCandidateResult.skip(schemaResult.skipReason());
+        }
+        c.setInputSchema(objectMapper.writeValueAsString(schemaResult.schema()));
 
         c.setWarnings(warnings);
-        return c;
+        return ToCandidateResult.of(c);
     }
 
     // ===== 参数合并（路径级 + 操作级） =====
@@ -138,13 +167,24 @@ public class OpenApiToolMapper {
      * {@link com.qingyu.care.service.tool.UrlTemplateFiller} 的「缺少必填参数」——而工具
      * 调用是 fail-soft 的，模型会拿着错误文本继续编答案，全程无异常无日志。
      *
+     * <p>⚠️ 合并<b>之前</b>必须先解引用：OpenAPI 允许参数写成 {@code {"$ref":
+     * "#/components/parameters/X"}}（GitHub REST、Kubernetes 的官方 schema 几乎全是这种
+     * 写法，是「共享参数定义」的标准做法）。swagger-core 把它反序列化成 {@code name}/{@code in}
+     * 均为 null 的 {@link Parameter}，不解引用的话 {@link #paramKey} 会拿到一堆 {@code
+     * "null:null"} 键，同路径下多个 $ref 参数会被互相当成同一参数吞掉；即便侥幸不撞键，
+     * {@code in} 为 null 也会让该参数在后续 {@link #buildUrlTemplate}/{@link #buildInputSchema}
+     * 里被判定成「既不是 path 也不是 query 也不是 header/cookie」而彻底消失，且没有任何
+     * warning——这正是三种被 $ref 悄悄丢弃的失效模式（path 参数缺失必填、query 参数永远
+     * 忽略、header 参数连「被忽略」的告警都不触发）的根源。
+     *
      * <p>合并规则：路径级参数在前、操作级参数在后；操作级覆盖同名的路径级参数，同名判据是
      * {@code name} 与 {@code in} <b>两者都相同</b>——只比 name 会把「query 里的 id」与
      * 「header 里的 id」错误合并成一个参数。
      */
-    private List<Parameter> mergeParameters(PathItem item, Operation op) {
-        List<Parameter> pathParams = item.getParameters() == null ? List.of() : item.getParameters();
-        List<Parameter> opParams = op.getParameters() == null ? List.of() : op.getParameters();
+    private List<Parameter> mergeParameters(PathItem item, Operation op, Components components,
+            List<String> warnings) {
+        List<Parameter> pathParams = resolveParams(item.getParameters(), components, warnings);
+        List<Parameter> opParams = resolveParams(op.getParameters(), components, warnings);
         if (pathParams.isEmpty()) {
             return opParams;
         }
@@ -163,6 +203,45 @@ public class OpenApiToolMapper {
         }
         merged.addAll(opParams);
         return merged;
+    }
+
+    /**
+     * 解引用 {@code $ref} 形式的参数，非 $ref 的原样返回。解不开的（引用前缀不对、
+     * components 里没有 parameters、目标不存在）记<b>候选级</b> warning 并整个丢弃该参数
+     * ——总比让一个 name/in 均为 null 的参数继续往下游流强，那会在 {@link #paramKey} 与
+     * {@link #buildUrlTemplate} 里表现成更隐蔽的错误合并或静默消失。
+     */
+    private List<Parameter> resolveParams(List<Parameter> raw, Components components, List<String> warnings) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<Parameter> resolved = new ArrayList<>();
+        for (Parameter p : raw) {
+            Parameter target = derefParameter(p, components, warnings);
+            if (target != null) {
+                resolved.add(target);
+            }
+        }
+        return resolved;
+    }
+
+    /** @return 解引用后的参数；引用无法解析时返回 null（已记 warning） */
+    private Parameter derefParameter(Parameter p, Components components, List<String> warnings) {
+        String ref = p.get$ref();
+        if (ref == null) {
+            return p;
+        }
+        String prefix = "#/components/parameters/";
+        if (!ref.startsWith(prefix) || components == null || components.getParameters() == null) {
+            warnings.add("参数引用 " + ref + " 无法解析（只支持同文档内的 components/parameters），已忽略该参数");
+            return null;
+        }
+        Parameter target = components.getParameters().get(ref.substring(prefix.length()));
+        if (target == null) {
+            warnings.add("参数引用 " + ref + " 指向的定义不存在，已忽略该参数");
+            return null;
+        }
+        return target;
     }
 
     /** 参数同名判据：{@code in} 与 {@code name} 拼接，两者都相同才算同一参数。 */
@@ -298,9 +377,9 @@ public class OpenApiToolMapper {
      * <p>平铺是被运行时逼出来的：{@link com.qingyu.care.service.tool.HttpToolCallback}
      * 在 POST 时把整个 toolInput 原样当 body 发出去，嵌套的 body 字段 LLM 永远填不对位置。
      *
-     * @return null 表示该 operation 无法表达、应整个跳过
+     * @return schema 为 null 表示该 operation 无法表达、应整个跳过，此时 skipReason 给出具体原因
      */
-    private ObjectNode buildInputSchema(OpenAPI api, Operation op, List<Parameter> params,
+    private SchemaResult buildInputSchema(OpenAPI api, Operation op, List<Parameter> params,
             PathItem.HttpMethod method, List<String> warnings) {
         Components components = api.getComponents();
         ObjectNode root = objectMapper.createObjectNode();
@@ -326,8 +405,9 @@ public class OpenApiToolMapper {
         // ⚠️ 只有 POST 才合并 requestBody：执行器只在 POST 时发 body，GET 合并进来只会让
         // LLM 填一堆到不了服务端的参数。
         if (method == PathItem.HttpMethod.POST && op.getRequestBody() != null) {
-            if (!mergeRequestBody(op.getRequestBody(), components, properties, required, warnings)) {
-                return null;
+            String skipReason = mergeRequestBody(op.getRequestBody(), components, properties, required, warnings);
+            if (skipReason != null) {
+                return SchemaResult.skip(skipReason);
             }
         }
 
@@ -335,24 +415,49 @@ public class OpenApiToolMapper {
             ArrayNode arr = root.putArray("required");
             required.forEach(arr::add);
         }
-        return root;
+        return SchemaResult.of(root);
     }
 
-    /** @return false 表示 requestBody 无法表达，调用方应跳过整个 operation */
-    private boolean mergeRequestBody(RequestBody body, Components components,
+    /**
+     * {@link #buildInputSchema} 的结果：{@code schema} 为 null 表示无法表达，此时
+     * {@code skipReason} 给出具体原因。
+     */
+    private record SchemaResult(ObjectNode schema, String skipReason) {
+        static SchemaResult of(ObjectNode schema) {
+            return new SchemaResult(schema, null);
+        }
+
+        static SchemaResult skip(String reason) {
+            return new SchemaResult(null, reason);
+        }
+    }
+
+    /**
+     * @return null 表示合并成功；非 null 时是给全局 warning 用的具体跳过原因，调用方应跳过
+     *     整个 operation。⚠️ 别用一句话囫囵带过三种不同的失败：requestBody 引用无法解析
+     *     （见 {@link #derefRequestBody}）、非 JSON 请求体、JSON 但不是 object 结构——上一版
+     *     把三者都说成「请求体不是对象结构」，第一种其实压根不是「结构」问题，会把用户引向
+     *     错误的排查方向（去改 schema 的 body 定义，而不是去找那个引用指向哪）。
+     */
+    private String mergeRequestBody(RequestBody rawBody, Components components,
             ObjectNode properties, LinkedHashSet<String> required, List<String> warnings) {
+        RequestBody body = derefRequestBody(rawBody, components);
+        if (body == null) {
+            return "请求体是无法解析的引用 " + rawBody.get$ref()
+                    + "（只支持同文档内的 components/requestBodies），请手工补全该端点的请求体";
+        }
         Content content = body.getContent();
         io.swagger.v3.oas.models.media.MediaType json =
                 content == null ? null : content.get("application/json");
         if (json == null || json.getSchema() == null) {
-            return false; // 非 JSON 请求体（form-urlencoded / multipart）：执行器只发 JSON
+            return "请求体不是 JSON 结构（form-urlencoded / multipart 等），当前工具模型无法表达";
         }
         Schema<?> resolved = derefSchema(json.getSchema(), components, new HashSet<>(), 0, warnings);
         if (resolved == null || resolved.getProperties() == null || resolved.getProperties().isEmpty()) {
             // ⚠️ 判据是「有 properties」而不是 type 字面量 == "object"：OpenAPI 3.1 里 type
             // 可以是数组（["object","null"]），而 swagger-models 的 getType() 只返回单值，
             // 按字面量判会把合法的 3.1 对象体误判成非对象。
-            return false;
+            return "请求体不是对象结构，当前工具模型无法表达";
         }
         resolved.getProperties().forEach((key, value) -> {
             if (properties.has(key)) {
@@ -366,7 +471,26 @@ public class OpenApiToolMapper {
             // 那一版），且它确实是必填的。
             resolved.getRequired().forEach(required::add);
         }
-        return true;
+        return null;
+    }
+
+    /**
+     * 解引用 {@code $ref} 形式的 requestBody（同参数一样，OpenAPI 允许 requestBody 写成
+     * {@code {"$ref": "#/components/requestBodies/X"}}）。非 $ref 的原样返回；解不开返回
+     * null，由调用方决定用什么措辞告知用户——这里不直接记 warning，因为「引用无法解析」与
+     * 「解开后发现不是 JSON/不是 object」需要落在同一条全局 warning 里，混进候选级 warnings
+     * 会让同一个跳过原因出现在两个地方。
+     */
+    private RequestBody derefRequestBody(RequestBody rawBody, Components components) {
+        String ref = rawBody.get$ref();
+        if (ref == null) {
+            return rawBody;
+        }
+        String prefix = "#/components/requestBodies/";
+        if (!ref.startsWith(prefix) || components == null || components.getRequestBodies() == null) {
+            return null;
+        }
+        return components.getRequestBodies().get(ref.substring(prefix.length()));
     }
 
     /**

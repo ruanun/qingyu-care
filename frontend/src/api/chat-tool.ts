@@ -66,11 +66,11 @@ export interface OpenApiParseResponse {
 export const openApiImportService = {
     parse: (data: { schemaText?: string; schemaUrl?: string; baseUrl?: string }):
         Promise<ApiResponse<OpenApiParseResponse>> => api.post('/ai-tools/openapi/parse', data),
+    // ⚠️ 不带 timeoutMs/maxResponseChars：导入面板从未提供对应输入框，后端 DTO 也已删掉
+    // 这两个死字段，统一用服务端默认值（见 OpenApiImportService.DEFAULT_TIMEOUT_MS 等）。
     import: (data: {
         candidates: OpenApiToolCandidate[];
         authHeader?: string;
-        timeoutMs?: number;
-        maxResponseChars?: number;
         enabled?: boolean;
     }): Promise<ApiResponse<AiTool[]>> => api.post('/ai-tools/openapi/import', data),
 };

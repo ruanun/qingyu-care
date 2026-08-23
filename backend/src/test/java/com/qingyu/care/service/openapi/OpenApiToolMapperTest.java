@@ -291,6 +291,32 @@ class OpenApiToolMapperTest {
         assertThat(r.globalWarnings()).anySatisfy(w -> assertThat(w).contains("200"));
     }
 
+    @Test
+    void urlTemplate超过1000字时跳过该operation并记全局warning() {
+        // AiTool.urlTemplate 是 @Column(length = 1000)，不设防会让 saveAll 抛
+        // DataIntegrityViolationException，被 GlobalExceptionHandler 接成 HTTP 500 +
+        // 完整 INSERT 语句回给客户端。带 ~45 个以上 query 参数的端点（报表/搜索类 API 常见）
+        // 就可能超，这里用 100 个长参数名稳定越过阈值，不贴着边界写，避免因参数命名策略
+        // 微调而变脆弱。
+        StringBuilder params = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            if (i > 0) {
+                params.append(',');
+            }
+            params.append("{\"name\":\"longParamName%03d\",\"in\":\"query\",\"schema\":{\"type\":\"string\"}}"
+                    .formatted(i));
+        }
+        String json = """
+                {"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                 "paths":{"/a":{"get":{"operationId":"a","parameters":[%s]}}}}""".formatted(params);
+
+        OpenApiToolMapper.MapResult r = map(json, "https://api.example.com");
+
+        assertThat(r.candidates()).isEmpty();
+        assertThat(r.globalWarnings()).anySatisfy(w ->
+                assertThat(w).contains("urlTemplate").contains("1000"));
+    }
+
     private OpenApiToolCandidate byName(OpenApiToolMapper.MapResult r, String name) {
         return r.candidates().stream().filter(c -> c.getName().equals(name)).findFirst().orElseThrow();
     }

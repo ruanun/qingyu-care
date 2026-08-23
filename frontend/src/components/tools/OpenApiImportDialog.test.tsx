@@ -135,6 +135,20 @@ describe('OpenApiImportDialog', () => {
         expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }));
     });
 
+    it('候选超过上限被截断时展示醒目提示条', async () => {
+        // R6 裁决专门加的 destructive 提示条（no silent caps 原则）此前零测试守护——删掉它
+        // 前端 69 条测试全绿，等于「加了却没人知道它还在」。
+        vi.mocked(openApiImportService.parse).mockResolvedValue(ok<OpenApiParseResponse>({
+            candidates: [candidate('getOrder')], globalWarnings: [], truncated: true,
+        }));
+
+        renderDialog();
+        fireEvent.click(screen.getByRole('button', { name: '解析' }));
+        await flush();
+
+        expect(screen.getByText(/候选列表已超过单次上限被截断/)).toBeInTheDocument();
+    });
+
     it('名字冲突的候选默认不勾选', async () => {
         // 默认全选会让用户一路点下去撞上整批拒绝，且看不出是哪一条的问题
         vi.mocked(openApiImportService.parse).mockResolvedValue(ok<OpenApiParseResponse>({

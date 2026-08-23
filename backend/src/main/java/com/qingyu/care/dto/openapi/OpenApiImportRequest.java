@@ -20,7 +20,10 @@ public class OpenApiImportRequest {
     /** 统一鉴权头，格式同 AiTool.authHeader（如 "Authorization: Bearer xxx"） */
     private String authHeader;
 
-    private Integer timeoutMs;
-    private Integer maxResponseChars;
     private Boolean enabled;
+
+    // ⚠️ timeoutMs / maxResponseChars 曾在这里，已删除：导入面板从未提供对应输入框
+    // （唯一调用方 OpenApiImportDialog.handleImport 只发 candidates/authHeader/enabled），
+    // 是文档与实现漂移出的死字段。本期统一用 OpenApiImportService.DEFAULT_TIMEOUT_MS /
+    // DEFAULT_MAX_RESPONSE_CHARS（与既有 create 端点默认值一致），见设计文档 §3.1/§7.2。
 }

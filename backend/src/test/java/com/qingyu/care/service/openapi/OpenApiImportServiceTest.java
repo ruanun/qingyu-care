@@ -147,8 +147,12 @@ class OpenApiImportServiceTest {
     }
 
     @Test
-    void 导入时强制租户归属且套用统一配置() {
+    void 导入时强制租户归属_authHeader套用统一配置_timeout用默认值() {
         // 不需要设 appId：本测试不关心冲突检测，自有工具列表始终为空。
+        //
+        // ⚠️ timeoutMs/maxResponseChars 不再是请求可配置字段（见 OpenApiImportRequest 的
+        // 删除注释：导入面板从未提供输入框，是文档与实现漂移出的死字段），本测试改为断言
+        // 它们落的是 OpenApiImportService 的默认常量。
         service = service();
         when(toolRepository.findAllSharedTools()).thenReturn(List.of());
         when(toolRepository.saveAll(any())).thenAnswer(inv -> new ArrayList<>(inv.getArgument(0)));
@@ -156,8 +160,6 @@ class OpenApiImportServiceTest {
         OpenApiImportRequest req = new OpenApiImportRequest();
         req.setCandidates(List.of(candidate("listOrders")));
         req.setAuthHeader("Authorization: Bearer x");
-        req.setTimeoutMs(8000);
-        req.setMaxResponseChars(2000);
         req.setEnabled(true);
 
         service.importTools(req);
@@ -173,8 +175,62 @@ class OpenApiImportServiceTest {
         // scope 客户端可写的 create 端点不是同一类风险。
         assertThat(saved.getScope()).isEqualTo(OwnerScope.TENANT);
         assertThat(saved.getAuthHeader()).isEqualTo("Authorization: Bearer x");
-        assertThat(saved.getTimeoutMs()).isEqualTo(8000);
+        assertThat(saved.getTimeoutMs()).isEqualTo(OpenApiImportService.DEFAULT_TIMEOUT_MS);
+        assertThat(saved.getMaxResponseChars()).isEqualTo(OpenApiImportService.DEFAULT_MAX_RESPONSE_CHARS);
         assertThat(saved.getId()).isNull();
+    }
+
+    @Test
+    void urlTemplate超过列宽时拒绝导入而非落库500() {
+        // 候选来自前端可编辑表单或任意直接调用方，urlTemplate 若不在服务端校验，saveAll 会
+        // 抛 DataIntegrityViolationException，被 GlobalExceptionHandler 接成 HTTP 500 +
+        // 完整 INSERT 语句回给客户端——这里必须落回本项目「HTTP 200 + code 400」的既定约定。
+        service = service();
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+        OpenApiToolCandidate c = candidate("listOrders");
+        c.setUrlTemplate("https://api.example.com/" + "a".repeat(OpenApiImportService.MAX_URL_TEMPLATE_LENGTH));
+
+        OpenApiImportRequest req = new OpenApiImportRequest();
+        req.setCandidates(List.of(c));
+
+        assertThatThrownBy(() -> service.importTools(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("urlTemplate");
+        verify(toolRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void httpMethod不是GET或POST时拒绝导入() {
+        service = service();
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+        OpenApiToolCandidate c = candidate("listOrders");
+        c.setHttpMethod("DELETE");
+
+        OpenApiImportRequest req = new OpenApiImportRequest();
+        req.setCandidates(List.of(c));
+
+        assertThatThrownBy(() -> service.importTools(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("httpMethod");
+        verify(toolRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void 描述为空时拒绝导入() {
+        // AiTool.description 是 nullable = false；候选正常经 mapper 生成时永远非空，但直接
+        // 调用本接口的客户端可以传空，不校验会撞 NOT NULL 约束变成 500。
+        service = service();
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+        OpenApiToolCandidate c = candidate("listOrders");
+        c.setDescription("  ");
+
+        OpenApiImportRequest req = new OpenApiImportRequest();
+        req.setCandidates(List.of(c));
+
+        assertThatThrownBy(() -> service.importTools(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("描述");
+        verify(toolRepository, never()).saveAll(any());
     }
 
     @Test

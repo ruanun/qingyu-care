@@ -381,7 +381,14 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    合并成一个参数。漏合并的后果不是「少点能力」：路径级 path 参数的占位符仍在 urlTemplate
    里（直接来自 path 字符串），但 inputSchema 没有对应属性，LLM 不知道要填，运行时必然撞上
    `UrlTemplateFiller` 的「缺少必填参数」——而工具调用是 fail-soft 的，模型拿着错误文本
-   继续编答案，全程无异常无日志。
+   继续编答案，全程无异常无日志。⚠️ **参数本身也可能是 `$ref`**（`{"$ref":
+   "#/components/parameters/X"}`，GitHub REST、Kubernetes 的官方 schema 几乎全是这种
+   写法），合并**之前**必须先解引用——`mergeParameters` 在合并前对路径级与操作级两份原始
+   列表分别调用 `resolveParams`/`derefParameter`。不解引用的话 swagger-core 交出来的是
+   `name`/`in` 均为 null 的 `Parameter`，症状与漏合并路径级参数完全同构：path 参数缺失
+   必填、query 参数彻底消失、header 参数连「被忽略」的告警都不触发。`requestBody` 同样
+   可以是 `$ref`（`derefRequestBody` 解引用），解不开时全局 warning 必须明确说「请求体是
+   无法解析的引用」，不能说成「请求体不是对象结构」——那会把用户引向错误的排查方向。
 4. **POST 请求体字段被平铺到 inputSchema 顶层**：`HttpToolCallback` 在 POST 时把整个
    toolInput 原样当 body 发出去，body 字段必须与 path/query 参数同级，不能嵌在
    `body: {...}` 里；因此 `requestBody` 的 schema 不是 object 时该 operation 整个跳过

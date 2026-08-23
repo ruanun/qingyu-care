@@ -31,6 +31,18 @@ public class OpenApiImportService {
 
     /** 一次导入的条数上限，防误操作把一份大 schema 整批灌进来 */
     static final int MAX_IMPORT = 50;
+    /** AiTool.name 的列宽（100），比 OpenApiToolMapper.MAX_NAME=64 更宽——那是 OpenAI 兼容
+     *  端点对函数名的限制，这里只防 DB 列宽溢出。候选名可被前端用户改过，不能只信任 mapper
+     *  产出时已截断过。 */
+    static final int MAX_NAME_LENGTH = 100;
+    /** AiTool.description 的列宽 */
+    static final int MAX_DESCRIPTION_LENGTH = 500;
+    /** AiTool.urlTemplate 的列宽，同 OpenApiToolMapper.MAX_URL_TEMPLATE */
+    static final int MAX_URL_TEMPLATE_LENGTH = 1000;
+    /** AiTool.timeoutMs 的默认值：本期导入面板不暴露该配置，统一用与 create 端点一致的默认值 */
+    static final int DEFAULT_TIMEOUT_MS = 5000;
+    /** AiTool.maxResponseChars 的默认值，同上 */
+    static final int DEFAULT_MAX_RESPONSE_CHARS = 4000;
 
     private final OpenApiSchemaParser parser;
     private final OpenApiToolMapper mapper;
@@ -74,9 +86,7 @@ public class OpenApiImportService {
         Set<String> taken = existingNames();
         Set<String> batch = new LinkedHashSet<>();
         for (OpenApiToolCandidate c : candidates) {
-            if (c.getName() == null || c.getName().isBlank()) {
-                throw new BusinessException("存在没有名字的工具，请先补全");
-            }
+            validateCandidate(c);
             if (taken.contains(c.getName())) {
                 throw new BusinessException("工具名「" + c.getName() + "」已存在，请改名后再导入");
             }
@@ -94,8 +104,8 @@ public class OpenApiImportService {
             t.setUrlTemplate(c.getUrlTemplate());
             t.setInputSchema(c.getInputSchema());
             t.setAuthHeader(request.getAuthHeader());
-            t.setTimeoutMs(request.getTimeoutMs() == null ? 5000 : request.getTimeoutMs());
-            t.setMaxResponseChars(request.getMaxResponseChars() == null ? 4000 : request.getMaxResponseChars());
+            t.setTimeoutMs(DEFAULT_TIMEOUT_MS);
+            t.setMaxResponseChars(DEFAULT_MAX_RESPONSE_CHARS);
             t.setEnabled(request.getEnabled() == null || request.getEnabled());
             // ⚠️ 与 AiToolController.create 同款强制：scope 是客户端可控字段，不清掉的话
             // 租户能自封 PLATFORM，让自己的工具连同 authHeader 出现在所有租户的共享列表里。
@@ -103,6 +113,40 @@ public class OpenApiImportService {
             tools.add(t);
         }
         return toolRepository.saveAll(tools);
+    }
+
+    /**
+     * 候选字段的显式校验：候选来自前端可编辑的表单（name/description 用户能改），或任意直接
+     * 调用本接口的客户端（urlTemplate/httpMethod 前端不给编辑入口，但请求体层面完全可控）。
+     * 不校验直接落库的后果：超出列宽时 {@code saveAll} 抛
+     * {@code DataIntegrityViolationException}，被 {@code GlobalExceptionHandler} 接成
+     * HTTP 500 + 完整 INSERT 语句回给客户端——同 CLAUDE.md「MCP 接入」第 9 条记录的坑，换了
+     * 个位置复发。
+     */
+    private void validateCandidate(OpenApiToolCandidate c) {
+        if (c.getName() == null || c.getName().isBlank()) {
+            throw new BusinessException("存在没有名字的工具，请先补全");
+        }
+        if (c.getName().length() > MAX_NAME_LENGTH) {
+            throw new BusinessException("工具名「" + c.getName() + "」超过 " + MAX_NAME_LENGTH + " 字，请缩短");
+        }
+        if (c.getDescription() == null || c.getDescription().isBlank()) {
+            throw new BusinessException("工具「" + c.getName() + "」缺少描述，请先补全");
+        }
+        if (c.getDescription().length() > MAX_DESCRIPTION_LENGTH) {
+            throw new BusinessException("工具「" + c.getName() + "」的描述超过 "
+                    + MAX_DESCRIPTION_LENGTH + " 字，请缩短");
+        }
+        if (c.getUrlTemplate() == null || c.getUrlTemplate().isBlank()) {
+            throw new BusinessException("工具「" + c.getName() + "」缺少 urlTemplate");
+        }
+        if (c.getUrlTemplate().length() > MAX_URL_TEMPLATE_LENGTH) {
+            throw new BusinessException("工具「" + c.getName() + "」的 urlTemplate 超过 "
+                    + MAX_URL_TEMPLATE_LENGTH + " 字，请缩短");
+        }
+        if (!"GET".equals(c.getHttpMethod()) && !"POST".equals(c.getHttpMethod())) {
+            throw new BusinessException("工具「" + c.getName() + "」的 httpMethod 只能是 GET 或 POST");
+        }
     }
 
     /** schema 的 servers[0]，只认绝对地址——相对路径（/v1）对出站请求毫无意义。 */

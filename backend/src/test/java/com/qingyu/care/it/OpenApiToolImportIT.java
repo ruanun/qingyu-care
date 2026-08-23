@@ -65,6 +65,10 @@ class OpenApiToolImportIT extends AbstractPostgresIT {
 
     @Test
     void parse不落任何行() throws Exception {
+        // ⚠️ toolRepository.count() 的判别力依赖一个未写下的前提：测试线程本身无 Sa-Token
+        // 登录态（只有 MockMvc 请求内部才有），TenantDataAspect.enableFilters() 在
+        // isPlatformAdmin() || !isLoggedIn() 为真时直接 return、不启用任何 @Filter——故这里
+        // 查到的是真实全表行数，不是被过滤器悄悄限定过的子集，断言非永真。
         Application app = seedApp("OAS_PARSE", "http://localhost");
         String token = createAdminAndLogin(app, "oas_parse_admin");
         long before = toolRepository.count();
@@ -91,8 +95,7 @@ class OpenApiToolImportIT extends AbstractPostgresIT {
                 {"candidates":[{"name":"getOrder","description":"查订单","httpMethod":"GET",
                   "urlTemplate":"https://api.example.com/orders/{orderId}",
                   "inputSchema":"{}","warnings":[],"nameConflict":false}],
-                 "authHeader":"Authorization: Bearer x","timeoutMs":8000,
-                 "maxResponseChars":2000,"enabled":true}""";
+                 "authHeader":"Authorization: Bearer x","enabled":true}""";
 
         MvcResult r = mockMvc.perform(post("/v1/ai-tools/openapi/import")
                         .header("satoken", token).header("X-App-Id", app.getId())
@@ -137,6 +140,8 @@ class OpenApiToolImportIT extends AbstractPostgresIT {
 
     @Test
     void 本租户重名时整批拒绝且一行都不落() throws Exception {
+        // ⚠️ 同 parse不落任何行() 的前提：测试线程无登录态，TenantDataAspect 不启用任何
+        // @Filter，toolRepository.count() 是真实全表计数，不受多租户过滤器影响。
         Application app = seedApp("OAS_DUP", "http://localhost");
         String token = createAdminAndLogin(app, "oas_dup_admin");
 

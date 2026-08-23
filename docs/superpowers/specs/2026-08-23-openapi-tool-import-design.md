@@ -121,9 +121,10 @@ header 参数被忽略、`$ref` 被降级、名字冲突），随它显示在勾
 | `name` | `operationId` | 清洗成 `[A-Za-z0-9_]`，首字符非字母则前置 `t_`；缺失时用 `{method}_{path}` 生成。⚠️ **截断到 64**，见 §6.1 |
 | `description` | `summary`，空则 `description`，再空则 `{METHOD} {path}` | 截断到 500（DB 列宽），截断时记 warning |
 | `httpMethod` | operation 的方法 | 只 GET / POST，其余跳过（§2.4） |
-| `urlTemplate` | `baseUrl` + path + query 串 | 见 §3.3 |
+| `urlTemplate` | `baseUrl` + path + query 串 | 见 §3.3；⚠️ **终审补记：超过 1000 字（DB 列宽）时该 operation 整个跳过 + 全局 warning**，不设防会让批量落库时抛 `DataIntegrityViolationException` 变成 HTTP 500 |
 | `inputSchema` | path + query 参数 + requestBody | 见 §3.4 |
-| `authHeader` / `timeoutMs` / `maxResponseChars` / `enabled` | 导入面板统一填 | 应用到本批全部工具 |
+| `authHeader` / `enabled` | 导入面板统一填 | 应用到本批全部工具 |
+| `timeoutMs` / `maxResponseChars` | ⚠️ **终审改：不再是导入面板可配置项** | 统一用 `OpenApiImportService.DEFAULT_TIMEOUT_MS`(5000) / `DEFAULT_MAX_RESPONSE_CHARS`(4000)，与既有 create 端点默认值一致；原设计误写成「导入面板统一填」但从未实现对应输入框，见 §9 与 §7.2 |
 
 `scope` 由控制器强制 `TENANT`（同既有 create 端点，`scope` 是客户端可控字段，不清掉租户可
 自封 `PLATFORM`——CLAUDE.md「平台共享工具」第 1 条记录的真实事故）。
@@ -175,6 +176,22 @@ header 参数被忽略、`$ref` 被降级、名字冲突），随它显示在勾
 里（直接来自 path 字符串），但 inputSchema 里没有对应属性，LLM 不知道要填，运行时必然撞上
 `UrlTemplateFiller` 的「缺少必填参数」——而工具调用是 fail-soft 的，模型拿着错误文本继续
 编答案，全程无异常无日志。
+
+⚠️ **终审补记：参数本身也可能是 `$ref`，合并之前必须先解引用**——上面「路径级 + 操作级
+两级合并」讲的是参数**从哪个层级声明**，没有覆盖参数**怎么被表达**。OpenAPI 允许单个参数
+写成 `{"$ref": "#/components/parameters/X"}`（GitHub REST、Kubernetes 的官方 schema 几乎
+全是这种写法，是「共享参数定义」的标准做法，不是边角情况）。swagger-core 把它反序列化成
+`name`/`in` 均为 null 的 `Parameter` 对象，引用目标在 `Components.getParameters()` 里，
+getter 没有任何回填。不解引用的后果三条**全部无声**：path 参数 → urlTemplate 里占位符还在
+但 inputSchema 没有该属性 → 与上一段路径级参数漏合并同样的「缺少必填参数」；query 参数 →
+`in` 为 null，既不匹配 `"query"` 也不匹配任何分支，完全从 urlTemplate 与 inputSchema 里
+消失；header 参数 → 连 `warnIgnoredParams` 都不会触发，「被忽略」的告警本身也失效。
+`OpenApiToolMapper.mergeParameters` 在合并**之前**先对路径级与操作级两份原始参数列表分别
+调用 `resolveParams`/`derefParameter` 解引用，解不开的记候选级 warning 并整个丢弃该参数
+（宁可丢弃也不让一个 name/in 均为 null 的参数继续往下游流）。`requestBody` 同样可以写成
+`$ref`（`#/components/requestBodies/X`），处理方式镜像：`derefRequestBody` 解引用，解不开
+时全局 warning 明确说「请求体是无法解析的引用」，不能再说成「请求体不是对象结构」——那会把
+用户引向错误的排查方向。
 
 第 3 条是被运行时逼出来的：`HttpToolCallback` 在 POST 时把**整个 toolInput 原样当 body**
 发出去，所以 body 字段必须出现在参数对象的顶层，不能嵌在 `body: {...}` 里。
@@ -318,8 +335,15 @@ import 整批一个事务、任一失败全回滚：冲突已在 parse 阶段暴
 
 1. **输入** —— 粘贴文本 / URL 二选一 + 「解析」；
 2. **预览** —— 候选列表（勾选框 + 可编辑 name/description + warnings 就近显示）+ 统一配置
-   （baseUrl / authHeader / timeoutMs / maxResponseChars）；
+   （baseUrl / authHeader）；
 3. **提交** —— 调 import，成功后 toast + 刷新列表 + 关闭。
+
+⚠️ **终审改：本期不提供 `timeoutMs` / `maxResponseChars` 输入框**。原设计（上一版本节与
+§3.1）写着「导入面板统一填」，但实现从未加对应输入框，`OpenApiImportDialog.handleImport`
+只发 `candidates`/`authHeader`/`enabled`——这是文档与实现漂移出的死字段（`OpenApiImportRequest`
+上曾有这两个字段，唯一调用方从不发送）。终审后按 YAGNI 倾向处理：删掉这两个 DTO 字段，
+服务层统一用 `OpenApiImportService.DEFAULT_TIMEOUT_MS`(5000) / `DEFAULT_MAX_RESPONSE_CHARS`(4000)，
+与既有 `POST /v1/ai-tools` 创建端点的默认值一致。想要非默认值的工具，导入后走既有编辑入口改。
 
 ⚠️ **`truncated: true` 时必须给醒目提示，不能只靠 warnings 文案带过**：候选超过 200 条上限
 被截断后，用户看到的预览列表**不是全部端点**——这是 no silent caps 原则的自然延伸，与全局

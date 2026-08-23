@@ -1,6 +1,5 @@
 package com.qingyu.care.dto.openapi;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -15,11 +14,16 @@ import java.util.List;
  * <p>⚠️ 不用 record：import 端点要反序列化它，且前端会改其中的字段，普通可变 DTO 更贴合
  * 本仓库既有 DTO 的写法。
  *
+ * <p>⚠️ 不加 {@code @AllArgsConstructor}：全仓库只有两处 {@code new OpenApiToolCandidate()}
+ * 且都是无参，加了也零调用方；它还恰好命中本仓库记录在案的 Jackson 3 坑形——有字段初始化器
+ * （{@code warnings = new ArrayList<>()}）+ {@code @AllArgsConstructor} + 无参构造未标
+ * {@code @JsonCreator}（对比 {@code AiTool}/{@code ChatRequest} 的写法），今天无害是因为
+ * import 路径从不读 {@code warnings}，但留着它只是在等一次不相关改动把这行代码变成 NPE。
+ *
  * @author ruan
  */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class OpenApiToolCandidate {
 
     private String name;
