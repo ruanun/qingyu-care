@@ -147,7 +147,10 @@ header 参数被忽略、`$ref` 被降级、名字冲突），随它显示在勾
 - **query 串**：把 query 参数按 schema 里的**原始顺序**拼成 `?a={a}&b={b}`。不按
   required/optional 重排——顺序稳定才可预期，且 §5 的新 `fillTemplate` 能正确处理任意位置的
   可选参数。
-- ⚠️ **`baseUrl` 已含 query 时用 `&` 连接**（如 `https://x.com/api?v=1`）。
+- ⚠️ **`baseUrl` 自带 query 时剥掉它并记全局 warning**（如 `https://x.com/api?v=1`）。
+  ~~原设计是「用 `&` 连接」~~——写计划时发现那条规则会拼出 `https://x.com/api?v=1/search&q={q}`
+  这种 path 跑到 query 后面的坏 URL，请求必然失败。OpenAPI 的 `servers.url` 本就不该带
+  query，剥掉并告知比硬拼一个坏地址诚实。
 - **`baseUrl` 的来源**：导入面板的输入框，默认预填 `servers[0].url`。⚠️ 很多 schema 的
   `servers` 是相对路径（`/v1`）甚至缺失，此时留空 + warning 要求填写——**不能**猜测成
   schema URL 的 origin：那在 schema 托管地址与 API 实际地址不同的常见情形下会静默生成一批
