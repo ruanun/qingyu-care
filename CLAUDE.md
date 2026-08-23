@@ -150,7 +150,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 自动化测试覆盖不到的四条：
 1. **真实公开 schema 走通全链**：导入 → 勾选 → 绑进 skill → 对话触发 → 确认出站 URL 与参数正确。单测只能证明映射规则对，证明不了「生成出来的工具真的能被 LLM 调用并拿到结果」。
 2. **可选参数不填时端到端正确**：提一个不涉及可选参数的问题，确认出站 URL 里既没有残留 `{占位符}`、也没有半截的 query 段。`UrlTemplateFillerTest` 钉的是纯函数，这条钉的是它真的被接在链路上。
-3. **YAML schema 能导入**：JSON 与 YAML 走解析器的两条不同分支。
+3. **YAML schema 经 URL 拉取能导入**：`OpenApiSchemaParserTest` 已用 mock 文本覆盖了 JSON/YAML 两条解析分支，这条重复验证没有意义；真正测不到的是**经 URL 拉取**这条路径——`OpenApiSchemaFetcher` 的 Content-Type 白名单（`text/yaml`/`application/yaml`/`application/x-yaml`）要靠一次真实出站请求拿到真实的响应头才能验证，单测里 fetcher 是 mock 的，覆盖不到这层。
 4. **会 302 的 schema URL 给出可读错误**：禁重定向是硬安全取舍（重定向目标不再经 `SsrfGuard` 校验），只能靠错误消息补偿——必须明确说「请填写跳转后的最终地址」，而不是丢一个含糊的失败。
 
 ### 前端（frontend/，pnpm）

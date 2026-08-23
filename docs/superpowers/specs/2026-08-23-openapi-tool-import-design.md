@@ -360,8 +360,12 @@ Dialog 要桩但**不能桩成 `() => null`**，否则回调驱动的提交路�
    正确。单测只能证明映射规则对，证明不了「生成出来的工具真的能被 LLM 调用并拿到结果」。
 2. **可选参数不填时端到端正确**：提一个不涉及可选参数的问题，确认出站 URL 里没有残留占位符
    也没有半截 query 段。§5 的单测钉的是纯函数，这条钉的是它真的被接在链路上。
-3. **YAML schema 能导入**：JSON 与 YAML 走的是解析器的两条不同分支。
-4. **会 302 的 schema URL 给出可读错误**（§6.7），而不是含糊的失败。
+3. **YAML schema 经 URL 拉取能导入**：`OpenApiSchemaParserTest` 已经用 mock 的文本覆盖了
+   JSON/YAML 两条解析分支，这条重复验证没有意义；真正测不到的是**经 URL 拉取**这条路径——
+   `OpenApiSchemaFetcher` 的 Content-Type 白名单（`text/yaml`/`application/yaml`/
+   `application/x-yaml`）要靠一次真实出站请求拿到真实的响应头才能验证，单测里 fetcher 是
+   mock 的，覆盖不到这层。
+4. **会 302 的 schema URL 给出可读错误**（§6.8），而不是含糊的失败。
 
 ## 9. 范围外（后续可能）
 
