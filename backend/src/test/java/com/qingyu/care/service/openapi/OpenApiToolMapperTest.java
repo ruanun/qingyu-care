@@ -136,6 +136,80 @@ class OpenApiToolMapperTest {
                 assertThat(w).contains("描述"));
     }
 
+    // ===== 参数合并（路径级 + 操作级） =====
+
+    @Test
+    void 路径级query参数出现在urlTemplate里() {
+        // OpenAPI 3.x 允许在路径级声明对该路径下所有 operation 都生效的共享参数，
+        // 真实 schema 很常见（Petstore 就有）。漏合并会让路径级 query 参数完全消失。
+        String json = """
+                {"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                 "paths":{"/items":{
+                   "parameters":[{"name":"filter","in":"query","schema":{"type":"string"}}],
+                   "get":{"operationId":"listItems"}}}}""";
+
+        OpenApiToolMapper.MapResult r = map(json, "https://api.example.com");
+
+        assertThat(r.candidates().get(0).getUrlTemplate())
+                .isEqualTo("https://api.example.com/items?filter={filter}");
+    }
+
+    @Test
+    void 操作级同名参数覆盖路径级且不重复出现() {
+        // 同名判据是 name 与 in 两者都相同：路径级与操作级都是 query 的 filter 是同一个
+        // 参数，操作级的定义生效，合并结果只留一份。
+        String json = """
+                {"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                 "paths":{"/items":{
+                   "parameters":[{"name":"filter","in":"query","schema":{"type":"string"}}],
+                   "get":{"operationId":"listItems","parameters":[
+                     {"name":"filter","in":"query","schema":{"type":"integer"}}]}}}}""";
+
+        OpenApiToolMapper.MapResult r = map(json, "https://api.example.com");
+
+        assertThat(r.candidates().get(0).getUrlTemplate())
+                .isEqualTo("https://api.example.com/items?filter={filter}");
+    }
+
+    @Test
+    void 同名但作用域不同的路径级与操作级参数都被保留() {
+        // 判据必须是 name+in，不能只看 name：路径级 query 的 id 与操作级 header 的 id
+        // 是两个不同参数，合并后两者都要生效——分别体现在 urlTemplate（query）与
+        // warnings（header 被忽略但记了名字）里。若判据退化成只比 name，其中一个会被
+        // 误当同一参数吞掉。
+        String json = """
+                {"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                 "paths":{"/items":{
+                   "parameters":[{"name":"id","in":"query","schema":{"type":"string"}}],
+                   "get":{"operationId":"getItem","parameters":[
+                     {"name":"id","in":"header","schema":{"type":"string"}}]}}}}""";
+
+        OpenApiToolMapper.MapResult r = map(json, "https://api.example.com");
+
+        OpenApiToolCandidate c = r.candidates().get(0);
+        assertThat(c.getUrlTemplate()).isEqualTo("https://api.example.com/items?id={id}");
+        assertThat(c.getWarnings()).anySatisfy(w -> assertThat(w).contains("id"));
+    }
+
+    // ===== header/cookie 参数 warning =====
+
+    @Test
+    void header与cookie参数被忽略并记入候选级warning() {
+        // warnIgnoredParams 的 javadoc 强调「必须记 warning」（漏了会让工具永远 401 且
+        // 静默失效），这条测试守住它真的被触发——过滤条件里 getIn() 判断打错字不会有任何
+        // 其它测试转红。
+        String json = """
+                {"openapi":"3.0.0","info":{"title":"t","version":"1"},
+                 "paths":{"/a":{"get":{"operationId":"a","parameters":[
+                   {"name":"X-Token","in":"header","schema":{"type":"string"}},
+                   {"name":"session","in":"cookie","schema":{"type":"string"}}]}}}}""";
+
+        OpenApiToolMapper.MapResult r = map(json, "https://api.example.com");
+
+        assertThat(r.candidates().get(0).getWarnings()).anySatisfy(w ->
+                assertThat(w).contains("X-Token").contains("session"));
+    }
+
     // ===== urlTemplate =====
 
     @Test

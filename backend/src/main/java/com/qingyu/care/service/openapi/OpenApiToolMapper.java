@@ -80,7 +80,7 @@ public class OpenApiToolMapper {
                     break outer;
                 }
 
-                OpenApiToolCandidate candidate = toCandidate(api, path, method, op, base, usedNames);
+                OpenApiToolCandidate candidate = toCandidate(api, path, item, method, op, base, usedNames);
                 if (candidate == null) {
                     // toCandidate 内部已记全局 warning（如 requestBody 非 object）
                     globalWarnings.add("已跳过 %s %s：请求体不是对象结构，当前工具模型无法表达"
@@ -94,7 +94,7 @@ public class OpenApiToolMapper {
     }
 
     /** @return null 表示该 operation 无法表达、应跳过 */
-    private OpenApiToolCandidate toCandidate(OpenAPI api, String path, PathItem.HttpMethod method,
+    private OpenApiToolCandidate toCandidate(OpenAPI api, String path, PathItem item, PathItem.HttpMethod method,
             Operation op, String baseUrl, Set<String> usedNames) {
         OpenApiToolCandidate c = new OpenApiToolCandidate();
         List<String> warnings = new ArrayList<>();
@@ -103,7 +103,7 @@ public class OpenApiToolMapper {
         c.setHttpMethod(method.name());
         c.setDescription(description(op, method, path, warnings));
 
-        List<Parameter> params = op.getParameters() == null ? List.of() : op.getParameters();
+        List<Parameter> params = mergeParameters(item, op);
         warnIgnoredParams(params, warnings);
         c.setUrlTemplate(buildUrlTemplate(baseUrl, path, params));
 
@@ -112,6 +112,49 @@ public class OpenApiToolMapper {
 
         c.setWarnings(warnings);
         return c;
+    }
+
+    // ===== 参数合并（路径级 + 操作级） =====
+
+    /**
+     * OpenAPI 3.x 允许在 {@code PathItem} 级别声明对该路径下所有 operation 都生效的共享
+     * 参数（真实 schema 很常见：同一资源的多个方法共享 id 或过滤参数，Petstore 就有）。
+     * 漏合并的后果比表面看起来更严重：路径级 <b>query</b> 参数会完全不出现在 urlTemplate
+     * 与 inputSchema 里；路径级 <b>path</b> 参数虽然占位符还在 urlTemplate（直接来自 path
+     * 字符串），但 inputSchema 里没有对应属性，LLM 不知道要填，运行时必然撞上
+     * {@link com.qingyu.care.service.tool.UrlTemplateFiller} 的「缺少必填参数」——而工具
+     * 调用是 fail-soft 的，模型会拿着错误文本继续编答案，全程无异常无日志。
+     *
+     * <p>合并规则：路径级参数在前、操作级参数在后；操作级覆盖同名的路径级参数，同名判据是
+     * {@code name} 与 {@code in} <b>两者都相同</b>——只比 name 会把「query 里的 id」与
+     * 「header 里的 id」错误合并成一个参数。
+     */
+    private List<Parameter> mergeParameters(PathItem item, Operation op) {
+        List<Parameter> pathParams = item.getParameters() == null ? List.of() : item.getParameters();
+        List<Parameter> opParams = op.getParameters() == null ? List.of() : op.getParameters();
+        if (pathParams.isEmpty()) {
+            return opParams;
+        }
+        if (opParams.isEmpty()) {
+            return pathParams;
+        }
+        Set<String> overriddenByOp = new LinkedHashSet<>();
+        for (Parameter p : opParams) {
+            overriddenByOp.add(paramKey(p));
+        }
+        List<Parameter> merged = new ArrayList<>();
+        for (Parameter p : pathParams) {
+            if (!overriddenByOp.contains(paramKey(p))) {
+                merged.add(p);
+            }
+        }
+        merged.addAll(opParams);
+        return merged;
+    }
+
+    /** 参数同名判据：{@code in} 与 {@code name} 拼接，两者都相同才算同一参数。 */
+    private String paramKey(Parameter p) {
+        return p.getIn() + ":" + p.getName();
     }
 
     // ===== 名字 =====
