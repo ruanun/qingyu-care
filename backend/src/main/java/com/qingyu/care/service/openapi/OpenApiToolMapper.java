@@ -1,15 +1,22 @@
 package com.qingyu.care.service.openapi;
 
 import com.qingyu.care.dto.openapi.OpenApiToolCandidate;
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
+import io.swagger.v3.oas.models.media.Content;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.parameters.RequestBody;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +47,8 @@ public class OpenApiToolMapper {
     static final int MAX_DESCRIPTION = 500;
     /** ⚠️ 不是 AiTool.name 的列宽 100：64 是 OpenAI 兼容端点对函数名的限制 */
     static final int MAX_NAME = 64;
+    /** $ref 递归深度上限，超出即降级为 object */
+    static final int MAX_REF_DEPTH = 5;
 
     private final ObjectMapper objectMapper;
 
@@ -82,7 +91,8 @@ public class OpenApiToolMapper {
 
                 OpenApiToolCandidate candidate = toCandidate(api, path, item, method, op, base, usedNames);
                 if (candidate == null) {
-                    // toCandidate 内部已记全局 warning（如 requestBody 非 object）
+                    // toCandidate 不接收 globalWarnings（它只装候选级 warning），
+                    // requestBody 无法表达这条全局 warning 由本行紧接着补上
                     globalWarnings.add("已跳过 %s %s：请求体不是对象结构，当前工具模型无法表达"
                             .formatted(method, path));
                     continue;
@@ -107,8 +117,11 @@ public class OpenApiToolMapper {
         warnIgnoredParams(params, warnings);
         c.setUrlTemplate(buildUrlTemplate(baseUrl, path, params));
 
-        // inputSchema 由 Task 4 填充；本任务先置空对象，保证候选结构完整
-        c.setInputSchema("{\"type\":\"object\",\"properties\":{}}");
+        ObjectNode schema = buildInputSchema(api, op, params, method, warnings);
+        if (schema == null) {
+            return null; // requestBody 无法表达 → 跳过整个 operation
+        }
+        c.setInputSchema(objectMapper.writeValueAsString(schema));
 
         c.setWarnings(warnings);
         return c;
@@ -273,6 +286,169 @@ public class OpenApiToolMapper {
         if (!ignored.isEmpty()) {
             warnings.add("以下 header/cookie 参数无法表达、已忽略：" + String.join("、", ignored)
                     + "。若其中含认证信息，请在下方「鉴权头」里统一填写");
+        }
+    }
+
+    // ===== inputSchema =====
+
+    /**
+     * 三个来源平铺合并成一个扁平 object：path 参数（全 required）、query 参数（按各自
+     * required）、POST 的 application/json requestBody（**平铺到顶层**）。
+     *
+     * <p>平铺是被运行时逼出来的：{@link com.qingyu.care.service.tool.HttpToolCallback}
+     * 在 POST 时把整个 toolInput 原样当 body 发出去，嵌套的 body 字段 LLM 永远填不对位置。
+     *
+     * @return null 表示该 operation 无法表达、应整个跳过
+     */
+    private ObjectNode buildInputSchema(OpenAPI api, Operation op, List<Parameter> params,
+            PathItem.HttpMethod method, List<String> warnings) {
+        Components components = api.getComponents();
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("type", "object");
+        ObjectNode properties = root.putObject("properties");
+        LinkedHashSet<String> required = new LinkedHashSet<>();
+
+        for (Parameter p : params) {
+            if (!"path".equals(p.getIn()) && !"query".equals(p.getIn())) {
+                continue; // header/cookie 已在 warnIgnoredParams 里记过 warning
+            }
+            ObjectNode node = schemaToNode(p.getSchema(), components, new HashSet<>(), 0, warnings);
+            if (p.getDescription() != null && !p.getDescription().isBlank()) {
+                node.put("description", p.getDescription());
+            }
+            properties.set(p.getName(), node);
+            // path 参数一律必填：URL 里填不出来就意味着这次调用根本不成立
+            if ("path".equals(p.getIn()) || Boolean.TRUE.equals(p.getRequired())) {
+                required.add(p.getName());
+            }
+        }
+
+        // ⚠️ 只有 POST 才合并 requestBody：执行器只在 POST 时发 body，GET 合并进来只会让
+        // LLM 填一堆到不了服务端的参数。
+        if (method == PathItem.HttpMethod.POST && op.getRequestBody() != null) {
+            if (!mergeRequestBody(op.getRequestBody(), components, properties, required, warnings)) {
+                return null;
+            }
+        }
+
+        if (!required.isEmpty()) {
+            ArrayNode arr = root.putArray("required");
+            required.forEach(arr::add);
+        }
+        return root;
+    }
+
+    /** @return false 表示 requestBody 无法表达，调用方应跳过整个 operation */
+    private boolean mergeRequestBody(RequestBody body, Components components,
+            ObjectNode properties, LinkedHashSet<String> required, List<String> warnings) {
+        Content content = body.getContent();
+        io.swagger.v3.oas.models.media.MediaType json =
+                content == null ? null : content.get("application/json");
+        if (json == null || json.getSchema() == null) {
+            return false; // 非 JSON 请求体（form-urlencoded / multipart）：执行器只发 JSON
+        }
+        Schema<?> resolved = derefSchema(json.getSchema(), components, new HashSet<>(), 0, warnings);
+        if (resolved == null || resolved.getProperties() == null || resolved.getProperties().isEmpty()) {
+            // ⚠️ 判据是「有 properties」而不是 type 字面量 == "object"：OpenAPI 3.1 里 type
+            // 可以是数组（["object","null"]），而 swagger-models 的 getType() 只返回单值，
+            // 按字面量判会把合法的 3.1 对象体误判成非对象。
+            return false;
+        }
+        resolved.getProperties().forEach((key, value) -> {
+            if (properties.has(key)) {
+                warnings.add("请求体字段「" + key + "」与同名的 URL 参数冲突，已保留 URL 参数的定义");
+                return;
+            }
+            properties.set(key, schemaToNode((Schema<?>) value, components, new HashSet<>(), 0, warnings));
+        });
+        if (resolved.getRequired() != null) {
+            // 与 URL 参数同名而被跳过的 body 字段仍要进 required：properties 里有它（URL 参数
+            // 那一版），且它确实是必填的。
+            resolved.getRequired().forEach(required::add);
+        }
+        return true;
+    }
+
+    /**
+     * 把 swagger 的 {@link Schema} 转成给 LLM 看的 JSON Schema 片段。
+     *
+     * <p>只提取有限字段（type/format/description/enum/items/properties/required），不直接
+     * 序列化 Schema 对象——后者会带出一堆 null 字段与 {@code exampleSetFlag} 之类的内部噪声，
+     * 白白占 LLM 的上下文。
+     */
+    private ObjectNode schemaToNode(Schema<?> schema, Components components,
+            Set<String> refStack, int depth, List<String> warnings) {
+        ObjectNode node = objectMapper.createObjectNode();
+        Schema<?> resolved = derefSchema(schema, components, refStack, depth, warnings);
+        if (resolved == null) {
+            node.put("type", "object");
+            return node;
+        }
+        String type = resolved.getType();
+        if (type == null && resolved.getTypes() != null && !resolved.getTypes().isEmpty()) {
+            type = resolved.getTypes().iterator().next(); // 3.1 的 type 可以是数组
+        }
+        node.put("type", type == null ? "string" : type);
+        if (resolved.getFormat() != null) {
+            node.put("format", resolved.getFormat());
+        }
+        if (resolved.getDescription() != null && !resolved.getDescription().isBlank()) {
+            node.put("description", resolved.getDescription());
+        }
+        if (resolved.getEnum() != null && !resolved.getEnum().isEmpty()) {
+            ArrayNode arr = node.putArray("enum");
+            resolved.getEnum().forEach(v -> arr.add(String.valueOf(v)));
+        }
+        if (resolved.getItems() != null) {
+            node.set("items", schemaToNode(resolved.getItems(), components, refStack, depth + 1, warnings));
+        }
+        if (resolved.getProperties() != null && !resolved.getProperties().isEmpty()) {
+            ObjectNode props = node.putObject("properties");
+            resolved.getProperties().forEach((k, v) ->
+                    props.set(k, schemaToNode((Schema<?>) v, components, refStack, depth + 1, warnings)));
+        }
+        return node;
+    }
+
+    /**
+     * 解本地 {@code #/components/schemas/X} 引用。跨文件与远程 $ref 一律不支持（那等于一条
+     * 绕过 SsrfGuard 的出站路径，见设计文档 §2.1）。
+     *
+     * <p>⚠️ 递归返回后必须把 ref 从 {@code refStack} 里**移除**：否则两个兄弟字段引用同一个
+     * schema（很常见，如两个字段都是 Address）会被误判成循环引用，第二个字段静默降级成
+     * 空 object。栈语义 ≠ 访问过集合。
+     */
+    private Schema<?> derefSchema(Schema<?> schema, Components components,
+            Set<String> refStack, int depth, List<String> warnings) {
+        if (schema == null) {
+            return null;
+        }
+        String ref = schema.get$ref();
+        if (ref == null) {
+            return schema;
+        }
+        if (depth >= MAX_REF_DEPTH) {
+            warnings.add("引用嵌套过深（超过 " + MAX_REF_DEPTH + " 层），相关字段已降级为通用对象");
+            return null;
+        }
+        if (!refStack.add(ref)) {
+            warnings.add("检测到循环引用 " + ref + "，相关字段已降级为通用对象");
+            return null;
+        }
+        try {
+            String prefix = "#/components/schemas/";
+            if (!ref.startsWith(prefix) || components == null || components.getSchemas() == null) {
+                warnings.add("无法解析的引用 " + ref + "（只支持同文档内的 components/schemas），已降级为通用对象");
+                return null;
+            }
+            Schema<?> target = components.getSchemas().get(ref.substring(prefix.length()));
+            if (target == null) {
+                warnings.add("引用 " + ref + " 指向的定义不存在，已降级为通用对象");
+                return null;
+            }
+            return derefSchema(target, components, refStack, depth + 1, warnings);
+        } finally {
+            refStack.remove(ref);
         }
     }
 }
