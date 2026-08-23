@@ -4,6 +4,7 @@ import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.service.web.WebPageFetcher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -15,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -58,7 +60,14 @@ class OpenApiSchemaFetcherTest {
 
         fetcher.fetch("https://x.com/openapi.json");
 
-        assertThat(OpenApiSchemaFetcher.SCHEMA_TYPES)
+        // 只断言 SCHEMA_TYPES 字段本身的内容不够——那证明不了 fetch() 真的把它传给了
+        // downloadRaw：把 fetch() 悄悄改成传 Set.of() 这条测试仍会全绿。用 ArgumentCaptor
+        // 捕获 downloadRaw 实际收到的第二个参数，断言它就是 SCHEMA_TYPES 本身。
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Set<String>> captor = ArgumentCaptor.forClass(Set.class);
+        verify(webPageFetcher).downloadRaw(eq("https://x.com/openapi.json"), captor.capture());
+        assertThat(captor.getValue())
+                .isEqualTo(OpenApiSchemaFetcher.SCHEMA_TYPES)
                 .contains("application/json", "application/yaml", "text/plain")
                 .doesNotContain("text/html");
     }
@@ -74,6 +83,21 @@ class OpenApiSchemaFetcherTest {
         assertThatThrownBy(() -> fetcher.fetch("https://x.com/openapi.json"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("302")
+                .hasMessageContaining("最终地址");
+    }
+
+    @Test
+    void 跳转提示对所有失败原因一视同仁() {
+        // 下层没有结构化字段告诉我们"这次失败是不是 3xx 导致的"，只能凭消息文本猜——而对
+        // 中文消息文本做子串匹配是脆弱写法（措辞一变就失配）。所以提示改成对所有失败都成立
+        // 的中性表述，不断言"这就是本次失败的原因"。用一个与跳转完全无关的失败原因（5MB
+        // 超限）验证：提示不是靠识别消息内容才附加上去的，而是无条件附加。
+        when(webPageFetcher.downloadRaw(any(), any()))
+                .thenThrow(new BusinessException("网页内容超过 5MB 上限"));
+
+        assertThatThrownBy(() -> fetcher.fetch("https://x.com/openapi.json"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("5MB")
                 .hasMessageContaining("最终地址");
     }
 }

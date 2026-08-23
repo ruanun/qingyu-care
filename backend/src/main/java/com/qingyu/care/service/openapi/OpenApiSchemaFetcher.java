@@ -36,10 +36,13 @@ public class OpenApiSchemaFetcher {
         try {
             downloaded = webPageFetcher.downloadRaw(url, SCHEMA_TYPES);
         } catch (BusinessException e) {
-            // 禁重定向是硬安全取舍，而会 302 的 schema URL 很常见——统一补一句可操作的提示，
-            // 而不是把「网页返回 HTTP 302」原样丢给用户去猜。
+            // 下层失败原因不止「会跳转（3xx）」一种，还包括 SSRF 拦截、5MB 超限、状态码非
+            // 2xx、Content-Type 不在白名单——而 BusinessException 没有结构化字段能区分具体
+            // 是哪一种，只能拿到一句消息文本。对该文本做子串匹配（如判断是否含"302"）去猜测
+            // 原因是脆弱写法：措辞一变就失配。故这句提示改为对所有失败原因都成立的中性表述，
+            // 不断言"这就是本次失败的原因"，只作为排查方向之一供参考。
             throw new BusinessException("拉取 schema 失败：" + e.getMessage()
-                    + "。若该地址会跳转（3xx），请直接填写跳转后的最终地址");
+                    + "。若该地址存在跳转（3xx），可尝试改填跳转后的最终地址");
         }
         Charset charset = downloaded.charsetName() == null
                 ? StandardCharsets.UTF_8
