@@ -159,7 +159,30 @@
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>3.0.3</version>
         </dependency>
-        
+
+        <!-- OpenAPI schema 解析。这两个坐标现在是 springdoc 的传递依赖（compile scope），
+             显式声明是为了钉住：哪天 springdoc 换实现或改依赖，编译会在这里明确断掉，
+             而不是在 service/openapi 里报一堆看不出关系的 NoClassDefFound。
+             ⚠️ 显式写了 version：既没有 Boot BOM 也没有 spring-ai-bom 托管这两个坐标
+             （`mvn dependency:resolve` 实测报 "missing version"），故不能按原计划留空。
+             版本取自 `mvn dependency:tree` 实测到的、springdoc 当前实际传递引入的版本
+             （io.swagger.core.v3:swagger-core-jakarta:jar:2.2.47，经
+             jsonschema-module-swagger-2 传递而来），显式声明只是把这个已生效的版本钉住，
+             不改变实际解析结果。
+             ⚠️ 刻意不用 io.swagger.parser.v3:swagger-parser-v3：它的 ParseOptions.setResolve(true)
+             会自己 fetch 远程 $ref，那是一条绕过 SsrfGuard、藏在依赖内部的出站路径。
+             只做反序列化的 swagger-core 在结构上就没有这个能力。见设计文档 §2.1。 -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-core-jakarta</artifactId>
+            <version>2.2.47</version>
+        </dependency>
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-models-jakarta</artifactId>
+            <version>2.2.47</version>
+        </dependency>
+
         <!-- Development Tools -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -63,6 +63,17 @@ class HttpToolCallbackTest {
     }
 
     @Test
+    void callReturnsMissingParamErrorWhenPathPlaceholderUnfilled() {
+        // 守的是本次新增的行为：UrlTemplateFiller.fill 在 path 段占位符未被 LLM 填时会抛
+        // IllegalArgumentException（见 UrlTemplateFillerTest），这条异常必须被 call() 既有的
+        // catch 接住转成工具结果文本，而不是逃逸中断整轮对话。与上一条不同——上一条测的是
+        // executor 抛异常这一既有事实，这条测的是 URL 填充阶段抛出的新异常路径。
+        HttpToolCallback cb = new HttpToolCallback(tool(), (m, u, a, b, t) -> "OK", mapper);
+        String result = cb.call("{}");
+        assertThat(result).isEqualTo("工具调用失败: 缺少必填参数 orderId");
+    }
+
+    @Test
     void callUrlEncodesParameterValues() {
         String[] captured = new String[1];
         HttpToolExecutor exec = (method, url, auth, body, timeout) -> { captured[0] = url; return "OK"; };

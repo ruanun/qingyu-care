@@ -16,11 +16,13 @@ import { aiToolService } from '@/api/chat-tool';
 import type { AiTool } from '@/api/chat-tool';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import OpenApiImportDialog from '@/components/tools/OpenApiImportDialog';
 
 const ToolConfigPage: React.FC = () => {
     const [tools, setTools] = useState<AiTool[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
+    const [isImportOpen, setIsImportOpen] = useState(false);
     const [editing, setEditing] = useState<Partial<AiTool> | null>(null);
     const { toast } = useToast();
 
@@ -100,7 +102,12 @@ const ToolConfigPage: React.FC = () => {
                         <h1 className="text-2xl font-bold flex items-center gap-2"><Wrench className="w-6 h-6" />工具（HTTP）</h1>
                         <p className="text-muted-foreground text-sm mt-1">配置 AI 可调用的业务查询接口，模型只填参数不选 URL</p>
                     </div>
-                    <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" />添加工具</Button>
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+                            从 OpenAPI 导入
+                        </Button>
+                        <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" />添加工具</Button>
+                    </div>
                 </div>
 
                 {isLoading ? (
@@ -192,6 +199,12 @@ const ToolConfigPage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <OpenApiImportDialog
+                open={isImportOpen}
+                onOpenChange={setIsImportOpen}
+                onImported={fetchTools}
+            />
         </div>
     );
 };

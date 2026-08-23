@@ -40,6 +40,7 @@ readonly RULES=(
   'AiTool|ChatToolService|SharedCredentialMasker|AiToolRepository::### 平台共享工具（`AiTool.scope`）'
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::### 改动已读回执链路后必须手工验证'
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::### 改动 MCP 接入链路后必须手工验证'
+  'service/openapi/|UrlTemplateFiller|OpenApiImportDialog\.tsx::### 改动 OpenAPI 工具导入链路后必须手工验证'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then
