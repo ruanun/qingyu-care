@@ -374,6 +374,14 @@ const McpServerPage: React.FC = () => {
                                         setEditing({ ...editing, timeoutMs: Number.isNaN(v) ? undefined : v });
                                     }}
                                 />
+                                {/* ⚠️ 说明必须放在 Input **之后**：这一列窄，文案会折成两行，
+                                    放前面会把输入框整体下推、与左列的「传输方式」错开一截。
+                                    内容上它是单次请求的总时长上限（远端吐进度也不豁免，后端
+                                    实测见 McpTimeoutSemanticsTest）——不写清楚的话，慢工具
+                                    超时在界面上只表现为「工具调用失败」，运营无从判断调哪个值 */}
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    单次请求总时长，慢工具需调大
+                                </p>
                             </div>
                         </div>
                         <label className="text-sm font-medium">URL</label>

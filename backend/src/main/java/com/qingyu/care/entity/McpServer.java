@@ -60,7 +60,13 @@ public class McpServer extends BaseTenantEntity {
     @Column(length = 1000)
     private String authHeader;
 
-    /** 出站超时（毫秒）。比 HTTP 工具的 5000 宽，因为多一次 initialize 握手。 */
+    /**
+     * 出站超时（毫秒）。⚠️ 它是**单次 MCP 请求的响应总时长上限**，不是整次工具调用的预算：
+     * 一次 callTool 含 initialize 与 tools/call 两次请求，各自独立享有这一份（≈2×）。
+     * 远端持续吐进度也不豁免——慢工具（深度检索类）只能靠调大它救，见
+     * {@code McpTimeoutSemanticsTest}。默认给到 10000 而非 HTTP 工具的 5000，是因为
+     * MCP 工具普遍比一次 REST 调用重。
+     */
     @Column(nullable = false)
     @Builder.Default
     private Integer timeoutMs = 10000;

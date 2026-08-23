@@ -105,7 +105,7 @@ MCP 工具本质上什么都能做（改订单、发邮件、删数据），而�
 | `transport` | varchar(20) NOT NULL | `STREAMABLE_HTTP` \| `SSE`，默认前者。⚠️ `SSE` 枚举值保留但本期不接线，见 §2.2 修正说明 |
 | `url` | varchar(1000) NOT NULL | 远端端点 |
 | `authHeader` | varchar(1000) | 静态鉴权头，格式同 `AiTool.authHeader`（`"Header-Name: value"`）。明文存储，与 `AiTool.authHeader` / `AiModelConfig.apiKey` 同属既有技术债，本期不单独治理 |
-| `timeoutMs` | int NOT NULL | 默认 **10000**（比 HTTP 工具的 5000 宽，因为多一次 `initialize` 握手） |
+| `timeoutMs` | int NOT NULL | 默认 **10000**（比 HTTP 工具的 5000 宽，因为多一次 `initialize` 握手）。⚠️ **2026-08-22 勘误**：括号里的推理是错的——它是**单次请求**的响应总时长上限，`initialize` 与 `tools/call` 各享独立一份（实际上限 ≈ 2×），不是共用一个预算，故「多一次握手」并不构成调宽的理由（调宽的真实理由是 MCP 工具本身比一次 REST 调用重）。两层同名不同义的完整结论见 CLAUDE.md「MCP 接入」第 11 条与 `McpTimeoutSemanticsTest` |
 | `maxResponseChars` | int NOT NULL | 默认 4000，同 `AiTool` |
 | `enabled` | boolean NOT NULL | 默认 true |
 | `scope` | varchar(20) NOT NULL | `@ColumnDefault("'TENANT'")`，本期恒为 `TENANT`，为将来的平台共享预留 |
