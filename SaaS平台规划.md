@@ -211,7 +211,8 @@
 
 - [x] **MCP 接入**（把远端 MCP 工具转为 `ToolCallback`）——原工具调用延后清单第 4 项。⚠️ 那份清单写于 Spring AI 1.1.8 时期，现为 2.0，接入方式已重新核实（不用官方 starter，自建 client + webflux 传输，见设计文档 §2.1/§9）。tgo 整个工具体系即 MCP（另有内置 40+ 工具的 CLI MCP Server）可作对照。
   **2026-08-21 完成**：`mcp_server`/`mcp_tool` 独立表（不复用 `ai_tool`，理由见设计文档 §2.6）。连接不缓存——`ChatToolService.resolve()` 只读数据库，真正的 MCP 连接只在工具被调用那一刻建立、用完即弃；只读判据是租户在界面标注的 `McpTool.readOnly`，落在解析查询上而非界面拦截，与远端自报、不可信的 `readOnlyHint` 严格区分；远端工具下线后同步标 `DEPRECATED` 而非删行（防 skill 绑定悬空）；SSRF 守卫复用现有 `SsrfGuard`，用自定义 `AddressResolverGroup` 把校验期解析出的 IP 钉进连接期，但**只能挂在 webflux 传输上**（httpclient 版基于 JDK `HttpClient`，不支持自定义 DNS 解析）；本期 SSE 传输暂不支持（MCP SDK 的 `WebFluxSseClientTransport` 已标 `@Deprecated(forRemoval=true)` 且缺 base-URL setter）。详见 `docs/superpowers/specs/2026-08-21-mcp-integration-design.md` 与 CLAUDE.md「MCP 接入」「改动 MCP 接入链路后必须手工验证」两节。
-- [ ] **OpenAPI Schema 自动解析生成工具表单**——现状是手工填 URL/method/inputSchema；tgo 支持丢一个 OpenAPI schema 自动生成交互表单，配置体验差距明显。
+- [x] **OpenAPI Schema 自动解析生成工具表单**——现状是手工填 URL/method/inputSchema；tgo 支持丢一个 OpenAPI schema 自动生成交互表单，配置体验差距明显。
+  **2026-08-23 完成**：租户粘贴文本或填 URL 导入一份 OpenAPI 3.x schema（JSON/YAML），解析出候选端点批量生成 `AiTool`，接入一套 REST API 的成本从「按端点数线性投入」降到「一次导入」。四组件职责单一：解析器（swagger-core，不引 `swagger-parser-v3`——它会自己 fetch 远程 `$ref`，是一条绕过 `SsrfGuard` 的出站路径）、映射层（**纯函数**，规则最密的部分）、URL 拉取（委托 `WebPageFetcher.downloadRaw`，复用网站知识库那套 SSRF 硬门槛而非另起一套）、编排落库。关键取舍：只解本地 `$ref`（带深度上限 + 循环检测防自引用结构栈溢出）、只导入 GET/POST（`RestClientHttpToolExecutor` 对非 POST 一律降级成 GET，硬导 PUT/PATCH/DELETE 会让语义错得无声无息）、工具名截断 64 而非 `AiTool.name` 列宽 100（OpenAI 兼容端点对函数名的硬限制）、导入是一次性的不与 schema 持续同步（与 MCP 的 `sync()` 刻意不同，复杂度与「降低首次接入成本」这一目标不成比例）。同批顺带修了一个既有缺陷：`HttpToolCallback.fillTemplate` 对 LLM 未填的占位符原样保留导致可选 query 参数一直是坏的，抽成独立纯函数 `UrlTemplateFiller` 后按 URL 两段分别处理（path 段缺值抛异常、query 段缺值整段删除）。⚠️ 已知限制：POST 时 path/query 参数会同时出现在 URL 与 body JSON 里（整个 toolInput 作 body）；header/cookie 参数与非 JSON 请求体无法表达，均记 warning 提示用户。详见 `docs/superpowers/specs/2026-08-23-openapi-tool-import-design.md` 与 CLAUDE.md「OpenAPI 工具导入」「改动 OpenAPI 工具导入链路后必须手工验证」两节。
 - [ ] **多智能体编排** ⏸ **暂缓（2026-08-23 决定）**——tgo 是「配置多个 Agent、按业务场景选」，本项目是「一个应用一套 Prompt/策略配置」。这是**产品形态选择而非技术差距**，需先决定要不要走这条路；已决定暂不走，待产品形态明确后再重新评估。
 - [x] **消息已读 / 送达状态**——tgo 有完整的已读未读 + 送达确认。
   ⚠️ **2026-08-11 更新：本条原来的立项理由已消失**。原描述是「`ChatMessage.isRead` 字段已建但全库无人读写（死字段），顺手补上用法即可」，而那个死字段已作为技术债第 4 项**删除**（提交 `cfb74da`，选择删字段而非补用法——留着一个没人写的字段比没有更糟）。现在要做这个功能等于**从零设计**：字段、两端渲染、坐席与访客双向的送达/已读时机、以及它与现有 SSE 实时通道的关系，都要重新定。性价比因此显著下降，重新评估后再决定要不要做。
@@ -263,11 +264,11 @@
 
 **Phase 5.1 近期三项已全部合入**（2026-08-04 ~ 08-06）：卡片 Action URI 协议 / 网站知识库（URL 抓取 + 定期同步）/ 多媒体消息（图片 + 文件）。
 
-**Phase 5.2 首项已合入**（2026-08-06）：站点爬取（网站知识库第二期）。**第二项已合入**（2026-08-20）：消息已读回执（只做已读不做送达，多坐席协作单独立项，见 5.2 小节）。**第三项已合入**（2026-08-21）：MCP 接入（远端工具转 `ToolCallback`，连接不缓存、只读门槛落在解析查询上，见 5.2 小节）。
+**Phase 5.2 首项已合入**（2026-08-06）：站点爬取（网站知识库第二期）。**第二项已合入**（2026-08-20）：消息已读回执（只做已读不做送达，多坐席协作单独立项，见 5.2 小节）。**第三项已合入**（2026-08-21）：MCP 接入（远端工具转 `ToolCallback`，连接不缓存、只读门槛落在解析查询上，见 5.2 小节）。**第四项已合入**（2026-08-23）：OpenAPI Schema 自动解析生成工具表单（映射层纯函数、只解本地 `$ref`、只导入 GET/POST，见 5.2 小节）。
 
 **待办**：
 - **4.2 多渠道接入 ⏸ 暂缓**——外部账号与公网回调等硬前置未具备，待条件成熟后作为独立专项启动（届时先做渠道抽象层技术选型）。
-- **Phase 5.2 中期**——站点爬取（2026-08-06）、消息已读回执（2026-08-20）、MCP 接入（2026-08-21）均已完成；多智能体编排 ⏸ 已于 2026-08-23 决定暂缓（产品形态未定）。**只剩 OpenAPI Schema 自动生成工具表单一项。**
+- **Phase 5.2 中期已全部完成**——站点爬取（2026-08-06）、消息已读回执（2026-08-20）、MCP 接入（2026-08-21）、OpenAPI Schema 自动解析生成工具表单（2026-08-23）均已合入；多智能体编排 ⏸ 已于 2026-08-23 决定暂缓（产品形态未定）。
 - **Phase 5.4 工具方向**——第 6 项「平台共享工具/skill」已完成（2026-08-12，只做工具不共享 skill，见上）；第 8 项已证伪不必做。
 
 > 各功能的完成日期与实现要点见上方 Phase 清单内注释，设计与实现细节见 `docs/superpowers/` 下对应的 spec / plan 文档。

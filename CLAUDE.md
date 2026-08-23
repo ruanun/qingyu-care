@@ -146,6 +146,13 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 3. **SSRF**：URL 指向 `169.254.169.254` 确认被拒；再用一个 TTL=0、解析结果会翻转的域名验证 rebinding 也被挡。
 4. **凭据不被空串清空**：编辑 server 只改名字保存，确认 `authHeader` 仍在（前端不回显凭据）。
 
+### 改动 OpenAPI 工具导入链路后必须手工验证
+自动化测试覆盖不到的四条：
+1. **真实公开 schema 走通全链**：导入 → 勾选 → 绑进 skill → 对话触发 → 确认出站 URL 与参数正确。单测只能证明映射规则对，证明不了「生成出来的工具真的能被 LLM 调用并拿到结果」。
+2. **可选参数不填时端到端正确**：提一个不涉及可选参数的问题，确认出站 URL 里既没有残留 `{占位符}`、也没有半截的 query 段。`UrlTemplateFillerTest` 钉的是纯函数，这条钉的是它真的被接在链路上。
+3. **YAML schema 能导入**：JSON 与 YAML 走解析器的两条不同分支。
+4. **会 302 的 schema URL 给出可读错误**：禁重定向是硬安全取舍（重定向目标不再经 `SsrfGuard` 校验），只能靠错误消息补偿——必须明确说「请填写跳转后的最终地址」，而不是丢一个含糊的失败。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -339,6 +346,56 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
     `McpTimeoutSemanticsTest` 起真实 HTTP server 用 TCP 时序把两层分别钉住（静默必被 Netty
     掐断 / 持续心跳能穿透那层 / 心跳救不了 SDK 那层），变异验证过：摘掉 `responseTimeout`
     只有「静默」那条转红，另两条仍绿——这正说明它们分属两层。
+
+### OpenAPI 工具导入（`service/openapi/` + `service/tool/UrlTemplateFiller`）
+
+租户管理员粘贴一份 OpenAPI 3.x schema（文本或 URL），系统解析出可用端点批量生成 `AiTool`
+行，把接入一套 REST API 的成本从「按端点数线性投入」降到「一次导入」。四个组件职责单一：
+`OpenApiSchemaParser`（文本 → `OpenAPI` 模型，JSON/YAML 都收）、`OpenApiToolMapper`（**纯
+函数**，`OpenAPI` + 配置 → 候选列表 + warnings，本特性规则最密的地方）、
+`OpenApiSchemaFetcher`（委托 `WebPageFetcher.downloadRaw` 拉取 URL，复用其 SSRF 硬门槛而
+非另起一套出站防线）、`OpenApiImportService`（编排：取文本 → 解析 → 映射 → 冲突标记 / 批量
+落库）。设计文档：`docs/superpowers/specs/2026-08-23-openapi-tool-import-design.md`。
+
+同批顺带把 `HttpToolCallback.fillTemplate` 抽成独立纯函数类 `UrlTemplateFiller`，修了一个
+既有缺陷：旧实现对 LLM 未填的占位符原样保留，可选 query 参数因此一直是坏的（
+`?limit={limit}` 被真的发出去）。**新规则按 URL 两段分别处理**：**path 段**缺值直接抛
+异常（由 `HttpToolCallback.call()` 既有 catch 变成「缺少必填参数 X」返回给 LLM，好过发出去
+必得 404 且无从判断原因）；**query 段**按 `&` 拆开逐段判断，**段内任一占位符缺值就整段
+删除**（`range=5-` 这种半填值几乎肯定比不传更糟），无占位符的静态段原样保留。
+
+⚠️ 容易写错的地方：
+
+1. **OpenAPI 导入只收 GET 与 POST**：`RestClientHttpToolExecutor.execute` 的分派是
+   `"POST".equalsIgnoreCase(method) ? HttpMethod.POST : HttpMethod.GET`——非 POST 一律降级
+   成 GET，硬把 PUT/PATCH/DELETE 导进来只会让一个 DELETE 端点被当成 GET 发出去，语义错得
+   无声无息。故这三类 operation 在 `OpenApiToolMapper` 里跳过并记全局 warning，而非静默
+   丢弃。
+2. **工具名截断到 64，不是 `AiTool.name` 的列宽 100**：OpenAI 兼容端点对函数名的限制是
+   64。超长的工具挂给 LLM 时被模型侧拒绝，症状是「工具配好了、界面一切正常、就是从来不被
+   调用」——没有异常、没有日志，与「LLM 觉得不需要调用」完全无法区分。
+3. **`inputSchema` 必须合并路径级共享参数，不能只看操作级**：OpenAPI 允许在 `PathItem`
+   级别声明对该路径下所有 operation 都生效的共享参数（真实 schema 很常见，Petstore 就有）。
+   `OpenApiToolMapper.mergeParameters` 把路径级参数在前、操作级参数在后合并，按 `(name,
+   in)` 两者都相同才算同名覆盖——只比 name 会把「query 里的 id」与「header 里的 id」错误
+   合并成一个参数。漏合并的后果不是「少点能力」：路径级 path 参数的占位符仍在 urlTemplate
+   里（直接来自 path 字符串），但 inputSchema 没有对应属性，LLM 不知道要填，运行时必然撞上
+   `UrlTemplateFiller` 的「缺少必填参数」——而工具调用是 fail-soft 的，模型拿着错误文本
+   继续编答案，全程无异常无日志。
+4. **POST 请求体字段被平铺到 inputSchema 顶层**：`HttpToolCallback` 在 POST 时把整个
+   toolInput 原样当 body 发出去，body 字段必须与 path/query 参数同级，不能嵌在
+   `body: {...}` 里；因此 `requestBody` 的 schema 不是 object 时该 operation 整个跳过
+   （数组/裸字符串在当前模型里表达不了）。⚠️ 已知限制不修：POST 时 path/query 参数会
+   **同时**出现在 URL 与 body JSON 里（因为整个 toolInput 作 body），多数服务端会忽略
+   多余字段，要修得改运行时热路径的 body 构造，不在本期范围。
+5. **`$ref` 只解本地 `#/components/schemas/X`，带深度上限 + 循环检测**：自引用结构（分类
+   树、评论树）在真实 schema 里很常见，不设防就是无限递归栈溢出；超限或解不开时降级成
+   `{"type":"object"}` 并记 warning，不让一个字段拖垮整份 schema 的导入。远程 `$ref` 直接
+   不支持——那是安全决策而非工作量决策，避免一条绕过 `SsrfGuard` 的出站路径藏在解析器依赖
+   内部。
+6. **候选超 200 条会截断，前端必须显式提示**：`parse` 返回 `truncated: true` 时界面要有
+   醒目提示告知用户「看到的不是全部」（`OpenApiImportDialog.tsx` 顶部的 destructive 提示
+   条），不能只在 warnings 文案里悄悄带一句。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。

@@ -165,6 +165,17 @@ header 参数被忽略、`$ref` 被降级、名字冲突），随它显示在勾
 3. **POST 的 `requestBody`（`application/json`）** —— 把 body schema 的 properties
    **平铺合并到顶层**。
 
+⚠️ **实施中发现设计原稿漏了路径级共享参数，补记于此**：OpenAPI 3.x 允许在 `PathItem`
+级别（与 `get`/`post` 等 operation 平级）声明对该路径下所有 operation 都生效的共享参数，
+真实 schema 很常见（同一资源的多个方法共享 id 或过滤参数，Petstore 就有）。上面第 1、2 条
+的「path 参数」「query 参数」实际上是**路径级 + 操作级两级合并**的结果：路径级在前、操作级
+在后，操作级按 **`(name, in)` 两者都相同**才算同名并覆盖同名的路径级参数（只比 `name` 是
+错的——同名但一个在 query 一个在 header 是两个不同参数，会被误合并成一个）。漏掉这层合并的
+后果不是「少点能力」而是生成的工具直接不可用：路径级声明的 path 参数占位符仍在 urlTemplate
+里（直接来自 path 字符串），但 inputSchema 里没有对应属性，LLM 不知道要填，运行时必然撞上
+`UrlTemplateFiller` 的「缺少必填参数」——而工具调用是 fail-soft 的，模型拿着错误文本继续
+编答案，全程无异常无日志。
+
 第 3 条是被运行时逼出来的：`HttpToolCallback` 在 POST 时把**整个 toolInput 原样当 body**
 发出去，所以 body 字段必须出现在参数对象的顶层，不能嵌在 `body: {...}` 里。
 
@@ -274,7 +285,13 @@ parse 必须**只读**：它要查一次现有工具名做冲突标记，但绝�
 都必须显式 `if (res.code !== 200) throw`，否则解析失败、名字冲突、超出条数上限这些**全部
 静默**，用户点按钮毫无反应且没有任何报错。
 
-### 6.7 禁重定向导致的拉取失败给不出可读原因
+### 6.7 只合并操作级参数，漏掉路径级共享参数
+
+见 §3.4 的补记。`PathItem.parameters` 是与 operation 平级的共享参数声明，只读
+`Operation.getParameters()` 会漏掉它。合并时必须按 `(name, in)` 两者都相同才算同名覆盖，
+只比 `name` 会把不同 `in` 的同名参数错误合并成一个。
+
+### 6.8 禁重定向导致的拉取失败给不出可读原因
 
 `downloadRaw` 硬关重定向（重定向目标不再经 SsrfGuard 校验），而真实世界里会 302 的 schema
 URL 很常见。错误消息必须明确说「目标地址发生跳转（HTTP 302），请填写跳转后的最终地址」，
@@ -286,7 +303,7 @@ URL 很常见。错误消息必须明确说「目标地址发生跳转（HTTP 30
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/openapi/parse` | 收 `{schemaText}` 或 `{schemaUrl}`（二选一）+ 可选 `baseUrl`，返回候选列表 + 全局 warnings。**不落库** |
+| POST | `/openapi/parse` | 收 `{schemaText}` 或 `{schemaUrl}`（二选一）+ 可选 `baseUrl`，返回候选列表 + 全局 warnings + `truncated`（候选超过 200 条上限时为 true）。**不落库** |
 | POST | `/openapi/import` | 收候选列表 + 统一配置，批量创建。**整批一个事务** |
 
 import 整批一个事务、任一失败全回滚：冲突已在 parse 阶段暴露过一轮，此处失败是小概率，而
@@ -303,6 +320,11 @@ import 整批一个事务、任一失败全回滚：冲突已在 parse 阶段暴
 2. **预览** —— 候选列表（勾选框 + 可编辑 name/description + warnings 就近显示）+ 统一配置
    （baseUrl / authHeader / timeoutMs / maxResponseChars）；
 3. **提交** —— 调 import，成功后 toast + 刷新列表 + 关闭。
+
+⚠️ **`truncated: true` 时必须给醒目提示，不能只靠 warnings 文案带过**：候选超过 200 条上限
+被截断后，用户看到的预览列表**不是全部端点**——这是 no silent caps 原则的自然延伸，与全局
+warnings（描述截断、忽略的 operation 等）不是一回事，理应有独立的、更显眼的视觉呈现（实现
+用了 destructive 样式的提示条），让用户能立刻判断出「要不要缩小 schema 范围分批导入」。
 
 ## 8. 测试策略
 
