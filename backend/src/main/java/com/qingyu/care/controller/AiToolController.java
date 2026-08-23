@@ -3,9 +3,13 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiToolUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.openapi.OpenApiImportRequest;
+import com.qingyu.care.dto.openapi.OpenApiParseRequest;
+import com.qingyu.care.dto.openapi.OpenApiParseResponse;
 import com.qingyu.care.entity.AiTool;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.ChatToolService;
+import com.qingyu.care.service.openapi.OpenApiImportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,6 +26,7 @@ import java.util.List;
 public class AiToolController {
 
     private final ChatToolService chatToolService;
+    private final OpenApiImportService openApiImportService;
 
     @GetMapping
     public ApiResponse<List<AiTool>> list() {
@@ -66,5 +71,21 @@ public class AiToolController {
     public ApiResponse<Void> delete(@PathVariable Long id) {
         chatToolService.deleteTool(id);
         return ApiResponse.success("工具已删除", null);
+    }
+
+    /**
+     * 解析 schema 返回候选，**不落库**。刻意不打 @AuditLog：它是只读的，且用户会为调整
+     * 配置反复解析同一份 schema，打审计只会把日志刷满无信息量的行。
+     */
+    @PostMapping("/openapi/parse")
+    public ApiResponse<OpenApiParseResponse> parseOpenApi(@RequestBody OpenApiParseRequest request) {
+        return ApiResponse.success(openApiImportService.parse(request));
+    }
+
+    @AuditLog(action = "TOOL_IMPORT", targetType = "AiTool")
+    @PostMapping("/openapi/import")
+    public ApiResponse<List<AiTool>> importOpenApi(@RequestBody OpenApiImportRequest request) {
+        List<AiTool> created = openApiImportService.importTools(request);
+        return ApiResponse.success("已导入 " + created.size() + " 个工具", created);
     }
 }
