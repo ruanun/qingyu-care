@@ -155,6 +155,18 @@ public class WebPageFetcher {
      * 新开一条抓取路径就等于新开一个 SSRF 缺口，robots.txt 也必须走这里。
      */
     public Downloaded downloadRaw(String url) {
+        return downloadRaw(url, ALLOWED_TYPES);
+    }
+
+    /**
+     * 同上，但允许调用方指定 Content-Type 白名单。
+     *
+     * <p>OpenAPI schema 的类型是 {@code application/json} / {@code application/yaml} 等，
+     * 不在网页抓取的默认白名单里；参数化这一处即可复用整条出站防线（SSRF 钉 IP + 禁重定向
+     * + 超时 + 5MB 上限），而不必复制第二份——安全代码复制必然漂移（卡片 Action URI 白名单
+     * 分裂三处是本仓库的前车之鉴）。
+     */
+    public Downloaded downloadRaw(String url, Set<String> allowedTypes) {
         final String host = URI.create(url).getHost();
         if (host == null || host.isBlank()) {
             throw new BusinessException("URL 缺少主机名: " + url);
@@ -162,7 +174,7 @@ public class WebPageFetcher {
         final InetAddress[] pinned = SsrfGuard.resolveAndValidate(host);
 
         try (CloseableHttpClient httpClient = buildHttpClient(pinnedResolver(host, pinned))) {
-            return exchange(httpClient, url);
+            return exchange(httpClient, url, allowedTypes);
         } catch (IOException e) {
             throw new BusinessException("网页抓取失败: " + e.getMessage());
         }
@@ -213,6 +225,11 @@ public class WebPageFetcher {
      * 的错误页文案会被当正文摄入），再判 Content-Type 白名单，最后才边读边计数地取 body。
      */
     static Downloaded exchange(CloseableHttpClient httpClient, String url) {
+        return exchange(httpClient, url, ALLOWED_TYPES);
+    }
+
+    /** 同上，但允许调用方指定 Content-Type 白名单（见 {@link #downloadRaw(String, Set)}）。 */
+    static Downloaded exchange(CloseableHttpClient httpClient, String url, Set<String> allowedTypes) {
         RestClient client = RestClient.builder()
                 .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
                 .build();
@@ -221,7 +238,7 @@ public class WebPageFetcher {
             int status = response.getStatusCode().value();
             requireSuccessStatus(status);
             MediaType contentType = response.getHeaders().getContentType();
-            requireAllowedContentType(contentType);
+            requireAllowedContentType(contentType, allowedTypes);
             Charset charset = contentType.getCharset();
             return new Downloaded(readLimited(response.getBody()),
                     charset == null ? null : charset.name(), status);
@@ -233,9 +250,15 @@ public class WebPageFetcher {
      * 又会白读满 5MB 上限。static 免容器单测，是这条风险的唯一防线。
      */
     static void requireAllowedContentType(MediaType contentType) {
+        requireAllowedContentType(contentType, ALLOWED_TYPES);
+    }
+
+    /** 同上，但允许调用方指定 Content-Type 白名单（见 {@link #downloadRaw(String, Set)}）。 */
+    static void requireAllowedContentType(MediaType contentType, Set<String> allowedTypes) {
         if (contentType == null
-                || !ALLOWED_TYPES.contains(contentType.getType() + "/" + contentType.getSubtype())) {
-            throw new BusinessException("不支持的内容类型（只接受 HTML/纯文本）: " + contentType);
+                || !allowedTypes.contains(contentType.getType() + "/" + contentType.getSubtype())) {
+            throw new BusinessException("不支持的内容类型: " + contentType
+                    + "（允许: " + String.join("、", allowedTypes) + "）");
         }
     }
 
