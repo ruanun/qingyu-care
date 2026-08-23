@@ -32,13 +32,28 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
     const [authHeader, setAuthHeader] = useState('');
     const [candidates, setCandidates] = useState<OpenApiToolCandidate[]>([]);
     const [globalWarnings, setGlobalWarnings] = useState<string[]>([]);
+    const [truncated, setTruncated] = useState(false);
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [isBusy, setIsBusy] = useState(false);
     const { toast } = useToast();
 
     const reset = () => {
         setSchemaText(''); setSchemaUrl(''); setBaseUrl(''); setAuthHeader('');
-        setCandidates([]); setGlobalWarnings([]); setSelected(new Set());
+        setCandidates([]); setGlobalWarnings([]); setTruncated(false); setSelected(new Set());
+    };
+
+    /**
+     * 四条关闭路径（取消 / ESC / 遮罩 / 内置 X）必须共用同一个复位逻辑。
+     *
+     * ⚠️ 「取消」按钮调的是这个函数而非直接调 `onOpenChange` prop——Radix Dialog
+     * 是受控组件，`onOpenChange` prop 只在**内部交互**（ESC/遮罩/X）产生关闭意图时
+     * 才回调；「取消」是外部程序化把 `open` 改成 false，不会反过来触发它。若「取消」
+     * 直接调 prop，会绕过下面的 reset()：用户填了一半、点取消放弃，再次打开时
+     * candidates 原样还在、「导入选中项」立即可点，可能把已放弃的一批工具提交上去。
+     */
+    const handleOpenChange = (v: boolean) => {
+        if (!v) { reset(); }
+        onOpenChange(v);
     };
 
     const handleParse = async () => {
@@ -52,6 +67,7 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
             throwIfFailed(res);
             setCandidates(res.data.candidates);
             setGlobalWarnings(res.data.globalWarnings);
+            setTruncated(res.data.truncated);
             // 默认全选无冲突的
             setSelected(new Set(res.data.candidates
                 .map((c, i) => (c.nameConflict ? -1 : i)).filter(i => i >= 0)));
@@ -102,7 +118,7 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
     };
 
     return (
-        <Dialog open={open} onOpenChange={(v) => { if (!v) { reset(); } onOpenChange(v); }}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogContent className="max-w-3xl">
                 <DialogHeader>
                     <DialogTitle>从 OpenAPI 导入工具</DialogTitle>
@@ -126,6 +142,12 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
                     <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
                         placeholder="https://api.example.com" />
                     <Button onClick={handleParse} disabled={isBusy}>解析</Button>
+
+                    {truncated && (
+                        <div className="rounded-md border border-destructive bg-destructive/10 p-2 text-xs text-destructive">
+                            候选列表已超过单次上限被截断，下面看到的不是全部端点——请缩小 schema 范围或分批导入。
+                        </div>
+                    )}
 
                     {globalWarnings.length > 0 && (
                         <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs">
@@ -167,7 +189,7 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
                 </div>
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+                    <Button variant="outline" onClick={() => handleOpenChange(false)}>取消</Button>
                     <Button onClick={handleImport} disabled={isBusy || candidates.length === 0}>
                         导入选中项
                     </Button>
