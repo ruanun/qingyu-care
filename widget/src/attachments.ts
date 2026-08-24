@@ -8,17 +8,13 @@
  * 真正的图片预览 / 文件下载都要经调用方注入的 resolveUrl 回调发起带头 fetch 换成
  * blob URL，这里只负责同步搭好 DOM 骨架（含图片宽高占位，避免加载完成前的布局跳动）
  * + 异步换源；resolveUrl 缺省时只搭骨架，不发起任何网络请求。
+ *
+ * WidgetAttachment（纯数据，无 DOM 依赖）定义已下沉到 core/attachments.ts——
+ * core/api.ts 的 OpenSessionResponse 与 core/history.ts 都要用它，此处重导出保持既有导入路径可用。
  */
 
-export interface WidgetAttachment {
-  id: number;
-  fileName: string;
-  contentType: string;
-  fileSize: number;
-  /** webp 恒为 null（JDK 内置 ImageIO 无 WebP 解码器），占位逻辑须容忍 */
-  width?: number | null;
-  height?: number | null;
-}
+import type { WidgetAttachment } from './core/attachments';
+export type { WidgetAttachment } from './core/attachments';
 
 /** 按附件 id 取二进制并返回可用于 src/下载的 blob URL；失败时 reject。 */
 export type ResolveAttachmentUrl = (id: number) => Promise<string>;

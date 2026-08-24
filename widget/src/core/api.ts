@@ -3,7 +3,7 @@
 // 附件上传/下载（带 File/Blob 浏览器类型）不在此列，留在 widget/src/api.ts——见该文件顶部说明。
 
 import { postSse, type ChatStreamHandlers } from './chatStream';
-import type { WidgetAttachment } from '../attachments';
+import type { WidgetAttachment } from './attachments';
 
 /** 服务端判定会话失效（404）时抛出，供上层清本地会话并自动重开。 */
 export class SessionExpiredError extends Error {
