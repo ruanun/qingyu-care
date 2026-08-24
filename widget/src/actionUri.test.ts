@@ -1,42 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parseActionUri, executeActionUri } from './actionUri';
+import { executeActionUri } from './actionUri';
+
+/**
+ * 纯解析（协议识别/解码/大小写）已移进 core/actionUri.test.ts。这里只留
+ * **执行层**：开链接、写剪贴板，以及 fail-closed 的「不回退」边界——都依赖
+ * 浏览器全局（window.open / navigator.clipboard），必须留在 jsdom。
+ */
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-});
-
-describe('parseActionUri', () => {
-  it('识别三种白名单协议', () => {
-    expect(parseActionUri('url://https://a.com')).toMatchObject({ protocol: 'url', content: 'https://a.com', isValid: true });
-    expect(parseActionUri('msg://查询物流')).toMatchObject({ protocol: 'msg', content: '查询物流', isValid: true });
-    expect(parseActionUri('copy://SF123')).toMatchObject({ protocol: 'copy', content: 'SF123', isValid: true });
-  });
-
-  it('协议名大小写归一', () => {
-    expect(parseActionUri('URL://https://a.com')).toMatchObject({ protocol: 'url', isValid: true });
-  });
-
-  it('未知协议判无效', () => {
-    expect(parseActionUri('tel://10086').isValid).toBe(false);
-    // http:// 是常见文本前缀，绝不能被当成动作
-    expect(parseActionUri('http://a.com').isValid).toBe(false);
-  });
-
-  it('格式不匹配判无效', () => {
-    expect(parseActionUri('查询物流').isValid).toBe(false);
-    expect(parseActionUri('').isValid).toBe(false);
-    expect(parseActionUri(null).isValid).toBe(false);
-    expect(parseActionUri(123).isValid).toBe(false);
-  });
-
-  it('content 走 decodeURIComponent', () => {
-    expect(parseActionUri('msg://%E6%9F%A5%E8%AF%A2').content).toBe('查询');
-  });
-
-  it('解码失败时回退原文，不抛', () => {
-    expect(parseActionUri('msg://100%').content).toBe('100%');
-  });
 });
 
 describe('executeActionUri', () => {

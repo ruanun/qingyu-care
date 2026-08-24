@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.fail;
  * <ol>
  *   <li>{@link ChatServiceImpl} 的 {@code CARD_PROMPT}（Java 文本，决定 LLM <b>会生成</b>什么）</li>
  *   <li>{@code frontend/src/lib/actionUri.ts} 的 {@code VALID_PROTOCOLS}（管理端<b>认</b>什么）</li>
- *   <li>{@code widget/src/actionUri.ts} 的 {@code VALID_PROTOCOLS}（widget <b>认</b>什么）</li>
+ *   <li>{@code widget/src/core/actionUri.ts} 的 {@code VALID_PROTOCOLS}（widget <b>认</b>什么）</li>
  * </ol>
  *
  * <p>漏改任一处都<b>不会报错</b>，只会让按钮悄悄失效：prompt 里多出一个客户端不认的协议，
@@ -66,7 +66,7 @@ class CardActionProtocolSyncTest {
     private static final Pattern QUOTED_LITERAL = Pattern.compile("['\"]([^'\"]+)['\"]");
 
     private static final String FRONTEND_ACTION_URI = "frontend/src/lib/actionUri.ts";
-    private static final String WIDGET_ACTION_URI = "widget/src/actionUri.ts";
+    private static final String WIDGET_ACTION_URI = "widget/src/core/actionUri.ts";
 
     @Test
     @DisplayName("卡片 Action URI 协议白名单：CARD_PROMPT、frontend、widget 三处完全一致")
