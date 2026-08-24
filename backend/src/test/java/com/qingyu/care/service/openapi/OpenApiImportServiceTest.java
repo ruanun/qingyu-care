@@ -180,6 +180,59 @@ class OpenApiImportServiceTest {
         assertThat(saved.getId()).isNull();
     }
 
+    /**
+     * ⚠️ 这条守的是**阈值取 64 而不是列宽 100**，不只是「有校验」。
+     *
+     * <p>mapper 生成时已截到 64，所以要触发得靠用户在导入面板里手工把名字改长——而那个面板
+     * 恰恰是鼓励改名的（OpenAPI 的 summary 往往是写给人看的，不适合直接喂给 LLM）。改到
+     * 65~100 字符时：能存进库、界面正常显示，但挂给 LLM 时被模型侧按 64 拒绝，症状是
+     * 「工具配好了却从来不被调用」，无异常无日志，与「LLM 觉得不需要调用」无法区分。
+     *
+     * <p>判别力：若把 {@code MAX_NAME_LENGTH} 改回列宽 100，65 字符那条会转绿即测试转红。
+     */
+    @Test
+    void 工具名超过64个字符时被拒_阈值是模型限制而非DB列宽() {
+        service = service();
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+
+        OpenApiToolCandidate c = candidate("a".repeat(65));
+        OpenApiImportRequest req = new OpenApiImportRequest();
+        req.setCandidates(List.of(c));
+
+        assertThatThrownBy(() -> service.importTools(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("64")
+                // 消息要说清这是模型侧的硬约束，否则用户会当成可商量的界面限制
+                .hasMessageContaining("不会被调用");
+        verify(toolRepository, never()).saveAll(any());
+    }
+
+    /** 边界另一侧：恰好 64 个字符必须放行，否则上一条可能是被别的原因拒掉的。 */
+    @Test
+    void 工具名恰好64个字符时放行() {
+        service = service();
+        // 不 stub findByAppId：本测试没设 TenantContext.appId，existingNames() 会短路不查自有工具
+        // （STRICT_STUBS 下多余的 stub 会直接报 UnnecessaryStubbing）
+        when(toolRepository.findAllSharedTools()).thenReturn(List.of());
+        when(toolRepository.saveAll(any())).thenAnswer(inv -> new ArrayList<>(inv.getArgument(0)));
+
+        OpenApiImportRequest req = new OpenApiImportRequest();
+        req.setCandidates(List.of(candidate("b".repeat(64))));
+
+        service.importTools(req);
+
+        verify(toolRepository).saveAll(any());
+    }
+
+    /**
+     * 两个常量必须是同一个值——service 直接引用 mapper 的 {@code MAX_NAME}。各写一个字面量
+     * 的话，改一处忘另一处就会重新裂开，而裂开的后果正是上面那种静默失效。
+     */
+    @Test
+    void 导入校验的名字上限与mapper生成时的截断值是同一个() {
+        assertThat(OpenApiImportService.MAX_NAME_LENGTH).isEqualTo(OpenApiToolMapper.MAX_NAME);
+    }
+
     @Test
     void urlTemplate超过列宽时拒绝导入而非落库500() {
         // 候选来自前端可编辑表单或任意直接调用方，urlTemplate 若不在服务端校验，saveAll 会

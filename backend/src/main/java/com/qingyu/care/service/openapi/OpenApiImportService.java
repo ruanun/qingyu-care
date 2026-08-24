@@ -31,10 +31,20 @@ public class OpenApiImportService {
 
     /** 一次导入的条数上限，防误操作把一份大 schema 整批灌进来 */
     static final int MAX_IMPORT = 50;
-    /** AiTool.name 的列宽（100），比 OpenApiToolMapper.MAX_NAME=64 更宽——那是 OpenAI 兼容
-     *  端点对函数名的限制，这里只防 DB 列宽溢出。候选名可被前端用户改过，不能只信任 mapper
-     *  产出时已截断过。 */
-    static final int MAX_NAME_LENGTH = 100;
+    /**
+     * 工具名上限，**直接复用 mapper 的 64**（OpenAI 兼容端点对函数名的限制），而不是
+     * {@code AiTool.name} 的列宽 100。
+     *
+     * <p>⚠️ 这里曾经取 100「只防 DB 列宽溢出」，那留下一个静默失效面：候选名是**前端用户
+     * 可改的**（导入面板鼓励改名——OpenAPI 的 summary 往往是写给人看的，不适合直接喂给
+     * LLM），改到 65~100 字符时能存进库、界面也正常显示，但挂给 LLM 时被模型侧按 64 拒绝，
+     * 症状是「工具配好了却从来不被调用」——无异常、无日志，与「LLM 觉得不需要调用」完全
+     * 无法区分。
+     *
+     * <p>⚠️ **引用而非各自定义**：两处若各写一个字面量，改一处忘另一处就会重新裂开，而
+     * 裂开的后果正是上面那种静默失效。
+     */
+    static final int MAX_NAME_LENGTH = OpenApiToolMapper.MAX_NAME;
     /** AiTool.description 的列宽 */
     static final int MAX_DESCRIPTION_LENGTH = 500;
     /** AiTool.urlTemplate 的列宽，同 OpenApiToolMapper.MAX_URL_TEMPLATE */
@@ -128,7 +138,10 @@ public class OpenApiImportService {
             throw new BusinessException("存在没有名字的工具，请先补全");
         }
         if (c.getName().length() > MAX_NAME_LENGTH) {
-            throw new BusinessException("工具名「" + c.getName() + "」超过 " + MAX_NAME_LENGTH + " 字，请缩短");
+            // 带上理由：不写清楚的话，用户会以为这是个可以商量的界面限制，而它实际上是模型侧的
+            // 硬约束——超了照样能存进库，只是永远不会被调用
+            throw new BusinessException("工具名「" + c.getName() + "」超过 " + MAX_NAME_LENGTH
+                    + " 个字符，请缩短。这是 AI 模型对函数名长度的限制，超出的工具不会被调用");
         }
         if (c.getDescription() == null || c.getDescription().isBlank()) {
             throw new BusinessException("工具「" + c.getName() + "」缺少描述，请先补全");

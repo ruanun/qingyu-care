@@ -168,7 +168,11 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
                                             <input type="checkbox" checked={selected.has(i)}
                                                 onChange={() => toggle(i)} aria-label={`选择 ${c.name}`} />
                                             <Badge>{c.httpMethod}</Badge>
-                                            <Input value={c.name} aria-label={`名称 ${i}`}
+                                            {/* maxLength 64 与后端校验同源：64 是 AI 模型对函数名长度的
+                                                硬限制，超了照样能存进库、界面也正常显示，但挂给 LLM 时
+                                                被模型侧拒绝——症状是「工具配好了却从来不被调用」。
+                                                在输入处就拦住，比让用户填完再被后端拒掉体验好。 */}
+                                            <Input value={c.name} aria-label={`名称 ${i}`} maxLength={64}
                                                 onChange={(e) => updateCandidate(i, { name: e.target.value })}
                                                 className={c.nameConflict ? 'border-destructive' : ''} />
                                         </div>
