@@ -113,19 +113,25 @@ JS 系平台复用**（iOS 与 Flutter 无论如何都要重写一遍协议层�
 
 ### 3.3 平台差异的注入
 
-core 不直接碰任何平台 API，由调用方注入：
+core 不直接碰任何平台 API，由调用方注入。**本期只抽象存储，不抽象动作执行**：
 
 ```ts
-interface Platform {
-  storage: { get(key: string): string | null; set(key: string, value: string): void; remove(key: string): void };
-  actions: { openUrl(url: string): void; copyText(text: string): void };
+interface WidgetStorage {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  remove(key: string): void;
 }
 ```
 
-- `storage`：widget → `localStorage`；CLI → 本地文件。**接口只收发字符串**，序列化由 core 内部
-  负责——这样各端的存储实现不必关心存的是什么结构，也避免了「某端存对象、某端存字符串」的分叉。
-- `actions`：widget → `window.open` / `navigator.clipboard`；CLI → 打印提示（终端里"打开链接"
-  的合理行为就是把 URL 显示出来）。
+- `WidgetStorage`：widget → `localStorage`；CLI → 本地文件。**接口只收发字符串**，序列化由
+  core 内部负责——这样各端的存储实现不必关心存的是什么结构，也避免了「某端存对象、某端存
+  字符串」的分叉。
+- **动作执行（打开链接/复制文本）本期不抽象**：CLI 只打印卡片的原始 `ui_spec`、不渲染按钮，
+  动作执行方本期只有 widget 一个（`window.open` / `navigator.clipboard`），没有第二个消费者
+  可用来验证抽象是否划对。`actionUri` 因此按 §4.2 的方式**拆成两半**——解析（`ParsedActionUri`
+  → `ResolvedAction`）进 core、平台无关；执行留在 `widget/src/actionUri.ts`，直接调浏览器
+  API。等小程序端成为第二个执行方时再抽 `Platform.actions` 之类的接口——那时才有东西验证
+  抽象对不对，现在抽只会做出一个没人实现第二份的接口。
 
 ## 4. 两处改造的语义必须原样保留
 

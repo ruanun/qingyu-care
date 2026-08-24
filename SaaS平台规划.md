@@ -223,6 +223,8 @@
 - [ ] 工作流 DAG 引擎（对标 tgo-workflow：LLM / API / 条件 / 工具节点）
 - [ ] 插件运行时 + 工具商店（原延后清单第 5 项，须在 MCP 与平台共享工具之后）
 - [ ] 多端 Widget SDK（iOS / Flutter / 微信小程序 / CLI）
+  **第一步（协议层抽取 + CLI 调试客户端）已完成（2026-08-24）**：把 `widget/src` 里与浏览器无关的协议逻辑（鉴权请求头、SSE 解析、流式事件编排、会话持久化、Action URI 解析等）抽成 `widget/src/core/`，作为独立子项目 `cli/` 写了一个零运行时依赖的调试 CLI 作为第一个非浏览器消费者——它的价值不在工具本身，而在于逼出协议层里还粘着多少浏览器假设（测试跑在 vitest 的 node 环境下验证，jsdom 抓不出这类残留）。详见 `docs/superpowers/specs/2026-08-24-widget-core-extraction-design.md`，用法见 CLAUDE.md「CLI 调试客户端」一节。
+  其余端**仍未启动**，各自的外部账号前置：iOS 原生需 Apple Developer Program 账号（证书/描述文件；若走 TestFlight 或 App Store 还需上架审核）；Flutter 若双端发布需同时具备 Apple Developer 与 Google Play Developer 账号；微信小程序需微信公众平台小程序账号（完整能力通常要求企业资质认证）及微信侧审核。这些账号与审核流程不在本仓库控制范围内，是各自独立立项时才需要处理的前置条件。
 - 多渠道接入见 **4.2**（已暂缓，tgo 侧对应 tgo-platform，另支持 Telegram / Slack / 邮件）
 
 ### 5.4 工具方向的既有延后清单

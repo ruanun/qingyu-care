@@ -73,7 +73,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 
 1. `ChatServiceImpl.CARD_PROMPT`（Java 字符串，决定 LLM 会生成什么）
 2. `frontend/src/lib/actionUri.ts` 的 `VALID_PROTOCOLS`
-3. `widget/src/actionUri.ts` 的 `VALID_PROTOCOLS`
+3. `widget/src/core/actionUri.ts` 的 `VALID_PROTOCOLS`
 
 漏改任一处的后果：LLM 产出客户端不认的协议 → 按钮退化成发一条奇怪的消息，或彻底静默。
 
@@ -82,6 +82,8 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 ⚠️ **它只比对白名单集合，不验证行为**。「三个协议各自实现得对不对」（fail-closed 语义、`safeUrl` 白名单、剪贴板降级）它一概不管——改协议后仍须真机点一遍三类按钮。
 
 ⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
+
+⚠️ **widget 侧解析与执行已拆分**：`widget/src/core/actionUri.ts` 只负责解析（`resolveActionUri`），不碰任何浏览器 API；执行（`window.open`/`navigator.clipboard`）留在 `widget/src/actionUri.ts`。`ResolvedAction` 的 `none`（协议无效，调用方应回退发送原文）与 `blocked`（协议有效但内容被拦下，调用方不得回退）是这条 fail-closed 语义跨模块成立的承载点，二者语义不同，不能合并成一种「失败」。
 
 ### 改动网站知识库同步 / 站点爬取链路后必须手工验证
 自动化测试覆盖不到的三条（单测里 `WebPageFetcher` 与 `VectorStore` 全被 mock，调度线程的过滤器状态更是单测造不出来）：
@@ -153,6 +155,11 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 3. **YAML schema 经 URL 拉取能导入**：`OpenApiSchemaParserTest` 已用 mock 文本覆盖了 JSON/YAML 两条解析分支，这条重复验证没有意义；真正测不到的是**经 URL 拉取**这条路径——`OpenApiSchemaFetcher` 的 Content-Type 白名单（`text/yaml`/`application/yaml`/`application/x-yaml`）要靠一次真实出站请求拿到真实的响应头才能验证，单测里 fetcher 是 mock 的，覆盖不到这层。
 4. **会 302 的 schema URL 给出可读错误**：禁重定向是硬安全取舍（重定向目标不再经 `SsrfGuard` 校验），只能靠错误消息补偿——必须明确说「请填写跳转后的最终地址」，而不是丢一个含糊的失败。
 
+### 改动 widget 协议层或 CLI 后必须手工验证
+自动化测试覆盖不到的两条：
+1. **同一问题用两种身份各问一遍**，确认访客视角命中的文档确实比服务端视角少。这一条同时验证三件事：鉴权抽象接对了、`--as-visitor` 的 Origin 真的走到了浏览器那条鉴权路径、文档可见性分级在开放 API 上确实生效。单测里 fetch 是桩的，验不到真实鉴权。
+2. **widget 真机回归**：嵌一次 widget，确认会话恢复、卡片按钮的三类动作（打开链接/发消息/复制）仍然正常。协议层抽取动了 session 与 actionUri 两条运行时路径，而 `url://` 被 `safeUrl` 拒绝时「点击无反应」是正确行为——这条 fail-closed 语义只有真机点得出来。
+
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -173,6 +180,18 @@ pnpm test    # vitest
 **`scripts/buildFreshness.test.ts` 现在守住了这条**：`vite.config.ts` 的 `injectSrcHash` 插件把 `widget/src/**/*.ts`（排除 `*.test.ts`）的 sha256 指纹写进产物，测试重算比对，改了源码没 build 即红。忘了 build 的后果本来是完全无声的——后端照常启动、页面照常加载 widget，只是线上跑旧代码，改动看起来「没生效」而任何日志里都查不到原因。三轮变异验证过：改 src 不 build → 红；只改 `*.test.ts` → 仍绿（测试不进产物，不该要求重建）；抹掉产物 banner → 红。
 
 ⚠️ 动这套指纹机制时的两个坑：**指纹注入必须用插件的 `generateBundle`，`rollupOptions.output.banner` 在 lib 模式下实测完全不生效**（产物一个字节不变、build 无任何提示）；**指纹计算必须归一化行尾与路径分隔符**，否则 Windows（CRLF 工作区）与 Linux 算出的指纹不同，变成谁跑谁红。
+
+### CLI 调试客户端（cli/，pnpm — 独立子项目）
+```bash
+cd cli && pnpm install && pnpm build
+node dist/cli/src/index.js --api-base http://localhost:8080/api --app-key <appKey> --api-secret <secret>
+node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --origin https://已在白名单的域名
+```
+面向运维排查「这条回答为什么不对」，同时是 widget 协议层（`widget/src/core/`）的第一个非浏览器消费者。⚠️ 产物路径是 `dist/cli/src/index.js` 而非 `dist/index.js`——`tsconfig.json` 的 `include` 把 `../widget/src/core/**/*.ts` 一起纳入编译，`tsc` 按各源文件相对 `include` 根的路径重建目录结构，`cli/src/` 下的文件因此多出一层 `cli/src/` 前缀。
+
+⚠️ **两种身份看到的知识库不一样**：`--api-secret` 是服务端身份（可见 INTERNAL 文档），`--as-visitor` 是浏览器访客身份（仅见 PUBLIC）。拿错视角排查访客问题会得出「我这儿明明查得到」的误导结论，所以两者互斥且必须显式二选一，CLI 启动时会打印当前身份。
+
+⚠️ **`widget/src/core/` 的测试必须跑在 node 环境**（每个测试文件首行 `// @vitest-environment node`）。widget 整体跑 jsdom，协议层里若还粘着 `document`/`localStorage` 是看不出来的——切成 node 才炸得出来。这是「协议层抽干净了」唯一一条机器可判定的证据，**别为了让测试过而把某个 core 测试改回 jsdom**。
 
 ## 测试约定（重要）
 

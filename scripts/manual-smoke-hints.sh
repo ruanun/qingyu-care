@@ -41,6 +41,7 @@ readonly RULES=(
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::### 改动已读回执链路后必须手工验证'
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::### 改动 MCP 接入链路后必须手工验证'
   'service/openapi/|UrlTemplateFiller|OpenApiImportDialog\.tsx::### 改动 OpenAPI 工具导入链路后必须手工验证'
+  'widget/src/core/|^cli/::### 改动 widget 协议层或 CLI 后必须手工验证'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then
