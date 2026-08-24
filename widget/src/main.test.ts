@@ -66,7 +66,7 @@ vi.mock('./ui', () => ({
     return mocks.ui;
   },
 }));
-vi.mock('./session', () => ({
+vi.mock('./core/session', () => ({
   loadSession: () => 'sess-1',   // 本地已有会话 → init 直接建 inbox，无需先发消息
   saveSession: vi.fn(),
   clearSession: vi.fn(),
