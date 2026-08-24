@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseCliArgs, type CliOptions } from './args.js';
 import { createFileStorage } from './fileStorage.js';
+import { computeSessionKey } from './sessionKey.js';
 import { formatCard, formatDone, formatHitDetails, formatHits, type KnowledgeHit } from './render.js';
 import { createCoreApi, SessionExpiredError } from '../../widget/src/core/api.js';
 import { clearSession, loadSession, saveSession } from '../../widget/src/core/session.js';
@@ -33,8 +34,9 @@ async function main(): Promise<void> {
   }
 
   const storage = createFileStorage(SESSION_FILE);
-  // 按 apiBase + appKey 分键：同一台机器调试多个应用/环境时互不覆盖
-  const sessionKey = `${opts.apiBase}|${opts.appKey}`;
+  // 分键含接入点 + 身份两个维度，理由见 sessionKey.ts 顶部注释——身份不进键会导致
+  // --as-visitor 续上服务端那次留下的会话，两种身份能看到的知识库范围本就不同。
+  const sessionKey = computeSessionKey(opts);
   const api = createCoreApi(opts);
 
   let sessionId = loadSession(storage, sessionKey);

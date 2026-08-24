@@ -55,24 +55,41 @@ describe('core 层隔离哨兵', () => {
       .sort();
   }
 
-  // 本仓库的 import/export 语句约定单行书写，逐行匹配足够、且比跨行正则更易读。
-  // 只匹配带 `from '...'` 的 import/export（`export interface X` 这类不带 from，天然不命中）。
-  const IMPORT_LINE_RE = /^\s*(?:import|export)\s+(type\s+)?.*?\bfrom\s+['"]([^'"]+)['"]/;
+  // 按整篇源码匹配而非逐行匹配：import/export 语句可能跨行书写（如多标识符换行的
+  // `import type {\n  X,\n} from '...'`），逐行正则要求语句起始行本身就带 `from`，
+  // 续行天然匹配不到、会静默漏检。[\s\S]*? 允许语句体内跨行，非贪婪匹配到最近一个
+  // `from '...'` 为止；`m` 让 `^` 匹配任意一行行首，从而只认语句起始处的 import/export。
+  const IMPORT_RE = /^[ \t]*(?:import|export)\s+(type\s+)?[\s\S]*?\bfrom\s+['"]([^'"]+)['"]/gm;
 
   function extractImports(source: string): ImportInfo[] {
-    const found: ImportInfo[] = [];
-    for (const line of source.split('\n')) {
-      const m = line.match(IMPORT_LINE_RE);
-      if (!m) continue;
-      found.push({ raw: line.trim(), specifier: m[2], typeOnly: Boolean(m[1]) });
-    }
-    return found;
+    return Array.from(source.matchAll(IMPORT_RE)).map((m) => ({
+      // 多行匹配时 m[0] 本身带换行，折叠成单行便于失败信息定位。
+      raw: m[0].replace(/\s+/g, ' ').trim(),
+      specifier: m[2],
+      typeOnly: Boolean(m[1]),
+    }));
   }
 
   const files = coreSourceFiles();
 
-  it('样本非空（否则下面两条断言会对空文件列表恒真）', () => {
+  it('样本非空（否则下面几条断言会对空文件列表恒真）', () => {
     expect(files.length, 'core 目录下扫不到任何非测试 .ts 文件，收集逻辑失配').toBeGreaterThan(0);
+  });
+
+  // 同 CardActionProtocolSyncTest.java 防过的病：抽取正则一旦因上游改动（如 import 风格调整、
+  // TS 语法变化）失配，抽出来的集合会静默变空，下面两条违规断言就退化成「空数组==空数组」永真——
+  // 测试全绿但完全没在守护任何东西。下界钉在 5：以当前 core 源码实测抽取到 8 条 import 语句，
+  // 留一点冗余空间给后续正常增删，但抽取归零这种彻底失配必然被这条抓住。
+  it('抽取到的 import 语句总数达到下界（否则上面/下面的违规断言可能正在空转）', () => {
+    const total = files.reduce(
+      (sum, file) => sum + extractImports(readFileSync(join(CORE_DIR, file), 'utf8')).length,
+      0
+    );
+    expect(
+      total,
+      `core 全部源文件仅抽取到 ${total} 条 import 语句，抽取正则疑似已失配——`
+        + '违规检测断言可能正在对空集合空转而非真的没有违规'
+    ).toBeGreaterThanOrEqual(5);
   });
 
   it('core 内不得反向依赖 widget 层（不得出现 `../` 相对 import，含 import type）', () => {
