@@ -29,7 +29,7 @@ readonly CLAUDE_MD="CLAUDE.md"
 # 反复踩的坑（卡片协议白名单分裂三处就是同一个病）。脚本负责告诉你「该读哪一节」，
 # 内容永远以 CLAUDE.md 为唯一来源。
 readonly RULES=(
-  'ChatServiceImpl|controller/.*[Cc]hat|chatStream|widget/src/sse\.ts|ChatStreamEvent::### 改动流式对话链路后必须手工验证'
+  'ChatServiceImpl|controller/.*[Cc]hat|chatStream|widget/src/core/sse\.ts|ChatStreamEvent::### 改动流式对话链路后必须手工验证'
   'CARD_PROMPT|actionUri|[Uu]iSpec|CardErrorBoundary::### 改动卡片 Action URI 协议后必须同步三处'
   'service/web/|WebPageSync|WebPageFetcher|SiteCrawl|LinkExtractor|RobotsChecker|CrawlSite::### 改动网站知识库同步 / 站点爬取链路后必须手工验证'
   'service/media/|ChatAttachment|Attachment|widget/src/attachments\.ts::### 改动聊天附件链路后必须手工验证'
