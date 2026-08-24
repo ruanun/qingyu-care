@@ -1,5 +1,5 @@
 import type { WidgetConfig } from './config';
-import { postSse, type ChatStreamHandlers } from './chatStream';
+import { postSse, type ChatStreamHandlers } from './core/chatStream';
 import type { WidgetAttachment } from './attachments';
 
 /** 服务端判定会话失效（404）时抛出，供上层清本地会话并自动重开。 */

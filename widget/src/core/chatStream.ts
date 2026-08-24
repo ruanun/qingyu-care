@@ -3,7 +3,7 @@
 // 对话流绝不能自动重连，重连等于重复发消息、重复计费。
 
 import { parseSseChunk } from './sse';
-import type { UiNode } from './api';
+import type { UiNode } from '../api';
 
 export interface ChatStreamStart {
   sessionId: string;

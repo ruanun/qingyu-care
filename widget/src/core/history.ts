@@ -4,8 +4,8 @@
  * 独立成模块（而非留在 main.ts 入口）是为了让入口保持「无导出的纯副作用 IIFE」，
  * 避免 vite lib 构建把 export 提升为全局变量，污染宿主页面（widget.js 不应暴露任何全局符号）。
  */
-import type { OpenSessionResponse } from './api';
-import type { WidgetUi } from './ui';
+import type { OpenSessionResponse } from '../api';
+import type { WidgetUi } from '../ui';
 
 /**
  * 恢复历史消息到 UI（各角色分派；ASSISTANT 带历史卡片 uiParts，USER/AGENT 带历史附件）。

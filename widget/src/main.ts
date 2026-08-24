@@ -3,9 +3,9 @@ import { createApi, SessionExpiredError } from './api';
 import { loadSession, saveSession, clearSession } from './session';
 import { mountUi } from './ui';
 import type { StreamingBotMessage } from './ui';
-import { connectSse } from './sse';
-import { restoreHistory } from './history';
-import type { ChatStreamHandlers } from './chatStream';
+import { connectSse } from './core/sse';
+import { restoreHistory } from './core/history';
+import type { ChatStreamHandlers } from './core/chatStream';
 import type { WidgetAttachment } from './attachments';
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */

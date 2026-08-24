@@ -1,6 +1,7 @@
+// @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { postSse } from './chatStream';
-import { createApi, SessionExpiredError } from './api';
+import { createApi, SessionExpiredError } from '../api';
 
 /** 用可控的 ReadableStream 伪造一个 SSE 响应 */
 function mockSseResponse(chunks: string[], status = 200) {

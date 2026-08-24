@@ -2,9 +2,9 @@
  * @author ruan
  */
 import { describe, it, expect, vi } from 'vitest';
-import { restoreHistory } from './history';
+import { restoreHistory } from './core/history';
 import type { WidgetUi } from './ui';
-import type { ChatStreamHandlers } from './chatStream';
+import type { ChatStreamHandlers } from './core/chatStream';
 
 /**
  * main.ts 是「无导出的纯副作用 IIFE」（见 history.ts 的说明），inbox 事件回调是它的内部闭包，
@@ -71,7 +71,7 @@ vi.mock('./session', () => ({
   saveSession: vi.fn(),
   clearSession: vi.fn(),
 }));
-vi.mock('./sse', () => ({
+vi.mock('./core/sse', () => ({
   connectSse: (_url: string, _appKey: string, onEvent: (event: string, data: string) => void) => {
     mocks.sse.onEvent = onEvent;
     return { close: vi.fn() };

@@ -1,7 +1,7 @@
 // 卡片按钮的 Action URI 协议：{protocol}://{content}
 // 协议见 docs/superpowers/specs/2026-08-04-card-action-uri-design.md §3
 
-import { safeUrl } from './safeUrl';
+import { safeUrl } from './core/safeUrl';
 
 export interface ParsedActionUri {
   protocol: string;

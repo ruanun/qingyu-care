@@ -1,5 +1,5 @@
 import type { UiNode } from './api';
-import { safeUrl } from './safeUrl';
+import { safeUrl } from './core/safeUrl';
 import { executeActionUri } from './actionUri';
 
 // 保持既有导出路径不变（render.test.ts 从 './render' 导入 safeUrl）

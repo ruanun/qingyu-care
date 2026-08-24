@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mountUi } from './ui';
-import { restoreHistory } from './history';
+import { restoreHistory } from './core/history';
 import type { WidgetBrand } from './api';
 
 const brand: WidgetBrand = { appName: '客服', welcomeMessage: '', avatar: '', themeColor: '#6366f1' };
