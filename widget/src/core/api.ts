@@ -2,7 +2,11 @@
 // 开放 API（/open/v1/**）协议封装：RAG 对话的知识检索、流式回复、会话管理等全部端点。
 // 附件上传/下载（带 File/Blob 浏览器类型）不在此列，留在 widget/src/api.ts——见该文件顶部说明。
 
-import { postSse, type ChatStreamHandlers } from './chatStream';
+// ⚠️ 必须带 .js 后缀：CLI 用 tsc 把本文件与 chatStream.ts 一起编译进 dist 后直接用
+// node 运行（不经打包器），Node 的 ESM loader 强制要求扩展名，缺了会报
+// ERR_MODULE_NOT_FOUND（widget 自身走 Vite 打包，对缺后缀的相对 import 一直容忍，
+// 这条路径失效在此之前完全无感——直到 CLI 变成 core 的第一个非浏览器消费者）。
+import { postSse, type ChatStreamHandlers } from './chatStream.js';
 import type { WidgetAttachment } from './attachments';
 
 /** 服务端判定会话失效（404）时抛出，供上层清本地会话并自动重开。 */

@@ -2,7 +2,8 @@
 // 对话流专用的一次性 POST SSE：与 sse.ts（GET + 自动重连，inbox 用）刻意分开——
 // 对话流绝不能自动重连，重连等于重复发消息、重复计费。
 
-import { parseSseChunk } from './sse';
+// ⚠️ 必须带 .js 后缀，理由同 api.ts 顶部对 chatStream.ts 那条 import 的注释。
+import { parseSseChunk } from './sse.js';
 import type { UiNode } from './api';
 
 export interface ChatStreamStart {
