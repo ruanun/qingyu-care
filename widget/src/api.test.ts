@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createApi } from './api';
 
+// 协议部分（getConfig/feedback/inboxUrl/sendTyping/getSession/stream/markRead）的行为覆盖仍在
+// 这里——createApi 只是在 core 的 createCoreApi 之上叠了两个附件方法，端点行为未变。
+// 新增的鉴权头构造能力（apiSecret/origin）测试见 core/api.test.ts，此处不重复。
+
 const cfg = { appKey: 'app_123', apiBase: 'https://host/api' };
 
 function mockFetch(status: number, body: unknown) {

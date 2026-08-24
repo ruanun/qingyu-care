@@ -158,7 +158,7 @@ class ChatCardWiringTest {
     /**
      * CARD_PROMPT 必须教会 LLM 三种 Action URI 协议——否则模型不会产出 action 字段，
      * 两端刚接的按钮动作就成了摆设。协议白名单同时存在于
-     * frontend/src/lib/actionUri.ts 与 widget/src/actionUri.ts（跨语言，无法自动比对）。
+     * frontend/src/lib/actionUri.ts 与 widget/src/core/actionUri.ts（跨语言，无法自动比对）。
      */
     @Test
     void CARD_PROMPT_含三种ActionURI协议说明() {

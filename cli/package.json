@@ -1,0 +1,17 @@
+{
+  "name": "qingyu-cli",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "bin": { "qingyu-cli": "./dist/cli/src/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "start": "node dist/cli/src/index.js"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.10",
+    "@types/node": "^22.10.2"
+  }
+}

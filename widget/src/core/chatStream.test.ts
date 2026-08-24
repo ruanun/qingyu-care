@@ -1,6 +1,7 @@
+// @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { postSse } from './chatStream';
-import { createApi, SessionExpiredError } from './api';
+import { createCoreApi, SessionExpiredError } from './api';
 
 /** 用可控的 ReadableStream 伪造一个 SSE 响应 */
 function mockSseResponse(chunks: string[], status = 200) {
@@ -89,7 +90,7 @@ describe('postSse', () => {
 
   it('404 时经 api.stream() 抛出完整链路上的 SessionExpiredError', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockSseResponse([], 404)));
-    const api = createApi({ appKey: 'app_123', apiBase: 'https://host/api' });
+    const api = createCoreApi({ appKey: 'app_123', apiBase: 'https://host/api' });
 
     await expect(api.stream('hi', 's-1', {})).rejects.toBeInstanceOf(SessionExpiredError);
   });

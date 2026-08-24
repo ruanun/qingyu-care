@@ -29,7 +29,7 @@ readonly CLAUDE_MD="CLAUDE.md"
 # 反复踩的坑（卡片协议白名单分裂三处就是同一个病）。脚本负责告诉你「该读哪一节」，
 # 内容永远以 CLAUDE.md 为唯一来源。
 readonly RULES=(
-  'ChatServiceImpl|controller/.*[Cc]hat|chatStream|widget/src/sse\.ts|ChatStreamEvent::### 改动流式对话链路后必须手工验证'
+  'ChatServiceImpl|controller/.*[Cc]hat|chatStream|widget/src/core/sse\.ts|ChatStreamEvent::### 改动流式对话链路后必须手工验证'
   'CARD_PROMPT|actionUri|[Uu]iSpec|CardErrorBoundary::### 改动卡片 Action URI 协议后必须同步三处'
   'service/web/|WebPageSync|WebPageFetcher|SiteCrawl|LinkExtractor|RobotsChecker|CrawlSite::### 改动网站知识库同步 / 站点爬取链路后必须手工验证'
   'service/media/|ChatAttachment|Attachment|widget/src/attachments\.ts::### 改动聊天附件链路后必须手工验证'
@@ -41,6 +41,7 @@ readonly RULES=(
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::### 改动已读回执链路后必须手工验证'
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::### 改动 MCP 接入链路后必须手工验证'
   'service/openapi/|UrlTemplateFiller|OpenApiImportDialog\.tsx::### 改动 OpenAPI 工具导入链路后必须手工验证'
+  'widget/src/core/|^cli/::### 改动 widget 协议层或 CLI 后必须手工验证'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then

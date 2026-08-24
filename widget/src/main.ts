@@ -1,12 +1,20 @@
 import { resolveConfig } from './config';
 import { createApi, SessionExpiredError } from './api';
-import { loadSession, saveSession, clearSession } from './session';
+import { loadSession, saveSession, clearSession } from './core/session';
 import { mountUi } from './ui';
 import type { StreamingBotMessage } from './ui';
-import { connectSse } from './sse';
-import { restoreHistory } from './history';
-import type { ChatStreamHandlers } from './chatStream';
+import { connectSse } from './core/sse';
+import { restoreHistory } from './core/history';
+import type { ChatStreamHandlers } from './core/chatStream';
 import type { WidgetAttachment } from './attachments';
+import type { WidgetStorage } from './core/platform';
+
+/** widget 侧的 storage 实现。异常由 core 的 try/catch 兜住（隐私模式下会抛）。 */
+const browserStorage: WidgetStorage = {
+  get: (k) => localStorage.getItem(k),
+  set: (k, v) => localStorage.setItem(k, v),
+  remove: (k) => localStorage.removeItem(k),
+};
 
 /** 会话状态事件 kind → 展示文案兜底（后端通常已带 text，此处仅作兜底） */
 function sessionStateText(kind: string): string {
@@ -38,7 +46,7 @@ async function init(): Promise<void> {
     return; // fail silently，不干扰宿主页面
   }
 
-  let sessionId: string | null = loadSession(cfg.appKey);
+  let sessionId: string | null = loadSession(browserStorage, cfg.appKey);
 
   // 已读上报所需的两块状态：面板是否展开（点击悬浮气泡切换）、当前已知最新一条坐席/AI消息 id。
   // 上报条件是两者与页面可见性三者同时成立，见 maybeReportRead。
@@ -182,7 +190,7 @@ async function init(): Promise<void> {
       await streamWithRetry(message, {
         onStart: (d) => {
           sessionId = d.sessionId;
-          saveSession(cfg!.appKey, d.sessionId);
+          saveSession(browserStorage, cfg!.appKey, d.sessionId);
           ensureInbox(d.sessionId);   // 流首即建坐席通道，不必等整条回复结束
           ui.setAttachEnabled(true); // 会话已建立（或确认存续），附件按钮可用
           // START 有就先用（人工接管静默/关键词触发/知识库未命中兜底三条早退路径带真实值），
@@ -229,7 +237,7 @@ async function init(): Promise<void> {
       await api.stream(message, sessionId, handlers, attachmentIds);
     } catch (e) {
       if (e instanceof SessionExpiredError) {
-        clearSession(cfg!.appKey);
+        clearSession(browserStorage, cfg!.appKey);
         sessionId = null;
         ui.setAttachEnabled(false);
         await api.stream(message, null, handlers);
