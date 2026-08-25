@@ -216,7 +216,7 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 - `src/test/strictModeDoubleInvoke.test.tsx` 是**工具链前提哨兵**，不测产品代码：它断言 vitest 下 `<StrictMode>` 真的把 effect 跑成 setup→cleanup→setup。`CrawlSiteList.test.tsx` 里那条 `isMountedRef` 回归测试依赖这个前提——前提一旦不成立，那条测试会**静默退化成永真**而不是转红，所以把前提本身钉成一条测试。
 - ⚠️ **断言「默认值」时小心永真**：只断言「首次打开时复选框未勾选」守不住 `openDeleteDialog` 里那行复位——`useState(false)` 的初值本来就是 `false`，删掉复位照样绿。要走「改动 → 关闭 → 重开仍是默认值」这条路才有判别力。凡是「组件级 state + 每次打开时复位」的组合都吃这个坑。
 - **常态约定：动了某个页面/组件的写操作，就顺手给它补一条回归测试。** 追覆盖率数字没意义（27 个页面一次性补完不现实，补出来的也多是走过场的断言），但「改到哪补到哪」能让覆盖面跟着实际风险增长。最省事的模板是 `ToolConfigPage.test.tsx`：桩 api service + `useToast`，点一下触发写操作，断言业务错误弹 destructive toast、成功才刷新列表——两条测试就把一条写操作钉住了。
-- 覆盖面目前：`CrawlSiteList` 10 条（轮询链五条 + 建站/编辑/删除三条对话框路径五条）、`lib/apiResult` 9 条、`ToolConfigPage` 2 条，另一条工具链哨兵。其余页面与组件仍是零覆盖。
+- ⚠️ **覆盖面故意不在这里记数字**：这串统计腐烂过两次（每次都是照抄上一版而没重数，条数与文件名各自漂移，最后一次文档里只有 3 个文件、实际已有 11 个）。要看当前覆盖面就地跑一条命令：`cd frontend && find src -name "*.test.ts*" | xargs grep -cE "^\s*(it|test)\("`。绝大多数页面与组件仍是零覆盖，靠上一条「改到哪补到哪」的约定增长。
 
 ## 架构要点
 
@@ -492,7 +492,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
   | 哨兵 | 守的那一段 | 漏了会怎样 |
   |---|---|---|
   | `UpdateRequestNoInitializerTest` | DTO 字段不写初始化器 | 判空恒真，没传的字段被打回类默认值 |
-  | `UpdateRequestFieldCoverageTest` | 实体字段 → 进 DTO 或进白名单并写理由 | 实体加了字段，DTO 没跟上且没人发现 |
+  | `UpdateRequestFieldCoverageTest` | 实体字段 → 进 DTO，或进白名单并挑一个 `ExclusionCategory` + 写说明 | 实体加了字段，DTO 没跟上且没人发现 |
   | `PutEndpointBodyRegistrationTest` | PUT 端点的请求体 → 必须被上表或全量覆盖豁免表登记 | 换个不以 `UpdateRequest` 结尾的类名就绕开前两道 |
   | `UpdateRequestPropagationTest` | DTO 字段 → 控制器/服务层那行 `setX` | 字段在界面上改不动，无报错无日志 |
 
