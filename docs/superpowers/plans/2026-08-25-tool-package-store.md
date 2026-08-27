@@ -361,11 +361,25 @@ cd backend && mvn test -Dtest=PlatformEndpointGuardTest
 
 **验证完立刻把那一行加回去**，再跑一次确认恢复绿。
 
-- [ ] **Step 4: 变异验证 B —— 白名单条目失效必须转红**
+- [ ] **Step 4: 变异验证 B —— 白名单的正反两向各验一次**
 
-临时把 `ALLOWLIST` 里的 key 改成 `"PlatformConfigController#announcementXXX"`，重跑。
+白名单有两条断言在守：正向「白名单外的端点必须有守卫」，反向「白名单里的条目必须仍然命中」。
+⚠️ **两条是独立的 AssertJ 硬断言，第一条失败即抛异常中断方法**——所以一次变异只可能看到其中
+一条报出来，**必须分两次做**，否则反向那条的守护能力从未被证明过。
 
-预期：**FAIL**，且是**两条**信息同时出现：`PlatformConfigController#announcement ... 没有调用` + `例外名单里有条目已不再命中`。这证明白名单的正反两向都在守。改回去，确认恢复绿。
+**B-1（验正向）**：临时把 `ALLOWLIST` 里的 key 改成 `"PlatformConfigController#announcementXXX"`，重跑。
+
+预期：**FAIL**，消息是 `PlatformConfigController#announcement 是 /v1/platform 下的端点却没有调用...`。
+（此时反向那条其实也已失效，但被第一条断言短路、看不到——这正是要拆成两次的原因。）恢复。
+
+**B-2（验反向）**：临时给 `PlatformConfigController.announcement()` 方法体**加上**一行
+`SecurityUtil.requirePlatformAdmin();`（即让白名单条目变得名不副实，同时不制造任何新违规），重跑。
+
+预期：**FAIL**，消息是 `PlatformConfigController#announcement 在例外名单里，但它其实调用了
+requirePlatformAdmin()——该条例外已名不副实`。
+
+⚠️ B-2 对应的是真实场景：**有人给公告端点补了守卫，却忘了从白名单里删掉那条**。留着它会掩护
+一个同名的新端点。若 B-2 跑出来是绿的，说明反向断言是摆设，必须报回来。恢复代码，确认转绿。
 
 - [ ] **Step 5: 变异验证 C —— 扫描空转必须转红（防永真）**
 
