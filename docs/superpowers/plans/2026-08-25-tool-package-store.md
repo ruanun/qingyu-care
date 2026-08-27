@@ -1786,7 +1786,7 @@ git commit -m "feat(pkg): manifest 解析与结构校验（纯函数）"
 - Test: `backend/src/test/java/com/qingyu/care/service/pkg/PackageManifestBuilderTest.java`
 
 **Interfaces:**
-- Consumes: `PackageManifest` 及子 record（Task 3）、`PackageManifestParser.VARIABLE_REF`（Task 4，同包可见）
+- Consumes: `PackageManifest` 及子 record（Task 3）。⚠️ **不依赖 `PackageManifestParser`**：导出侧只把凭据换成变量名，不产生也不解析 `${VAR}` 行内引用（那是平台管理员事后手工编辑 manifest 时才写进去的）
 - Produces:
   - `@Component PackageManifestBuilder`（无构造参数）
   - `record BuildInput(List<AiTool> tools, List<McpServer> mcpServers, List<AiSkill> skills, Map<Long, String> toolNamesById, Map<Long, McpToolRef> mcpToolsById)`
@@ -2461,20 +2461,39 @@ class PackageVariableApplierTest {
     }
 
     /**
-     * ⚠️ 本条守的是整个特性最危险的一处：残留的 ${VAR} 会被 UrlTemplateFiller 的
+     * ⚠️ 本条与下一条共同守着整个特性最危险的一处：残留的 ${VAR} 会被 UrlTemplateFiller 的
      * \{([^{}]+)} 当成 LLM 参数占位符——在 query 段会被<b>整段静默删除</b>。
+     *
+     * <p>这一条走的是「变量名合法但没声明」：{@code ${GHOST}} 能被 VARIABLE_REF 匹配到，
+     * 所以它<b>不会</b>留下 {@code ${}——若实现只有「替换后查 ${」那一道兜底，它会被悄悄换成
+     * 空串然后放行。必须显式拿 variables 里声明的集合去卡。
      */
     @Test
-    @DisplayName("替换后仍残留 ${...} 必须拒绝安装，绝不能让它落库")
-    void 残留的变量引用被拒绝() {
-        // 构造一个 manifest 里没声明、但 URL 里引用了的变量（正常路径下 parser 会先拦下，
-        // 这里直接构造对象绕过 parser，钉住 applier 自己也有这道兜底）
+    @DisplayName("引用了没声明的变量必须拒绝，不能悄悄替换成空串")
+    void 未声明的变量引用被拒绝() {
+        // 正常路径下 parser 会先拦下这种 manifest，这里直接构造对象绕过 parser，
+        // 钉住 applier 自己也有这道兜底
         PackageManifest manifest = manifestWith(
                 tool("https://api.example.com/x?token=${GHOST}&city={city}", null));
 
         assertThatThrownBy(() -> applier.apply(manifest, Map.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("GHOST");
+    }
+
+    /**
+     * 这一条走的是另一半：<b>变量名写错了大小写</b>（或别的形状），VARIABLE_REF 根本匹配不到，
+     * 替换整个跳过、{@code ${...}} 原样留在串里。两条走的是实现里两道不同的检查，缺一不可。
+     */
+    @Test
+    @DisplayName("语法写错的变量引用（如小写名）会残留 ${...}，必须拒绝")
+    void 语法写错的变量引用被拒绝() {
+        PackageManifest manifest = manifestWith(
+                tool("https://api.example.com/x?token=${lowercase}&city={city}", null));
+
+        assertThatThrownBy(() -> applier.apply(manifest, Map.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("lowercase");
     }
 
     @Test
@@ -2659,10 +2678,16 @@ public class PackageVariableApplier {
         }
 
         // ③ 替换 + 结构校验
+        // declared 是「manifest 里声明过的变量名」。⚠️ 它不能省：${GHOST} 这种「名字合法但没
+        // 声明」的引用能被 VARIABLE_REF 匹配到，若只靠替换后查 ${ 那道兜底，它会被悄悄换成
+        // 空串然后放行——鉴权参数就此凭空消失，正是本类要防的那个静默失效。
+        Set<String> declared = new LinkedHashSet<>();
+        variables.forEach(v -> declared.add(v.name()));
+
         Map<String, String> toolAuthHeaders = new LinkedHashMap<>();
         List<PackageManifest.ToolSpec> tools = new ArrayList<>();
         for (PackageManifest.ToolSpec tool : PackageManifest.nullSafe(manifest.tools())) {
-            String url = substitute(tool.urlTemplate(), given,
+            String url = substitute(tool.urlTemplate(), given, declared,
                     "工具「" + tool.name() + "」的地址");
             requireHttpUrl(url, "工具「" + tool.name() + "」的地址");
             authHeaderOf(tool.authHeaderVar(), given)
@@ -2676,7 +2701,8 @@ public class PackageVariableApplier {
         Map<String, String> serverAuthHeaders = new LinkedHashMap<>();
         List<PackageManifest.McpServerSpec> servers = new ArrayList<>();
         for (PackageManifest.McpServerSpec server : PackageManifest.nullSafe(manifest.mcpServers())) {
-            String url = substitute(server.url(), given, "MCP 服务「" + server.name() + "」的地址");
+            String url = substitute(server.url(), given, declared,
+                    "MCP 服务「" + server.name() + "」的地址");
             requireHttpUrl(url, "MCP 服务「" + server.name() + "」的地址");
             authHeaderOf(server.authHeaderVar(), given)
                     .ifPresent(header -> serverAuthHeaders.put(server.key(), header));
@@ -2715,25 +2741,37 @@ public class PackageVariableApplier {
     }
 
     /**
-     * 行内替换：有取值的换成取值，没取值的换成空串（非必填变量走到这里）。
+     * 行内替换：已声明且有取值的换成取值，已声明但没取值的换成空串（非必填变量走到这里）。
      *
-     * <p>替换完必须一个 {@code ${} 都不剩——见类注释那条「最危险」。
+     * <p><b>两道检查缺一不可，它们守的是两种不同的写错方式</b>：
+     * <ul>
+     *   <li><b>没声明</b>（{@code ${GHOST}}）→ 立刻抛。这种引用<b>能</b>被 VARIABLE_REF 匹配到，
+     *       所以下面那道「查 {@code ${}」的兜底<b>看不见它</b>——不显式卡住的话它会被悄悄换成
+     *       空串然后放行，鉴权参数凭空消失；
+     *   <li><b>语法写错</b>（{@code ${lowercase}}）→ 匹配不到、替换整个跳过、{@code ${...}}
+     *       原样留在串里，由下面那道兜底抓。
+     * </ul>
+     * 两种残留落库后的后果都写在类注释里那条「最危险」。
      */
-    private String substitute(String template, Map<String, String> given, String what) {
+    private String substitute(String template, Map<String, String> given,
+                              Set<String> declared, String what) {
         if (template == null) {
             return null;
         }
         Matcher m = PackageManifestParser.VARIABLE_REF.matcher(template);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
-            String value = given.getOrDefault(m.group(1), "");
+            String name = m.group(1);
+            if (!declared.contains(name)) {
+                throw new BusinessException(what + "引用了未声明的变量「" + name
+                        + "」：请先在包的变量表里声明它，否则安装时它会被替换成空值");
+            }
+            String value = given.getOrDefault(name, "");
             m.appendReplacement(sb, Matcher.quoteReplacement(value));
         }
         m.appendTail(sb);
         String result = sb.toString();
 
-        // 兜底：语法写错（如 ${lowercase} 不匹配 VARIABLE_REF）时替换会静默跳过，
-        // 残留物落库后就是类注释里那两种失效形态之一
         int leftover = result.indexOf("${");
         if (leftover >= 0) {
             throw new BusinessException(what + "里还有没被替换的变量引用「"
@@ -2790,11 +2828,19 @@ cd backend && mvn test -Dtest=PackageVariableApplierTest
 
 预期：**全部 PASS**。
 
-- [ ] **Step 5: 变异验证 A —— 去掉残留检测必须转红**
+- [ ] **Step 5: 变异验证 A —— 两道残留检查各摘一次，必须各红各的那条**
 
-临时把 `substitute` 里 `if (leftover >= 0) { throw ... }` 整段注释掉，重跑。
+两道检查守的是两种不同的写错方式，**必须分别验证**——只验一道时，另一道可能从来没被执行过。
 
-预期：`残留的变量引用被拒绝` 转红。恢复。
+① 临时把 `substitute` 里 `if (!declared.contains(name)) { throw ... }` 整段注释掉，重跑：
+
+预期：**只有** `未声明的变量引用被拒绝` 转红（`语法写错的变量引用被拒绝` 仍绿，它走的是另一道）。
+
+② 恢复①，改为把 `if (leftover >= 0) { throw ... }` 整段注释掉，重跑：
+
+预期：**只有** `语法写错的变量引用被拒绝` 转红。
+
+⚠️ 若①摘掉后两条都绿，说明 `declared` 检查是死代码（可能 declared 集合算错了）；若②摘掉后 `未声明的变量引用被拒绝` 也跟着红，说明它其实一直靠 leftover 那道兜底——那道兜底对 `${GHOST}` 是**看不见**的（它能被 VARIABLE_REF 匹配、会被替换成空串），出现这种结果就是实现与预期不符，回头核对 `substitute` 的替换顺序。恢复代码，确认全绿。
 
 - [ ] **Step 6: 变异验证 B —— 去掉大括号检查必须转红**
 
