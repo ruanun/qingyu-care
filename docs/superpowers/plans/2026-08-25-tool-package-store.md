@@ -361,25 +361,46 @@ cd backend && mvn test -Dtest=PlatformEndpointGuardTest
 
 **验证完立刻把那一行加回去**，再跑一次确认恢复绿。
 
-- [ ] **Step 4: 变异验证 B —— 白名单的正反两向各验一次**
+- [ ] **Step 4: 变异验证 B —— 三条独立的守护路径各验一次**
 
-白名单有两条断言在守：正向「白名单外的端点必须有守卫」，反向「白名单里的条目必须仍然命中」。
-⚠️ **两条是独立的 AssertJ 硬断言，第一条失败即抛异常中断方法**——所以一次变异只可能看到其中
-一条报出来，**必须分两次做**，否则反向那条的守护能力从未被证明过。
+本哨兵有**三条**互不相同的守护路径，一次变异只能观察到其中一条：
 
-**B-1（验正向）**：临时把 `ALLOWLIST` 里的 key 改成 `"PlatformConfigController#announcementXXX"`，重跑。
+| 路径 | 代码位置 | 触发条件 |
+|---|---|---|
+| ① 未守卫且不在白名单 | `violations.add(... 却没有调用 ...)` | 端点漏写守卫 |
+| ② 已守卫却在白名单里 | `violations.add(... 在例外名单里，但它其实调用了 ...)` | 补了守卫忘删白名单条目 |
+| ③ 白名单条目无端点命中 | `assertThat(usedAllowlist).containsExactly...` | 白名单里有死键 |
 
-预期：**FAIL**，消息是 `PlatformConfigController#announcement 是 /v1/platform 下的端点却没有调用...`。
-（此时反向那条其实也已失效，但被第一条断言短路、看不到——这正是要拆成两次的原因。）恢复。
+⚠️ **①②走的是同一条 `assertThat(violations).isEmpty()`，③走的是另一条独立的 AssertJ 硬断言。
+第一条失败即抛异常中断方法，第三条永远执行不到**——所以必须分三次做，否则某条路径的守护能力
+从未被观察到生效过，只剩「照理说应该会red」的推理。本仓库反复栽在「论证代替实测」上。
 
-**B-2（验反向）**：临时给 `PlatformConfigController.announcement()` 方法体**加上**一行
-`SecurityUtil.requirePlatformAdmin();`（即让白名单条目变得名不副实，同时不制造任何新违规），重跑。
+**B-1（验路径①）**：临时把 `ALLOWLIST` 里的 key 改成 `"PlatformConfigController#announcementXXX"`，重跑。
 
-预期：**FAIL**，消息是 `PlatformConfigController#announcement 在例外名单里，但它其实调用了
-requirePlatformAdmin()——该条例外已名不副实`。
+预期：**FAIL**，消息含 `PlatformConfigController#announcement 是 /v1/platform 下的端点却没有调用`。
+⚠️ 这次变异**同时**破坏了①和③，但③被①短路、看不到——这正是要拆成三次的原因。恢复。
 
-⚠️ B-2 对应的是真实场景：**有人给公告端点补了守卫，却忘了从白名单里删掉那条**。留着它会掩护
-一个同名的新端点。若 B-2 跑出来是绿的，说明反向断言是摆设，必须报回来。恢复代码，确认转绿。
+**B-2（验路径②）**：临时给 `PlatformConfigController.announcement()` 方法体**加上**一行
+`SecurityUtil.requirePlatformAdmin();`，重跑。
+
+预期：**FAIL**，消息含 `PlatformConfigController#announcement 在例外名单里，但它其实调用了
+requirePlatformAdmin()`。对应真实场景：**有人给公告端点补了守卫，却忘了从白名单里删掉那条**，
+留着它会掩护下一个同名端点。恢复。
+
+**B-3（验路径③）**：**保留** `ALLOWLIST` 里真实的 `announcement` 条目不动，**额外添加**一条
+指向不存在方法的假条目，如：
+
+```java
+            "PlatformController#nonExistentMethod",
+            "变异验证用的假条目，验完删除",
+```
+
+（`Map.of` 支持多对，直接加一对即可。）重跑。
+
+预期：**FAIL**，消息是 `例外名单里有条目已不再命中（方法被删/改名/加上了守卫），请同步清理`。
+⚠️ 这次 `violations` 是**空的**（没有任何端点被错判），所以第一条断言通过、执行流真的走到了
+第三条断言——这是唯一能干净隔离路径③的变异。若 B-3 跑出来是绿的，说明那条反向断言是摆设，
+必须报回来。恢复代码，确认转绿。
 
 - [ ] **Step 5: 变异验证 C —— 扫描空转必须转红（防永真）**
 
