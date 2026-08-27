@@ -179,6 +179,54 @@ class PackageManifestParserTest {
     }
 
     @Test
+    @DisplayName("MCP 服务描述超列宽必须在这里被拒绝——它是本类注释自称覆盖、却最容易漏掉的一个")
+    void MCP服务描述超长被拒绝() {
+        String longDescription = "d".repeat(501);   // McpServer.description 列宽 500
+        String json = """
+                {
+                  "manifestVersion": 1, "tools": [],
+                  "mcpServers": [{
+                    "key": "ctx7", "name": "Context7", "code": "ctx7",
+                    "description": "%s",
+                    "transport": "STREAMABLE_HTTP", "url": "https://mcp.example.com/mcp",
+                    "timeoutMs": 10000, "maxResponseChars": 4000
+                  }],
+                  "skills": [], "variables": []
+                }
+                """.formatted(longDescription);
+        assertThatThrownBy(() -> parser.parse(json))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("500");
+    }
+
+    @Test
+    @DisplayName("timeoutMs 缺失必须拒绝——安装时是直接 setter 搬运，null 会一路撞到 NOT NULL 列")
+    void 缺少timeoutMs被拒绝() {
+        String json = """
+                {"manifestVersion":1,"tools":[{
+                  "key":"t","name":"t","description":"d","httpMethod":"GET",
+                  "urlTemplate":"https://example.com/x","maxResponseChars":4000}],
+                 "mcpServers":[],"skills":[],"variables":[]}
+                """;
+        assertThatThrownBy(() -> parser.parse(json))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("timeoutMs");
+    }
+
+    @Test
+    void 非正数的maxResponseChars被拒绝() {
+        String json = """
+                {"manifestVersion":1,"tools":[{
+                  "key":"t","name":"t","description":"d","httpMethod":"GET",
+                  "urlTemplate":"https://example.com/x","timeoutMs":5000,"maxResponseChars":0}],
+                 "mcpServers":[],"skills":[],"variables":[]}
+                """;
+        assertThatThrownBy(() -> parser.parse(json))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("正整数");
+    }
+
+    @Test
     void 变量名格式非法被拒绝() {
         String json = VALID.replace("\"name\": \"WEATHER_API_KEY\"", "\"name\": \"weather-key\"")
                 .replace("\"authHeaderVar\": \"WEATHER_API_KEY\"", "\"authHeaderVar\": \"weather-key\"");

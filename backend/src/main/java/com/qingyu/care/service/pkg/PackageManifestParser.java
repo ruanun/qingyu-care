@@ -144,6 +144,8 @@ public class PackageManifestParser {
                 // 放 PUT/DELETE 进来只会让语义错得无声无息（同 OpenAPI 导入的既有约束）
                 throw new BusinessException("工具「" + tool.key() + "」的 httpMethod 只能是 GET 或 POST");
             }
+            requirePositive(tool.timeoutMs(), "工具「" + tool.key() + "」的 timeoutMs");
+            requirePositive(tool.maxResponseChars(), "工具「" + tool.key() + "」的 maxResponseChars");
             requireDeclared(tool.authHeaderVar(), variableNames,
                     "工具「" + tool.key() + "」的 authHeaderVar");
             requireInlineVarsDeclared(tool.urlTemplate(), variableNames,
@@ -154,6 +156,12 @@ public class PackageManifestParser {
             requireKey(server.key(), "MCP 服务", serverKeys);
             requireText(server.name(), MAX_NAME, "MCP 服务「" + server.key() + "」的名称");
             requireText(server.code(), MAX_MCP_CODE, "MCP 服务「" + server.key() + "」的标识符");
+            // description 是可选列（McpServer.description 没有 nullable=false），非空时才校验长度
+            requireLengthIfPresent(server.description(), MAX_DESCRIPTION,
+                    "MCP 服务「" + server.key() + "」的描述");
+            requirePositive(server.timeoutMs(), "MCP 服务「" + server.key() + "」的 timeoutMs");
+            requirePositive(server.maxResponseChars(),
+                    "MCP 服务「" + server.key() + "」的 maxResponseChars");
             if (!MCP_CODE.matcher(server.code()).matches()) {
                 throw new BusinessException("MCP 服务「" + server.key()
                         + "」的标识符只能是小写字母开头的字母、数字、下划线组合");
@@ -175,10 +183,7 @@ public class PackageManifestParser {
         for (PackageManifest.SkillSpec skill : skills) {
             requireKey(skill.key(), "技能", skillKeys);
             requireText(skill.name(), MAX_NAME, "技能「" + skill.key() + "」的名称");
-            if (skill.description() != null && skill.description().length() > MAX_DESCRIPTION) {
-                throw new BusinessException("技能「" + skill.key() + "」的描述超过 "
-                        + MAX_DESCRIPTION + " 字");
-            }
+            requireLengthIfPresent(skill.description(), MAX_DESCRIPTION, "技能「" + skill.key() + "」的描述");
             if (skill.content() == null || skill.content().isBlank()) {
                 // 空正文的 skill 装出来什么都不会发生：resolve() 只收集非空 content，
                 // 而它绑的工具也就跟着挂不上（工具只经 skill 激活）
@@ -241,6 +246,32 @@ public class PackageManifestParser {
         }
         if (value.length() > max) {
             throw new BusinessException(what + "超过 " + max + " 个字符");
+        }
+    }
+
+    /** 可选字段：可以不填，填了就不能超列宽（对应实体上没有 {@code nullable = false} 的列）。 */
+    private void requireLengthIfPresent(String value, int max, String what) {
+        if (value != null && value.length() > max) {
+            throw new BusinessException(what + "超过 " + max + " 个字符");
+        }
+    }
+
+    /**
+     * 对应实体上 {@code @Column(nullable = false)} 的数值列，manifest 里必须给且必须为正。
+     *
+     * <p>⚠️ 不能只判 null 就放过：{@code AiTool.timeoutMs} / {@code maxResponseChars} 与
+     * {@code McpServer} 的同名字段都是非空列，而安装时是<b>直接 setter 搬运</b>
+     * （{@code tool.setTimeoutMs(spec.timeoutMs())}）——manifest 里给了 null，实体上的
+     * {@code @Builder.Default} 也救不了（那只在走 builder 时生效，setter 会把 null 原样写进去），
+     * 最终在 {@code save()} 抛 {@code DataIntegrityViolationException} → HTTP 500 + 完整 INSERT
+     * 语句回给客户端。正是本类存在的理由要挡住的那类事故。
+     */
+    private void requirePositive(Integer value, String what) {
+        if (value == null) {
+            throw new BusinessException(what + "未填写");
+        }
+        if (value <= 0) {
+            throw new BusinessException(what + "必须是正整数，当前是 " + value);
         }
     }
 
