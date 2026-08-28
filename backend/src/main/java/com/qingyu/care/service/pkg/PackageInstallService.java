@@ -264,8 +264,17 @@ public class PackageInstallService {
             if (serverId == null) {
                 continue;
             }
+            Map<String, Long> byName = new LinkedHashMap<>();
             try {
                 mcpServerService.sync(serverId);
+                // ⚠️ 读取新建的工具行**必须在同一个 try 之内**：它紧跟一次成功的网络同步之后，
+                // 一旦抛（连接抖动、超时、连接池耗尽）会不经任何拦截从 install() 冒出，把
+                // 「部分成功」变成「整体失败」——而段一已经提交，客户端却收到「安装失败」，
+                // 租户会重装一次然后撞上冲突检测。
+                // ⚠️ 变异测试抓不到这条：摘掉已有的 catch 只能证明「这段保护在被执行」，
+                // 证明不了「所有可能抛异常的调用都被保护」——它验不到本就没有保护的那条线。
+                mcpToolRepository.findByMcpServerId(serverId)
+                        .forEach(t -> byName.put(t.getName(), t.getId()));
             } catch (Exception e) {
                 log.warn("能力包安装：MCP 服务 {} 同步失败", spec.code(), e);
                 warnings.add("MCP 服务「" + spec.name() + "」的工具清单同步失败（" + e.getMessage()
@@ -273,9 +282,6 @@ public class PackageInstallService {
                         + "再到技能里勾选需要的工具");
                 continue;
             }
-            Map<String, Long> byName = new LinkedHashMap<>();
-            mcpToolRepository.findByMcpServerId(serverId)
-                    .forEach(t -> byName.put(t.getName(), t.getId()));
             toolIdsByServerKey.put(spec.key(), byName);
         }
 

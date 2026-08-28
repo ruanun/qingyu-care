@@ -386,6 +386,33 @@ class PackageInstallServiceTest {
         PackageInstallResult result = service.install("doc_pack", Map.of());
 
         assertThat(result.warnings()).anySatisfy(w -> assertThat(w).contains("get-docs"));
+        // 缺的那个（get-docs）记了 warning，不代表在的那个（resolve-library-id）也没绑上——
+        // 两件事各自独立断言，测试才对自己声称的场景自证完整
+        ArgumentCaptor<AiSkill> captor = ArgumentCaptor.forClass(AiSkill.class);
+        verify(skillRepository, org.mockito.Mockito.atLeast(2)).save(captor.capture());
+        AiSkill last = captor.getAllValues().get(captor.getAllValues().size() - 1);
+        assertThat(last.getMcpToolIds()).containsExactly(400L);
+    }
+
+    /**
+     * ⚠️ 这条守的是「sync 成功之后」那一段——它与上面那条（sync 本身失败）走的是**不同的**
+     * 代码位置。变异测试对它无能为力：摘掉已有的 catch 只能证明「这段保护在被执行」，
+     * 证明不了「所有可能抛异常的调用都被保护」。
+     */
+    @Test
+    @DisplayName("sync 成功但读取工具行失败 → 仍是部分成功，不能把段一的成果拖下水")
+    void 读取工具行失败也是部分成功() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenReturn(List.of());
+        when(mcpToolRepository.findByMcpServerId(300L))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("连接抖动"));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.mcpServerNames()).containsExactly("Context7");
+        assertThat(result.skillNames()).containsExactly("文档助手");
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("Context7").contains("手动同步"));
     }
 
     @Test
