@@ -12,6 +12,7 @@ import com.qingyu.care.dto.KnowledgeBaseUpdateRequest;
 import com.qingyu.care.dto.McpServerUpdateRequest;
 import com.qingyu.care.dto.TenantUpdateRequest;
 import com.qingyu.care.dto.UserUpdateRequest;
+import com.qingyu.care.dto.pkg.ToolPackageUpdateRequest;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AbVariant;
 import com.qingyu.care.entity.AiModelConfig;
@@ -22,9 +23,11 @@ import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.entity.ToolPackage;
 import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.ExperimentStatus;
 import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.enums.PackageStatus;
 import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.repository.AbExperimentRepository;
 import com.qingyu.care.repository.AbTestReportDao;
@@ -34,8 +37,10 @@ import com.qingyu.care.repository.ChatStrategyRepository;
 import com.qingyu.care.repository.CrawlSiteRepository;
 import com.qingyu.care.repository.DocumentRepository;
 import com.qingyu.care.repository.KnowledgeBaseRepository;
+import com.qingyu.care.repository.McpToolRepository;
 import com.qingyu.care.repository.QaPairRepository;
 import com.qingyu.care.repository.TenantRepository;
+import com.qingyu.care.repository.ToolPackageRepository;
 import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.repository.VectorStoreRepository;
 import com.qingyu.care.service.AbTestService;
@@ -47,6 +52,9 @@ import com.qingyu.care.service.FileService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.impl.KnowledgeServiceImpl;
 import com.qingyu.care.service.mcp.McpServerService;
+import com.qingyu.care.service.pkg.PackageManifestBuilder;
+import com.qingyu.care.service.pkg.PackageManifestParser;
+import com.qingyu.care.service.pkg.ToolPackageService;
 import com.qingyu.care.service.webhook.WebhookPayloadBuilder;
 import com.qingyu.care.service.webhook.WebhookSender;
 import org.junit.jupiter.api.AfterEach;
@@ -155,6 +163,11 @@ class UpdateRequestPropagationTest {
     @Mock CrawlSiteRepository crawlSiteRepository;
     @Mock McpServerService mcpServerService;
 
+    @Mock ToolPackageRepository toolPackageRepository;
+    @Mock McpToolRepository mcpToolRepository;
+    @Mock PackageManifestBuilder packageManifestBuilder;
+    @Mock PackageManifestParser packageManifestParser;
+
     // 一律用 @InjectMocks 而非手工 new：本类登记了 11 条路径、涉及 9 个被测类，
     // 手工 new 会把每个构造器的参数个数与顺序都耦合进来，加一个依赖就得改一片。
     @InjectMocks AiToolController aiToolController;
@@ -168,6 +181,7 @@ class UpdateRequestPropagationTest {
     @InjectMocks AbTestService abTestService;
     @InjectMocks KnowledgeServiceImpl knowledgeService;
     @InjectMocks McpServerController mcpServerController;
+    @InjectMocks ToolPackageService toolPackageService;
 
     @AfterEach
     void clear() {
@@ -313,6 +327,20 @@ class UpdateRequestPropagationTest {
                     when(mcpServerService.getServer(ID)).thenReturn((McpServer) entity);
                     when(mcpServerService.saveServer(any(McpServer.class))).thenAnswer(i -> i.getArgument(0));
                     mcpServerController.updateServer(ID, (McpServerUpdateRequest) dto);
+                }));
+
+        // 更新路径在服务层而非控制器（同 AbExperiment / KnowledgeBase 两条），
+        // 写死成「调控制器」会让这条因 service 被 mock 而静默零覆盖
+        cases.add(new UpdateCase(ToolPackageUpdateRequest.class, "ToolPackageService.update",
+                () -> ToolPackage.builder().id(ID).code("old_pkg").name("旧包名")
+                        .description("旧描述").status(PackageStatus.DRAFT)
+                        .manifest("{\"manifestVersion\":1}").build(),
+                (entity, dto) -> {
+                    when(toolPackageRepository.findById(ID))
+                            .thenReturn(Optional.of((ToolPackage) entity));
+                    when(toolPackageRepository.save(any(ToolPackage.class)))
+                            .thenAnswer(i -> i.getArgument(0));
+                    toolPackageService.update(ID, (ToolPackageUpdateRequest) dto);
                 }));
 
         return cases;

@@ -1,5 +1,6 @@
 package com.qingyu.care.dto;
 
+import com.qingyu.care.dto.pkg.ToolPackageUpdateRequest;
 import com.qingyu.care.entity.AbExperiment;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.entity.AiSkill;
@@ -9,6 +10,7 @@ import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.entity.ToolPackage;
 import com.qingyu.care.entity.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -100,17 +102,19 @@ class UpdateRequestFieldCoverageTest {
      * 类名规则变化时会静默失配（如 {@code AbTestUpdateRequest} 对应的是 {@code AbExperiment}
      * 而非 {@code AbTest}）。
      */
-    static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.of(
-            ApplicationUpdateRequest.class, Application.class,
-            TenantUpdateRequest.class, Tenant.class,
-            UserUpdateRequest.class, User.class,
-            AbTestUpdateRequest.class, AbExperiment.class,
-            AiModelConfigUpdateRequest.class, AiModelConfig.class,
-            AiToolUpdateRequest.class, AiTool.class,
-            AiSkillUpdateRequest.class, AiSkill.class,
-            ChatStrategyUpdateRequest.class, ChatStrategy.class,
-            KnowledgeBaseUpdateRequest.class, KnowledgeBase.class,
-            McpServerUpdateRequest.class, McpServer.class);
+    static final Map<Class<?>, Class<?>> DTO_TO_ENTITY = Map.ofEntries(
+            Map.entry(ApplicationUpdateRequest.class, Application.class),
+            Map.entry(TenantUpdateRequest.class, Tenant.class),
+            Map.entry(UserUpdateRequest.class, User.class),
+            Map.entry(AbTestUpdateRequest.class, AbExperiment.class),
+            Map.entry(AiModelConfigUpdateRequest.class, AiModelConfig.class),
+            Map.entry(AiToolUpdateRequest.class, AiTool.class),
+            Map.entry(AiSkillUpdateRequest.class, AiSkill.class),
+            Map.entry(ChatStrategyUpdateRequest.class, ChatStrategy.class),
+            Map.entry(KnowledgeBaseUpdateRequest.class, KnowledgeBase.class),
+            Map.entry(McpServerUpdateRequest.class, McpServer.class),
+            // Map.of 最多 10 对（只有 0..10 的重载），第 11 条起必须用 Map.ofEntries
+            Map.entry(ToolPackageUpdateRequest.class, ToolPackage.class));
 
     /**
      * 刻意排除的类别。白名单每条都必须挑一个。
@@ -228,6 +232,16 @@ class UpdateRequestFieldCoverageTest {
                 "同步产生的系统状态字段，由 McpServerService.sync 写入/清空，"
                         + "不该由客户端 PUT 设置"));
         whitelist.put("McpServerUpdateRequest", mcpServer);
+
+        Map<String, Exclusion> toolPackage = new HashMap<>();
+        toolPackage.put("code", ex(ExclusionCategory.IDENTITY_KEY,
+                "包的寻址标识，租户安装端点 POST /v1/packages/{code}/install 用它定位；"
+                        + "只在 ToolPackageService.export 建包时写入一次，全仓没有任何更新路径调它的 setter"));
+        toolPackage.put("status", ex(ExclusionCategory.LIFECYCLE_DEDICATED_ENDPOINT,
+                "上架状态，由 POST /v1/platform/packages/{id}/publish 与 .../archive 两个专用端点驱动；"
+                        + "publish 会先重新解析一遍 manifest（发布出去就等于宣告装得下去），"
+                        + "经 update 直接改 status 会绕过这道校验，把解析失败留到租户点安装时才炸"));
+        whitelist.put("ToolPackageUpdateRequest", toolPackage);
 
         return whitelist;
     }
