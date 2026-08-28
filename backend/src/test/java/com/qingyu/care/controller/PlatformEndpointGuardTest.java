@@ -34,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 明文凭据就在响应体里（{@code listSharedTools()} 刻意不脱敏，见 {@code ChatToolService}
  * 那条注释），而端点照常返回 200，没有任何现象提醒。
  *
- * <p><b>补它的时机是新增 {@code PlatformPackageController} 那一刻</b>：写这条哨兵时全仓 12 个
- * 平台端点里 11 个守卫齐备、1 个是刻意例外（见 {@link #ALLOWLIST}），即<b>没有存量漏洞可修</b>，
+ * <p>补它的时机是新增 {@code PlatformPackageController} 那一刻：写这条哨兵时全仓的平台端点
+ * <b>守卫齐备、只有一个刻意例外</b>（见 {@link #ALLOWLIST}），即<b>没有存量漏洞可修</b>，
  * 它守的完全是「以后新增平台端点时忘了写那一行」。
  *
  * <p><b>为什么是「反射拿路径 + 源码找方法体」的混合方案。</b>类级路径用反射取最稳
@@ -47,6 +47,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>⚠️ <b>已知盲区：只认「方法体里直接出现那一句」</b>。把守卫藏进私有辅助方法再调用，
  * 本哨兵会漏掉——同 {@code AsyncDispatchOutsideTransactionTest} 对间接投递的盲区，
  * 覆盖它要做调用图分析，代价大于收益。
+ *
+ * <p>⚠️ <b>另一条限制：方法签名必须写在一行内</b>（方法名与行尾 {@code {} 同行）。
+ * {@link #methodBody} 靠「这一行既含方法名、又以 <code>{</code> 结尾」来定位方法体，
+ * 换行的长签名会让它找不到、进而触发防空转断言报错。⚠️ 这是<b>报错而非漏检</b>，方向安全，
+ * 但它实际上强制了一种代码风格——新增平台端点时若签名很长，把它挤到一行里
+ * （同 {@code PlatformController.updateSharedModel} 的既有写法），别改这个扫描器去迁就。
  *
  * <p>⚠️ <b>本哨兵只管「有没有调用守卫」，不管「守卫对不对」</b>：一个端点即使调了
  * {@code requirePlatformAdmin()}，仍可能在后续逻辑里用别人的 id 越权操作（那类问题由

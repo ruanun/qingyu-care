@@ -423,6 +423,81 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    醒目提示告知用户「看到的不是全部」（`OpenApiImportDialog.tsx` 顶部的 destructive 提示
    条），不能只在 warnings 文案里悄悄带一句。
 
+### 工具商店（能力包，`service/pkg/` + `dto/pkg/`）
+
+平台管理员把自己已经调通的一组工具 + skill **导出成包**上架，租户挑一个包、填自己的凭据、
+一键安装成**自己名下的副本**（可改可停用可删）。三个纯函数类关住全部规则：
+`PackageManifestBuilder`（实体 → manifest + warnings）、`PackageManifestParser`（JSON ↔ manifest
++ 结构校验）、`PackageVariableApplier`（变量填充 + 残留检测）；两个 `@Service` 只做取数与落库。
+设计文档：`docs/superpowers/specs/2026-08-25-tool-package-store-design.md`。
+
+⚠️ Java 包名用 `pkg` 而非 `package`——后者是关键字，`service.package` 编译不过。
+
+⚠️ 容易写错的地方：
+
+1. **⚠️ 变量语法 `${VAR}` 与 `UrlTemplateFiller` 的 `{param}` 正则重叠，替换后必须断言不残留
+   `${`**。`UrlTemplateFiller.PLACEHOLDER` 是 `\{([^{}]+)}`，它**会匹配 `${VAR}` 里的 `{VAR}`**。
+   一个没被替换掉的变量落库之后：残留在 **query 段**会让该段被**整段静默删除**（鉴权参数就此
+   消失 → 第三方 401 → 模型拿着错误响应继续编答案，全程无异常无日志）；残留在 **path 段**会
+   抛「缺少必填参数 VAR」——一个 LLM 永远填不出来的参数名，排查的人会一路去查 inputSchema。
+   同理，被行内引用的变量**取值本身不得含 `{` 或 `}`**，否则租户填一个 `evil{city}host.com`
+   就凭空造出一个假占位符。两条都由 `PackageVariableApplier` 硬拦。
+2. **安装前必须断言 `TenantContext` 的 `tenantId` 与 `appId` 都非空**。`appId` 为空时建出来的行
+   `app_id` 落 null，而 `ChatToolService.resolve()` 是 filter-bound 查询——`NULL` 对任何应用都
+   匹配不上，**装了等于没装且完全静默**。`tenantId` 为空的来源是
+   `SecurityUtil.requireTenantAdmin()` **放行平台管理员**，而他登录后 `tenantId` 恒为 null，
+   落库会写成 `tenant_id IS NULL`（「平台共享」的语义位置）。
+3. **导出必须显式拒绝 `tenantId != null` 的行**。`TenantOwnershipGuard.mutableInCurrentContext`
+   在上下文 tenantId 为空时**无条件放行**，而平台管理员正是这种情况——于是
+   `chatToolService.getTool(任意 id)` 能取到**任意租户**的工具。不拦住，平台管理员切到某个租户
+   的应用再导出，就会把该租户私有的工具配置（name / description / urlTemplate）随包发给所有
+   租户。判据取 `tenantId == null` 而非应用范围：平台管理员在任何应用下建的行 `tenant_id` 都是
+   null，这条精确等于「只导出平台管理员自己建的配置」。
+4. **导出全程只读实体，绝不 setter 置空**。本项目未配 `spring.jpa.open-in-view`（即 Boot 默认
+   `true`），OSIV 让查出来的实体在整个请求期保持受管——为了「不导出明文凭据」而写一句
+   `setAuthHeader(null)` 会被脏检查刷回库，**把平台管理员自己的凭据真的删掉**（同
+   `SharedCredentialMasker` 那次，靠 `em.detach` 才闭合）。⚠️ 直调 service 的单测**证明不了**
+   这条（实体本来就是分离的，断言静默退化成永真），由走真实 MockMvc 的 `PackageExportIT` 钉住。
+5. **引用一律用包内 `key`，绝不用 id**。`AiSkill` 绑的是 `toolIds`，而安装时工具是新建行、id
+   全新；安装期间维护 `key → 新 id` 映射再回填。漏掉这层映射**完全静默**：`resolve()` 查不到
+   就跳过，界面上 skill 仍显示绑着 N 个工具（同「MCP 接入」第 7 条同一失效模式）。
+6. **`sync()` 绝不进安装事务**，安装因此分两段：段一（事务内）建行，段二（事务外）同步 MCP
+   工具清单并回填 skill 绑定。段二失败**不回滚段一**——这是有意的部分成功，界面必须把
+   「请手动同步后再到技能里勾选工具」显眼地留在页面上，不能只弹一次 toast。
+7. **manifest 里没有 `scope` / `tenantId` / `appId`，安装时服务端强制写入**。「`scope` 是客户端
+   可控字段」这条已经真实栽过一次（见上面「平台共享工具」第 1 条），manifest 是另一条能把值送
+   进实体的路径——**字段压根不存在比判空更可靠**。
+8. **`tool_package.manifest` 必须是 `text`**，长度由包内容决定、无可预估上限（同
+   `McpTool.description` 那次 context7 接不进来）。⚠️ 存量库另需迁移 SQL——`ddl-auto: update`
+   只加列、不改已有列的类型。
+9. **冲突检测按 name 整体拒绝，不自动改名**；工具名的已占用集合**必须算上平台共享工具**——
+   `resolve()` 遇到重名会静默跳过其中一个，与共享工具重名的工具装进去了也挂不上 LLM。
+10. **不建安装记录表**（spec §2.3）：一次性、装完断开。有了它就会长出「已安装」状态，而那个
+    状态是假的——租户随手删掉装下来的工具，表里仍写着已安装。
+
+**四道扫描哨兵覆盖本链路**：`PlatformEndpointGuardTest`（`/v1/platform/**` 每个端点必须调
+`requirePlatformAdmin()`）、`PackageManifestFieldCoverageTest`（实体可变字段必须进 manifest 或
+进白名单并挑一个类别）、以及既有的 `UpdateRequestFieldCoverageTest` / `UpdateRequestPropagationTest`
+（`ToolPackageUpdateRequest` 已登记）。⚠️ `UpdateRequestFieldCoverageTest.DTO_TO_ENTITY` 现在用
+`Map.ofEntries` 而非 `Map.of`——后者最多 10 对，已经用满。
+
+### 改动工具商店 / 能力包链路后必须手工验证
+
+自动化测试覆盖不到的四条：
+
+1. **凭据真的是租户填的那个，且出站 URL 形态正确**：装一个含 HTTP 工具 + skill 的包（工具的
+   `urlTemplate` 里要带一个 `${VAR}` 变量）→ 发一句触发工具的对话 → 确认**出站请求头里带的是
+   安装时填的值**、**URL 里既没有残留 `${`、也没有半截的 query 段**。凭据若在某个环节被清掉，
+   症状是第三方返 401、模型拿着错误响应继续编答案，**全程无异常无日志**（同平台共享工具那条）。
+2. **MCP 包的两条路径**：正常 url 装一次，确认 sync 成功后 skill 的 `mcpToolIds` 真绑上了；再用
+   坏 url 装一次，确认是**部分成功**（工具与 skill 都在、提示明确说了要手动同步），不是整体失败。
+3. **上下文不泄漏**：连续给**两个不同租户**各装同一个包，确认第二个租户的行 `tenant_id` /
+   `app_id` 仍正确。`PackageInstallIT` 已覆盖 MockMvc 层的同款场景，真机这条验的是**真实浏览器
+   会话下连做两次**（切账号、切应用），只有真机连做才暴露会话级的上下文残留（同站点爬取第 7 条）。
+4. **manifest 预览逐字核对**：导出一个 URL 里带 `?apikey=` 的工具，确认界面弹出了密钥告警；再
+   人工通读一遍 manifest，确认没有明文凭据、变量的 label 与 help 是人话。凭据识别与密钥扫描都是
+   启发式，**没法自动化**——同噪声剔除，这是唯一的验收方式。
+
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
 - 控制器在 `controller/open/`，DTO 在 `dto/open/`（如 `OpenChatController` 的 `/chat/completions` 与 SSE `/chat/stream`）。

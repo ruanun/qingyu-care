@@ -274,7 +274,8 @@ CLAUDE.md「MCP 接入」第 7 条（删 server 必须清理 skill 绑定）**�
   同步成功时安装流程会自动完成绑定，失败时留给租户手动做。
 - **包没有版本与升级**：一次性安装的取舍。平台改了包不影响已装的。
 - **不支持租户投稿上架**。
-- **变量只能出现在三个白名单字段**：需要租户填私有部署地址之类的场景已覆盖（`urlTemplate` / `url`
+- **变量只能出现在四个白名单字段**（`AiTool.authHeader` / `AiTool.urlTemplate` /
+  `McpServer.authHeader` / `McpServer.url`，与 §3.5 一致）：需要租户填私有部署地址之类的场景已覆盖（`urlTemplate` / `url`
   在白名单里），但填进 `inputSchema` 或 skill 正文的场景不支持。
 - **重复安装会产生重复的工具与 skill**：冲突检测按 name 拒绝，租户改名后仍可再装一份。同 OpenAPI
   导入的既有行为。
