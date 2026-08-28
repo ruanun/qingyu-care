@@ -42,6 +42,7 @@ readonly RULES=(
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::### 改动 MCP 接入链路后必须手工验证'
   'service/openapi/|UrlTemplateFiller|OpenApiImportDialog\.tsx::### 改动 OpenAPI 工具导入链路后必须手工验证'
   'widget/src/core/|^cli/::### 改动 widget 协议层或 CLI 后必须手工验证'
+  'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::### 改动工具商店 / 能力包链路后必须手工验证'
 )
 
 if [ ! -f "$CLAUDE_MD" ]; then

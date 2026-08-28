@@ -10,6 +10,7 @@ import HandoverRulePage from './pages/HandoverRulePage';
 import ModelConfigPage from './pages/ModelConfigPage';
 import ToolConfigPage from './pages/ToolConfigPage';
 import SkillConfigPage from './pages/SkillConfigPage';
+import PackageStorePage from './pages/PackageStorePage';
 import StrategyConfigPage from './pages/StrategyConfigPage';
 import McpServerPage from './pages/McpServerPage';
 import LoginPage from './pages/LoginPage';
@@ -19,6 +20,7 @@ import TenantListPage from './pages/TenantListPage';
 import PlatformOverviewPage from './pages/PlatformOverviewPage';
 import SharedModelPage from './pages/SharedModelPage';
 import SharedToolPage from './pages/SharedToolPage';
+import PlatformPackagePage from './pages/PlatformPackagePage';
 import PlatformConfigPage from './pages/PlatformConfigPage';
 import TenantConfigPage from './pages/TenantConfigPage';
 import AuditLogPage from './pages/AuditLogPage';
@@ -65,6 +67,7 @@ function App() {
           <Route path="ai-models" element={<RequireApp><ModelConfigPage /></RequireApp>} />
           <Route path="ai-tools" element={<RequireApp><ToolConfigPage /></RequireApp>} />
           <Route path="ai-skills" element={<RequireApp><SkillConfigPage /></RequireApp>} />
+          <Route path="packages" element={<RequireApp><PackageStorePage /></RequireApp>} />
           <Route path="mcp" element={<RequireApp><McpServerPage /></RequireApp>} />
           <Route path="handover-rules" element={<RequireApp><HandoverRulePage /></RequireApp>} />
           <Route path="integration" element={<RequireApp><IntegrationPage /></RequireApp>} />
@@ -78,6 +81,7 @@ function App() {
           <Route path="platform/overview" element={<PlatformOverviewPage />} />
           <Route path="platform/models" element={<SharedModelPage />} />
           <Route path="platform/tools" element={<SharedToolPage />} />
+          <Route path="platform/packages" element={<PlatformPackagePage />} />
           <Route path="platform/config" element={<PlatformConfigPage />} />
           <Route path="tenant/config" element={<TenantConfigPage />} />
           <Route path="audit-logs" element={<AuditLogPage />} />
