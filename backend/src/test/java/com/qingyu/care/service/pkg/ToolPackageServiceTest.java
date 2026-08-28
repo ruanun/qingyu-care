@@ -4,7 +4,9 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.pkg.PackageExportRequest;
 import com.qingyu.care.dto.pkg.PackageExportResult;
 import com.qingyu.care.dto.pkg.ToolPackageUpdateRequest;
+import com.qingyu.care.entity.AiSkill;
 import com.qingyu.care.entity.AiTool;
+import com.qingyu.care.entity.McpServer;
 import com.qingyu.care.entity.ToolPackage;
 import com.qingyu.care.enums.PackageStatus;
 import com.qingyu.care.exception.BusinessException;
@@ -109,6 +111,48 @@ class ToolPackageServiceTest {
         assertThatThrownBy(() -> service.export(exportRequest(1L)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("tenant_private");
+        verify(packageRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("勾中属于某个租户的 MCP 服务 → 同样整体拒绝（三个分支结构相同，最易复制粘贴改错字段）")
+    void 拒绝导出租户私有的MCP服务() {
+        McpServer tenantOwned = McpServer.builder()
+                .name("tenant_private_mcp").code("tenant_mcp")
+                .url("https://mcp.example.com/x")
+                .timeoutMs(10000).maxResponseChars(4000).enabled(true).build();
+        tenantOwned.setId(1L);
+        tenantOwned.setTenantId(42L);
+        when(mcpServerService.getServer(1L)).thenReturn(tenantOwned);
+
+        PackageExportRequest request = new PackageExportRequest();
+        request.setCode("mcp_pack");
+        request.setName("MCP 包");
+        request.setMcpServerIds(List.of(1L));
+
+        assertThatThrownBy(() -> service.export(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("tenant_private_mcp");
+        verify(packageRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("勾中属于某个租户的技能 → 同样整体拒绝")
+    void 拒绝导出租户私有的技能() {
+        AiSkill tenantOwned = AiSkill.builder()
+                .name("tenant_private_skill").content("技能正文").enabled(true).build();
+        tenantOwned.setId(1L);
+        tenantOwned.setTenantId(42L);
+        when(chatToolService.getSkill(1L)).thenReturn(tenantOwned);
+
+        PackageExportRequest request = new PackageExportRequest();
+        request.setCode("skill_pack");
+        request.setName("技能包");
+        request.setSkillIds(List.of(1L));
+
+        assertThatThrownBy(() -> service.export(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("tenant_private_skill");
         verify(packageRepository, never()).save(any());
     }
 
