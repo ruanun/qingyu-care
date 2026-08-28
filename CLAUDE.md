@@ -474,6 +474,16 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    `resolve()` 遇到重名会静默跳过其中一个，与共享工具重名的工具装进去了也挂不上 LLM。
 10. **不建安装记录表**（spec §2.3）：一次性、装完断开。有了它就会长出「已安装」状态，而那个
     状态是假的——租户随手删掉装下来的工具，表里仍写着已安装。
+11. **⚠️ 绑定完成 ≠ AI 能用（真机验证挖出，2026-08-28）**：`syncMcpAndBindSkills` 只按名字把
+    刚同步出来的 `mcp_tool` id 塞进 `skill.mcpToolIds`，而 `McpServerService.sync()` 对全新
+    同步的工具一律 `readOnly=false`（「未知一律当可写、不挂载」），`ChatToolService.
+    resolveMcpCallbacks` 又是 `findByIdInAndStatusAndReadOnlyTrue`——只取 `readOnly=true`
+    的。三者叠加：**安装报告零 warning、界面显示技能绑着 N 个 MCP 工具，实际挂给 AI 的是 0
+    个**。⚠️ 修法**绝不能是自动帮租户标只读**——CLAUDE.md「MCP 接入」第 3 条明令「同步绝不
+    覆盖 `readOnly`」，它是租户自己的安全判据，代劳就是安全降级且完全静默（一个可写工具会被
+    LLM 调用）。正确做法是 `syncMcpAndBindSkills` 在回填绑定时额外加一条 warning，明确告知
+    「已绑定 N 个 MCP 工具，但默认可写、暂不会挂给 AI，请自己去 MCP 服务页标只读」——多一步
+    人工确认，好过让一个可写工具静默生效。
 
 **四道扫描哨兵覆盖本链路**：`PlatformEndpointGuardTest`（`/v1/platform/**` 每个端点必须调
 `requirePlatformAdmin()`）、`PackageManifestFieldCoverageTest`（实体可变字段必须进 manifest 或
@@ -489,8 +499,10 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    `urlTemplate` 里要带一个 `${VAR}` 变量）→ 发一句触发工具的对话 → 确认**出站请求头里带的是
    安装时填的值**、**URL 里既没有残留 `${`、也没有半截的 query 段**。凭据若在某个环节被清掉，
    症状是第三方返 401、模型拿着错误响应继续编答案，**全程无异常无日志**（同平台共享工具那条）。
-2. **MCP 包的两条路径**：正常 url 装一次，确认 sync 成功后 skill 的 `mcpToolIds` 真绑上了；再用
-   坏 url 装一次，确认是**部分成功**（工具与 skill 都在、提示明确说了要手动同步），不是整体失败。
+2. **MCP 包的两条路径**：正常 url 装一次，确认 sync 成功后 skill 的 `mcpToolIds` 真绑上了、
+   **且看到那条「已绑定 N 个 MCP 工具，默认可写、暂不会挂给 AI，需自己标只读」的提示**——
+   绑上了不等于能用，见上面「容易写错的地方」第 11 条；再用坏 url 装一次，确认是**部分成功**
+   （工具与 skill 都在、提示明确说了要手动同步），不是整体失败。
 3. **上下文不泄漏**：连续给**两个不同租户**各装同一个包，确认第二个租户的行 `tenant_id` /
    `app_id` 仍正确。`PackageInstallIT` 已覆盖 MockMvc 层的同款场景，真机这条验的是**真实浏览器
    会话下连做两次**（切账号、切应用），只有真机连做才暴露会话级的上下文残留（同站点爬取第 7 条）。

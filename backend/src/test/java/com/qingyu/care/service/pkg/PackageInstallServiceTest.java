@@ -358,6 +358,10 @@ class PackageInstallServiceTest {
         assertThat(last.getMcpToolIds()).containsExactlyInAnyOrder(400L, 401L);
         // manifest 没点名的工具不该被绑上
         assertThat(last.getMcpToolIds()).doesNotContain(402L);
+        // 绑定完成 ≠ AI 能用：新同步的工具默认 readOnly=false，resolve() 挂不上它们，
+        // 必须有 warning 明确告知租户还要自己去标只读——系统不能替他标（安全判据）
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("文档助手").contains("只读"));
     }
 
     @Test

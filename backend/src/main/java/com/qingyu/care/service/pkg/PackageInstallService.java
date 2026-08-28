@@ -312,6 +312,19 @@ public class PackageInstallService {
             if (mcpToolIds.isEmpty()) {
                 continue;
             }
+            // ⚠️ 绑定完成 ≠ 「AI 能用」：McpServerService.sync() 新建的工具一律
+            // readOnly=false（「未知一律当可写、不挂载」），而运行时
+            // ChatToolService.resolveMcpCallbacks 走的是 findByIdInAndStatusAndReadOnlyTrue
+            // —— 只取 readOnly=true 的。所以这些刚绑上的工具此刻挂不给 LLM。
+            // ⚠️ 这里**绝不能自动帮租户标只读**：CLAUDE.md「MCP 接入」第 3 条明令「同步绝不
+            // 覆盖 readOnly」——它是租户自己标注的安全判据，替他标就是安全降级且完全静默
+            // （一个可写工具会被 LLM 调用）。所以只能明确告知、让他自己去标。
+            // 不加这条 warning 的后果正是本特性真机验证时实拍到的：安装报告零 warning、
+            // 界面显示技能绑着 N 个 MCP 工具，实际挂给 AI 的是 0 个。
+            warnings.add("技能「" + spec.name() + "」已绑定 " + mcpToolIds.size()
+                    + " 个 MCP 工具，但它们默认是「可写」状态、暂时不会挂给 AI。请到 MCP 服务页"
+                    + "把需要的工具标为「只读」后才会生效——这一步必须由你确认，系统不会替你标"
+                    + "（只读是安全判据）。");
             try {
                 transactionTemplate.execute(status -> {
                     AiSkill skill = skillRepository.findById(skillId).orElse(null);
