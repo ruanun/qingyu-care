@@ -123,8 +123,18 @@ class PackageInstallIT extends AbstractPostgresIT {
                         .content(INSTALL_BODY))
                 .andExpect(status().isOk());
 
+        // ⚠️ 必须按 appId 收窄，不能只按工具名过滤后断言绝对条数：
+        // ① `AbstractPostgresIT` 是**静态单例容器**，方法之间不清库、不回滚；
+        // ② 测试线程在 MockMvc 请求结束后 `StpUtil.isLogin()` 为 false，`TenantDataAspect`
+        //    直接 return 不启用任何过滤器 —— 所以这里的 `findAll()` 是**全库无过滤**的；
+        // ③ 本类的 `两个租户先后安装同一个包归属都正确` 会再装两份同名工具，而 JUnit 5 的默认
+        //    方法顺序「确定但故意不可预测」（本仓库没有 @TestMethodOrder，也没有全局配置）。
+        // 三者叠加：不收窄的话，一旦那条测试排在前面，`hasSize(1)` 就变成 `hasSize(3)`。
+        // 「现在能过」只是方法名哈希顺序凑巧，往这个类里加/删/改一个方法名都可能让它无故转红。
         List<AiTool> tools = toolRepository.findAll().stream()
-                .filter(t -> "pkg_weather_query".equals(t.getName())).toList();
+                .filter(t -> "pkg_weather_query".equals(t.getName())
+                        && app.getId().equals(t.getAppId()))
+                .toList();
         assertThat(tools).hasSize(1);
         AiTool tool = tools.get(0);
 
@@ -145,8 +155,11 @@ class PackageInstallIT extends AbstractPostgresIT {
                 .as("行内变量已替换，LLM 占位符保留")
                 .isEqualTo("https://api.qweather.com/v1/weather?city={city}");
 
+        // 同上：技能这半也必须按 appId 收窄，理由与顺序脆弱性完全同构
         List<AiSkill> skills = skillRepository.findAll().stream()
-                .filter(s -> "包内天气助手".equals(s.getName())).toList();
+                .filter(s -> "包内天气助手".equals(s.getName())
+                        && app.getId().equals(s.getAppId()))
+                .toList();
         assertThat(skills).hasSize(1);
         assertThat(skills.get(0).getToolIds())
                 .as("skill 绑的必须是新建那一行的 id——漏了这层映射是完全静默的")
