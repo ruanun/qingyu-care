@@ -5,7 +5,7 @@ import {
     History, FileText, Layers, Settings, Bot,
     LogOut, User as UserIcon, Shield, Users, Smartphone, Building,
     Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3,
-    FlaskConical, Wrench, Sparkles, Server
+    FlaskConical, Wrench, Sparkles, Server, Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -54,6 +54,7 @@ const sections: NavSection[] = [
                 { label: '系统概览', path: '/platform/overview', icon: Activity },
                 { label: '共享模型池', path: '/platform/models', icon: Boxes },
                 { label: '共享工具', path: '/platform/tools', icon: Wrench },
+                { label: '能力包', path: '/platform/packages', icon: Package },
                 { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal },
             ],
         }],

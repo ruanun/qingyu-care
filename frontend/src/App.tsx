@@ -19,6 +19,7 @@ import TenantListPage from './pages/TenantListPage';
 import PlatformOverviewPage from './pages/PlatformOverviewPage';
 import SharedModelPage from './pages/SharedModelPage';
 import SharedToolPage from './pages/SharedToolPage';
+import PlatformPackagePage from './pages/PlatformPackagePage';
 import PlatformConfigPage from './pages/PlatformConfigPage';
 import TenantConfigPage from './pages/TenantConfigPage';
 import AuditLogPage from './pages/AuditLogPage';
@@ -78,6 +79,7 @@ function App() {
           <Route path="platform/overview" element={<PlatformOverviewPage />} />
           <Route path="platform/models" element={<SharedModelPage />} />
           <Route path="platform/tools" element={<SharedToolPage />} />
+          <Route path="platform/packages" element={<PlatformPackagePage />} />
           <Route path="platform/config" element={<PlatformConfigPage />} />
           <Route path="tenant/config" element={<TenantConfigPage />} />
           <Route path="audit-logs" element={<AuditLogPage />} />
