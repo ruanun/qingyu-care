@@ -129,6 +129,12 @@ class PackageInstallServiceTest {
         when(toolRepository.findAllSharedTools()).thenReturn(List.of());
         when(skillRepository.findByAppId(APP_ID)).thenReturn(List.of());
         when(mcpServerRepository.findByAppId(APP_ID)).thenReturn(List.of());
+
+        // 段二回填 skill 绑定时会重新 findById；不 stub 默认 empty()，回填会静默跳过
+        when(skillRepository.findById(anyLong())).thenAnswer(invocation ->
+                java.util.Optional.of(AiSkill.builder().id(invocation.getArgument(0))
+                        .name("文档助手").content("x")
+                        .mcpToolIds(new java.util.LinkedHashSet<>()).build()));
     }
 
     @AfterEach
@@ -291,5 +297,106 @@ class PackageInstallServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("ctx7");
         verify(mcpServerService, never()).saveServer(any());
+    }
+
+    /** 一个含 MCP 服务 + 技能引用其工具的包。 */
+    private static final String MCP_MANIFEST = """
+            {
+              "manifestVersion": 1,
+              "tools": [],
+              "mcpServers": [{
+                "key": "ctx7", "name": "Context7", "code": "ctx7", "description": "文档检索",
+                "transport": "STREAMABLE_HTTP", "url": "https://mcp.context7.com/mcp",
+                "timeoutMs": 10000, "maxResponseChars": 4000
+              }],
+              "skills": [{
+                "key": "doc_skill", "name": "文档助手", "description": "查文档",
+                "content": "查文档时用 ctx7 的工具。",
+                "toolKeys": [],
+                "mcpRefs": [{"serverKey": "ctx7", "toolNames": ["resolve-library-id", "get-docs"]}]
+              }],
+              "variables": []
+            }
+            """;
+
+    private void seedMcpPackage() {
+        when(packageService.getPublished("doc_pack")).thenReturn(
+                ToolPackage.builder().id(3L).code("doc_pack").name("文档包")
+                        .status(PackageStatus.PUBLISHED).manifest(MCP_MANIFEST).build());
+        when(mcpServerService.saveServer(any(McpServer.class))).thenAnswer(invocation -> {
+            McpServer s = invocation.getArgument(0);
+            s.setId(300L);
+            return s;
+        });
+    }
+
+    private static com.qingyu.care.entity.McpTool mcpTool(Long id, String name, boolean readOnly) {
+        com.qingyu.care.entity.McpTool t = com.qingyu.care.entity.McpTool.builder()
+                .mcpServerId(300L).name(name).readOnly(readOnly).build();
+        t.setId(id);
+        return t;
+    }
+
+    @Test
+    @DisplayName("MCP 同步成功 → 按工具名映射成新建的 mcp_tool id 并回填进 skill")
+    void MCP同步成功后回填skill绑定() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenReturn(List.of());
+        when(mcpToolRepository.findByMcpServerId(300L)).thenReturn(List.of(
+                mcpTool(400L, "resolve-library-id", false),
+                mcpTool(401L, "get-docs", false),
+                mcpTool(402L, "write-something", false)));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.mcpServerNames()).containsExactly("Context7");
+
+        // skill 被保存两次：段一建行（mcpToolIds 空）+ 段二回填
+        ArgumentCaptor<AiSkill> captor = ArgumentCaptor.forClass(AiSkill.class);
+        verify(skillRepository, org.mockito.Mockito.atLeast(2)).save(captor.capture());
+        AiSkill last = captor.getAllValues().get(captor.getAllValues().size() - 1);
+        assertThat(last.getMcpToolIds()).containsExactlyInAnyOrder(400L, 401L);
+        // manifest 没点名的工具不该被绑上
+        assertThat(last.getMcpToolIds()).doesNotContain(402L);
+    }
+
+    @Test
+    @DisplayName("MCP 同步失败 → 部分成功：服务与技能都在，warning 说清楚要手动同步")
+    void MCP同步失败是部分成功而非整体失败() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L))
+                .thenThrow(new BusinessException("同步失败：Connection refused"));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.mcpServerNames()).containsExactly("Context7");
+        assertThat(result.skillNames()).containsExactly("文档助手");
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("Context7").contains("手动同步"));
+    }
+
+    @Test
+    @DisplayName("远端少了 manifest 点名的工具 → 记 warning，别静默少绑")
+    void 远端缺少点名的工具记warning() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenReturn(List.of());
+        when(mcpToolRepository.findByMcpServerId(300L))
+                .thenReturn(List.of(mcpTool(400L, "resolve-library-id", false)));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.warnings()).anySatisfy(w -> assertThat(w).contains("get-docs"));
+    }
+
+    @Test
+    @DisplayName("段二抛任何异常都不能把段一的成果连累掉")
+    void 段二异常不影响段一结果() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenThrow(new RuntimeException("意料之外"));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.mcpServerNames()).containsExactly("Context7");
+        assertThat(result.warnings()).isNotEmpty();
     }
 }

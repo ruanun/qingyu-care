@@ -240,9 +240,89 @@ public class PackageInstallService {
         return new Stage1(serverIdByKey, skillIdByKey, toolNames, serverNames, skillNames);
     }
 
-    /** 段二在 Task 9 实现，本步先留空（没有 MCP server 时它本来就无事可做）。 */
+    /**
+     * 段二（事务外）：逐个同步 MCP 工具清单，成功则按 {@code mcpRefs.toolNames} 映射成新建的
+     * {@code McpTool} id，再开一个短事务把绑定回填进 skill。
+     *
+     * <p>⚠️ <b>整段 best-effort，绝不把异常抛出去</b>（spec §4.3）：段一已经提交，工具与技能
+     * 都建好了，它们跟 MCP 同步失败没有任何关系。抛出去会让客户端收到一个「安装失败」，而库里
+     * 明明躺着一整套装好的行——租户会重装一次，然后撞上冲突检测。
+     *
+     * <p>⚠️ <b>catch 的是 {@code Exception} 而不只是 {@code BusinessException}</b>：
+     * {@code sync()} 内部会抛 {@code DataAccessException}、网络层异常等各种东西。
+     */
     private void syncMcpAndBindSkills(PackageManifest manifest, Stage1 stage1,
                                       List<String> warnings) {
-        // Task 9
+        if (stage1.serverIdByKey().isEmpty()) {
+            return;
+        }
+
+        // serverKey → (远端工具名 → 新建的 mcp_tool id)
+        Map<String, Map<String, Long>> toolIdsByServerKey = new LinkedHashMap<>();
+        for (PackageManifest.McpServerSpec spec : PackageManifest.nullSafe(manifest.mcpServers())) {
+            Long serverId = stage1.serverIdByKey().get(spec.key());
+            if (serverId == null) {
+                continue;
+            }
+            try {
+                mcpServerService.sync(serverId);
+            } catch (Exception e) {
+                log.warn("能力包安装：MCP 服务 {} 同步失败", spec.code(), e);
+                warnings.add("MCP 服务「" + spec.name() + "」的工具清单同步失败（" + e.getMessage()
+                        + "）。服务本身已安装，请到 MCP 服务页手动同步一次，"
+                        + "再到技能里勾选需要的工具");
+                continue;
+            }
+            Map<String, Long> byName = new LinkedHashMap<>();
+            mcpToolRepository.findByMcpServerId(serverId)
+                    .forEach(t -> byName.put(t.getName(), t.getId()));
+            toolIdsByServerKey.put(spec.key(), byName);
+        }
+
+        for (PackageManifest.SkillSpec spec : PackageManifest.nullSafe(manifest.skills())) {
+            Long skillId = stage1.skillIdByKey().get(spec.key());
+            List<PackageManifest.McpRef> refs = PackageManifest.nullSafe(spec.mcpRefs());
+            if (skillId == null || refs.isEmpty()) {
+                continue;
+            }
+            Set<Long> mcpToolIds = new LinkedHashSet<>();
+            for (PackageManifest.McpRef ref : refs) {
+                Map<String, Long> byName = toolIdsByServerKey.get(ref.serverKey());
+                if (byName == null) {
+                    continue;   // 该 server 同步失败，上面已经记过 warning
+                }
+                for (String toolName : PackageManifest.nullSafe(ref.toolNames())) {
+                    Long id = byName.get(toolName);
+                    if (id == null) {
+                        // 远端没有这个工具（改名/下线）。⚠️ 必须记 warning：不记的话技能会
+                        // 静默少绑一个工具，而 resolve() 查不到 id 时同样是静默跳过
+                        warnings.add("技能「" + spec.name() + "」需要的 MCP 工具「" + toolName
+                                + "」在远端不存在，可能已改名或下线，该工具未绑定");
+                        continue;
+                    }
+                    mcpToolIds.add(id);
+                }
+            }
+            if (mcpToolIds.isEmpty()) {
+                continue;
+            }
+            try {
+                transactionTemplate.execute(status -> {
+                    AiSkill skill = skillRepository.findById(skillId).orElse(null);
+                    if (skill == null) {
+                        return null;
+                    }
+                    Set<Long> merged = new LinkedHashSet<>(
+                            skill.getMcpToolIds() == null ? Set.of() : skill.getMcpToolIds());
+                    merged.addAll(mcpToolIds);
+                    skill.setMcpToolIds(merged);
+                    return skillRepository.save(skill);
+                });
+            } catch (Exception e) {
+                log.warn("能力包安装：技能 {} 回填 MCP 工具绑定失败", spec.name(), e);
+                warnings.add("技能「" + spec.name() + "」的 MCP 工具绑定没能自动完成，"
+                        + "请到技能页手动勾选");
+            }
+        }
     }
 }
