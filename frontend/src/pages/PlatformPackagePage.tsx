@@ -8,6 +8,10 @@ import { Input } from '@/components/ui/input';
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import PackageExportDialog from '@/components/pkg/PackageExportDialog';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
@@ -33,6 +37,7 @@ const PlatformPackagePage: React.FC = () => {
     const [exportOpen, setExportOpen] = useState(false);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [editing, setEditing] = useState<ToolPackage | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<ToolPackage | null>(null);
     const [draftName, setDraftName] = useState('');
     const [draftDescription, setDraftDescription] = useState('');
     const [draftManifest, setDraftManifest] = useState('');
@@ -120,11 +125,17 @@ const PlatformPackagePage: React.FC = () => {
         }
     };
 
-    const handleDelete = async (pkg: ToolPackage) => {
+    /**
+     * ⚠️ 删的是已发布、租户可能正要装的包，且 manifest 全文只此一份、删掉不可恢复——
+     * 必须走二次确认，不能点一下就删。
+     */
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
         try {
-            const res = await toolPackageService.remove(pkg.id);
+            const res = await toolPackageService.remove(deleteTarget.id);
             throwIfFailed(res);
             toast({ title: '已删除' });
+            setDeleteTarget(null);
             await reload();
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '删除失败', description: getErrorMessage(error) });
@@ -193,7 +204,7 @@ const PlatformPackagePage: React.FC = () => {
                                         <Archive className="w-4 h-4 mr-1" /> 下架
                                     </Button>
                                 )}
-                                <Button variant="outline" size="sm" onClick={() => handleDelete(pkg)}>
+                                <Button variant="outline" size="sm" onClick={() => setDeleteTarget(pkg)}>
                                     <Trash2 className="w-4 h-4" />
                                 </Button>
                             </div>
@@ -241,6 +252,26 @@ const PlatformPackagePage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={deleteTarget !== null}
+                         onOpenChange={(open) => !open && setDeleteTarget(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>确认删除能力包</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            确定要删除「{deleteTarget?.name}」吗？manifest 全文只此一份，删除后无法恢复。
+                            已安装的租户副本不受影响。
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>取消</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleDelete}
+                                           className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            删除
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 };

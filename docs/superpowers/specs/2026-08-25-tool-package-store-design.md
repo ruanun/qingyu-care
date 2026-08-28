@@ -155,8 +155,10 @@ CLAUDE.md「MCP 接入」第 7 条（删 server 必须清理 skill 绑定）**�
 默认的 `true`，OSIV 让查出来的实体在整个请求期保持**受管**，直接 `setAuthHeader(null)` 会被脏检查
 刷回库——本意是防泄漏，结果是**把平台管理员自己的凭据真的删掉**（`SharedCredentialMasker` 那次
 就是靠 `em.detach` 才闭合的）。这里连 `detach` 都不需要：读 getter 拼 manifest DTO，从头不碰实体
-状态。⚠️ 直调 service 的单测**证明不了这条**（实体本来就是分离的，断言会静默退化成永真），必须用
-真实 MockMvc 请求钉住，同 `SharedToolIT`。
+状态。⚠️ 直调 service 的单测**能**抓住朴素的错误（如 `setAuthHeader(null)` 忘记还原——`build()`
+的 for-each 绑定的是同一个对象引用，没有 copy/clone，这类断言不会退化成永真）；它抓不住的是更窄
+的一类：真实 OSIV 下「设 null → 中途被别的查询触发 auto-flush → 之后再还原」的时序问题，这一类
+才需要真实 MockMvc 请求钉住，同 `SharedToolIT`（对应 IT 是 `PackageExportIT`）。
 
 ### 4.2 安装
 
@@ -210,7 +212,8 @@ CLAUDE.md「MCP 接入」第 7 条（删 server 必须清理 skill 绑定）**�
 
 ### 6.2 导出时 setter 置空凭据
 
-见 §4.1。后果不是泄漏而是**把平台管理员的凭据删了**，且单测证明不了。
+见 §4.1。后果不是泄漏而是**把平台管理员的凭据删了**；单测能抓住朴素的「置空不还原」，抓不住的是
+真实 OSIV 下 auto-flush 造成的时序问题，后者由 `PackageExportIT` 守。
 
 ### 6.3 安装时信了 manifest 里的 `scope` / 租户字段
 

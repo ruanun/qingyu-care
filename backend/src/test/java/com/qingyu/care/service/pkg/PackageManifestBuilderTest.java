@@ -208,6 +208,28 @@ class PackageManifestBuilderTest {
         assertThat(manifest.skills().get(0).name()).isEqualTo("客服技能");
     }
 
+    /**
+     * ⚠️ 与「key 冲突时加序号」是不同的判据：key 只是包内符号，{@link #uniqueKey} 已经保证它在
+     * 单次导出内唯一，两个工具即便同名也会各自拿到不同的 key（{@code query} / {@code query_2}）。
+     * 但装出来的 {@code AiTool.name} 会是两行同名——{@code ChatToolService.resolve()} 遇到重名
+     * 只 log.warn 跳过其一，实际挂给 LLM 的少一个。导出阶段只记 warning 不阻断（留给平台管理员
+     * 在预览里决定改名与否），真正的硬拦截在 {@code PackageManifestParser.requireUniqueName}。
+     */
+    @Test
+    @DisplayName("两个工具同名（key 因去重不同）→ 记 warning，提示装出来会静默丢失调用能力")
+    void 导出同名工具记warning() {
+        AiTool t1 = tool(1L, "query", null);
+        AiTool t2 = tool(2L, "query", null);
+
+        PackageManifestBuilder.BuildResult result = builder.build(input(List.of(t1, t2), List.of(), List.of()));
+
+        // key 因去重各不相同——这条与「key 冲突时加序号」验的是同一批工具，但断言的是另一件事
+        assertThat(result.manifest().tools()).extracting(PackageManifest.ToolSpec::key)
+                .containsExactly("query", "query_2");
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("query").contains("同名"));
+    }
+
     @Test
     void 两个凭据变量名不冲突() {
         PackageManifest manifest = builder.build(input(

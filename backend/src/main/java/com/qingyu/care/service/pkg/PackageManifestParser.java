@@ -133,10 +133,18 @@ public class PackageManifestParser {
         Set<String> variableNames = validateVariables(variables);
         Set<String> toolKeys = new LinkedHashSet<>();
         Set<String> serverKeys = new LinkedHashSet<>();
+        // ⚠️ 这三张与上面两张 key 集合是不同的判据：key 只是包内符号、随便编都不冲突，
+        // 而 name/code 是真正落库的那个字段——见下面 requireUniqueName 调用点的类注释。
+        Set<String> toolNames = new LinkedHashSet<>();
+        Set<String> serverNames = new LinkedHashSet<>();
+        Set<String> serverCodes = new LinkedHashSet<>();
+        Set<String> skillNames = new LinkedHashSet<>();
 
         for (PackageManifest.ToolSpec tool : tools) {
             requireKey(tool.key(), "工具", toolKeys);
             requireText(tool.name(), MAX_NAME, "工具「" + tool.key() + "」的名称");
+            requireUniqueName(tool.name(), toolNames, "工具「" + tool.key() + "」的名称「"
+                    + tool.name() + "」与包内另一个工具重名");
             requireText(tool.description(), MAX_DESCRIPTION, "工具「" + tool.key() + "」的描述");
             requireText(tool.urlTemplate(), MAX_URL, "工具「" + tool.key() + "」的 urlTemplate");
             if (!"GET".equals(tool.httpMethod()) && !"POST".equals(tool.httpMethod())) {
@@ -155,7 +163,12 @@ public class PackageManifestParser {
         for (PackageManifest.McpServerSpec server : servers) {
             requireKey(server.key(), "MCP 服务", serverKeys);
             requireText(server.name(), MAX_NAME, "MCP 服务「" + server.key() + "」的名称");
+            requireUniqueName(server.name(), serverNames, "MCP 服务「" + server.key() + "」的名称「"
+                    + server.name() + "」与包内另一个 MCP 服务重名");
             requireText(server.code(), MAX_MCP_CODE, "MCP 服务「" + server.key() + "」的标识符");
+            requireUniqueName(server.code(), serverCodes, "MCP 服务「" + server.key() + "」的标识符「"
+                    + server.code() + "」与包内另一个 MCP 服务重复：它参与 LLM 可见的工具名前缀，"
+                    + "重复会让全局工具名去重静默丢掉其中一个 server 的全部工具");
             // description 是可选列（McpServer.description 没有 nullable=false），非空时才校验长度
             requireLengthIfPresent(server.description(), MAX_DESCRIPTION,
                     "MCP 服务「" + server.key() + "」的描述");
@@ -183,6 +196,8 @@ public class PackageManifestParser {
         for (PackageManifest.SkillSpec skill : skills) {
             requireKey(skill.key(), "技能", skillKeys);
             requireText(skill.name(), MAX_NAME, "技能「" + skill.key() + "」的名称");
+            requireUniqueName(skill.name(), skillNames, "技能「" + skill.key() + "」的名称「"
+                    + skill.name() + "」与包内另一个技能重名");
             requireLengthIfPresent(skill.description(), MAX_DESCRIPTION, "技能「" + skill.key() + "」的描述");
             if (skill.content() == null || skill.content().isBlank()) {
                 // 空正文的 skill 装出来什么都不会发生：resolve() 只收集非空 content，
@@ -237,6 +252,28 @@ public class PackageManifestParser {
         }
         if (!seen.add(key)) {
             throw new BusinessException(what + "的 key「" + key + "」重复");
+        }
+    }
+
+    /**
+     * 包内 {@code name}/{@code code} 去重——与 {@link #requireKey} 校的<b>不是同一件事</b>。
+     *
+     * <p>{@code key} 只是包内符号（供 skill 引用），{@link PackageManifestBuilder#uniqueKey}
+     * 保证它在<b>单次导出</b>内唯一，但两个不同应用下各有一个同名工具（都是平台行、
+     * {@code tenant_id} 为 null）分两次导出、再一起塞进同一份手工编辑的 manifest（或平台管理员
+     * 在界面上手改 manifest 拼出这种结构）时，{@code key} 可以各不相同而 {@code name} 相同。
+     *
+     * <p>而 {@code name}/{@code code} 才是<b>真正落库的字段</b>：安装出两行同名 {@code AiTool}
+     * 后，{@code ChatToolService.resolve()} 遇到重名只 {@code log.warn} 一句就跳过其一
+     * （<code>if (!exposedNames.add(t.getName())) continue;</code>）——界面上两个都在，
+     * 技能挂给 LLM 的工具却少一个，全程无异常无日志。与 CLAUDE.md「MCP 接入」第 7 条
+     * 「静默降级」是同一种失效模式。{@code PackageInstallService.requireNoConflict} 的冲突检测
+     * 只防住了「与<b>已有的</b>重名」这一半，包<b>内部</b>自己重名必须在这里、发布之前就拦下——
+     * 坏包不该等到某个租户点安装才炸，见类注释里那条「后者意味着任何字段都可能被改坏」。
+     */
+    private void requireUniqueName(String name, Set<String> seen, String what) {
+        if (name != null && !seen.add(name)) {
+            throw new BusinessException(what);
         }
     }
 

@@ -159,6 +159,31 @@ class PackageManifestParserTest {
                 .hasMessageContaining("重复");
     }
 
+    /**
+     * ⚠️ 这条与「重复的工具key被拒绝」是<b>不同的判据</b>：key 只是包内符号，两个工具完全可以
+     * key 不同而 {@code name} 相同（如平台管理员分两次导出后手工拼进同一份 manifest）。装出来
+     * 是两行同名 {@code AiTool}，{@code ChatToolService.resolve()} 遇到重名只 log.warn 跳过其一
+     * ——界面两个都在，实际挂给 LLM 的少一个，全程无异常无日志。必须在解析期、发布之前拦下。
+     */
+    @Test
+    @DisplayName("包内两个工具 name 相同（key 不同）必须拒绝——resolve() 遇到重名会静默跳过其一")
+    void 包内同名工具被拒绝() {
+        String twoTools = VALID.replace("}],\n  \"mcpServers\"", """
+                }, {
+                  "key": "weather_query_2",
+                  "name": "weather_query",
+                  "description": "key 不同但 name 相同",
+                  "httpMethod": "GET",
+                  "urlTemplate": "https://api.example.com/x",
+                  "timeoutMs": 5000,
+                  "maxResponseChars": 4000
+                }],
+                  "mcpServers\"""");
+        assertThatThrownBy(() -> parser.parse(twoTools))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重名");
+    }
+
     @Test
     @DisplayName("httpMethod 只收 GET/POST —— 非 POST 在运行时一律降级成 GET，导进来只会语义错得无声无息")
     void 非GET_POST被拒绝() {

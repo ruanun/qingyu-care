@@ -23,8 +23,11 @@ import java.util.regex.Pattern;
  * 整个请求期保持<b>受管</b>——为了「不导出明文凭据」而写一句 {@code tool.setAuthHeader(null)}
  * 会被脏检查刷回库，结果是<b>把平台管理员自己的凭据真的删掉</b>（{@code SharedCredentialMasker}
  * 那次就是靠 {@code em.detach} 才闭合的）。这里连 {@code detach} 都不需要：只读 getter 拼
- * manifest，从头不碰实体状态。⚠️ 直调本类的单测<b>证明不了</b>这条（实体本来就是分离的，断言
- * 会静默退化成永真），真正钉住它的是 {@code PackageExportIT} 那条走真实 MockMvc 的测试。
+ * manifest，从头不碰实体状态。⚠️ 直调本类的单测<b>能</b>抓住朴素的错误（如
+ * {@code setAuthHeader(null)} 忘记还原——本类的 for-each 绑定的是同一个对象引用，没有
+ * copy/clone，这类断言不会退化成永真）；它抓不住的是更窄的一类：真实 OSIV 下「设 null →
+ * 中途被别的查询触发 auto-flush → 之后再还原」的时序问题，这一类才需要
+ * {@code PackageExportIT} 那条走真实 MockMvc 的测试来钉住。
  *
  * <p><b>warning 一律不阻断</b>（spec §4.1）：它们是启发式，最终仍要平台管理员逐字看一遍
  * manifest 预览再发布——同噪声剔除，没法自动化。
@@ -64,6 +67,16 @@ public class PackageManifestBuilder {
         List<PackageManifest.VariableSpec> variables = new ArrayList<>();
         Set<String> usedKeys = new LinkedHashSet<>();
         Set<String> usedVariableNames = new LinkedHashSet<>();
+        // ⚠️ 与 usedKeys 是不同的判据：key 只是包内符号，uniqueKey() 已经保证它在本次导出内
+        // 唯一；这三张记的是真正落库的 name/code——平台管理员在两个不同应用下各建一个同名工具
+        // （都是平台行、tenant_id 为 null），一起勾选导出就会产出两个 name 相同、key 不同的
+        // ToolSpec。装出来是两行同名 AiTool，ChatToolService.resolve() 遇到重名只 log.warn
+        // 跳过其一——界面两个都在，实际挂给 LLM 的少一个。这里只记 warning 不阻断（导出阶段
+        // 允许平台管理员在预览里先看见问题再决定要不要发布）；真正的硬拦截在
+        // PackageManifestParser.requireUniqueName——发布（parse）时会被拒绝，坏包进不了正式包。
+        Set<String> usedToolNames = new LinkedHashSet<>();
+        Set<String> usedServerNames = new LinkedHashSet<>();
+        Set<String> usedSkillNames = new LinkedHashSet<>();
 
         // ===== 工具 =====
         Map<Long, String> toolKeyById = new LinkedHashMap<>();
@@ -71,6 +84,11 @@ public class PackageManifestBuilder {
         for (AiTool tool : PackageManifest.nullSafe(input.tools())) {
             String key = uniqueKey(slug(tool.getName(), "tool"), usedKeys);
             toolKeyById.put(tool.getId(), key);
+
+            if (tool.getName() != null && !usedToolNames.add(tool.getName())) {
+                warnings.add("工具「" + tool.getName() + "」与本次导出的另一个工具同名——装出来会是"
+                        + "两行同名工具，安装时会静默丢失其中一个的调用能力，请先在平台端改名再导出");
+            }
 
             String authVar = promoteCredential(tool.getAuthHeader(), key, tool.getName(),
                     variables, usedVariableNames);
@@ -99,6 +117,11 @@ public class PackageManifestBuilder {
             String key = uniqueKey(slug(server.getCode(), "mcp"), usedKeys);
             serverKeyById.put(server.getId(), key);
 
+            if (server.getName() != null && !usedServerNames.add(server.getName())) {
+                warnings.add("MCP 服务「" + server.getName() + "」与本次导出的另一个 MCP 服务同名，"
+                        + "请先在平台端改名再导出");
+            }
+
             String authVar = promoteCredential(server.getAuthHeader(), key, server.getName(),
                     variables, usedVariableNames);
 
@@ -123,6 +146,11 @@ public class PackageManifestBuilder {
         List<PackageManifest.SkillSpec> skillSpecs = new ArrayList<>();
         for (AiSkill skill : PackageManifest.nullSafe(input.skills())) {
             String key = uniqueKey(slug(skill.getName(), "skill"), usedKeys);
+
+            if (skill.getName() != null && !usedSkillNames.add(skill.getName())) {
+                warnings.add("技能「" + skill.getName() + "」与本次导出的另一个技能同名，"
+                        + "请先在平台端改名再导出");
+            }
 
             List<String> toolKeys = new ArrayList<>();
             for (Long toolId : nullSafeSet(skill.getToolIds())) {

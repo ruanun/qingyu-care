@@ -38,6 +38,19 @@ import java.util.regex.Matcher;
 @Component
 public class PackageVariableApplier {
 
+    /**
+     * 与 {@code AiTool.urlTemplate} / {@code McpServer.url} 的列宽一致。
+     *
+     * <p>⚠️ {@code PackageManifestParser} 也校验 {@code urlTemplate} 的长度，但它校的是<b>带
+     * {@code ${VAR}} 占位符的模板</b>——替换成租户真值之后的长度不受它约束。一个长 JWT 或云厂商
+     * 签名串轻松让替换后的地址超过 1000，不在这里补一道就会在 {@code save()} 那一刻抛
+     * {@code DataIntegrityViolationException}，同 parser 类注释里点名的那个坑换个位置复发。
+     */
+    private static final int MAX_URL = 1000;
+
+    /** 与 {@code AiTool.authHeader} / {@code McpServer.authHeader} 的列宽一致，理由同 {@link #MAX_URL}。 */
+    private static final int MAX_AUTH_HEADER = 1000;
+
     /** 一次安装的产物：填充后的 manifest + 两张「包内 key → 最终 authHeader」表。 */
     public record AppliedPackage(
             PackageManifest manifest,
@@ -84,7 +97,10 @@ public class PackageVariableApplier {
                     "工具「" + tool.name() + "」的地址");
             requireHttpUrl(url, "工具「" + tool.name() + "」的地址");
             authHeaderOf(tool.authHeaderVar(), given)
-                    .ifPresent(header -> toolAuthHeaders.put(tool.key(), header));
+                    .ifPresent(header -> {
+                        requireAuthHeaderLength(header, "工具「" + tool.name() + "」的鉴权头");
+                        toolAuthHeaders.put(tool.key(), header);
+                    });
             tools.add(new PackageManifest.ToolSpec(
                     tool.key(), tool.name(), tool.description(), tool.inputSchema(),
                     tool.httpMethod(), url, tool.timeoutMs(), tool.maxResponseChars(),
@@ -98,7 +114,10 @@ public class PackageVariableApplier {
                     "MCP 服务「" + server.name() + "」的地址");
             requireHttpUrl(url, "MCP 服务「" + server.name() + "」的地址");
             authHeaderOf(server.authHeaderVar(), given)
-                    .ifPresent(header -> serverAuthHeaders.put(server.key(), header));
+                    .ifPresent(header -> {
+                        requireAuthHeaderLength(header, "MCP 服务「" + server.name() + "」的鉴权头");
+                        serverAuthHeaders.put(server.key(), header);
+                    });
             servers.add(new PackageManifest.McpServerSpec(
                     server.key(), server.name(), server.code(), server.description(),
                     server.transport(), url, server.timeoutMs(), server.maxResponseChars(),
@@ -204,6 +223,28 @@ public class PackageVariableApplier {
         String host = rest.substring(0, end);
         if (host.isBlank() || host.indexOf(' ') >= 0) {
             throw new BusinessException(what + "的域名部分为空或含空格，替换后的结果是：" + url);
+        }
+        if (url.length() > MAX_URL) {
+            // ⚠️ PackageManifestParser 只校验了带 ${VAR} 的模板长度，替换成租户真值之后可能
+            // 更长（也可能更短，取决于取值）——这道必须在替换之后单独补，不能指望 parser 那道
+            // 顶上：那是发布时校验平台管理员写的模板，这是安装时校验租户填的真实取值。
+            throw new BusinessException(what + "替换变量后长度为 " + url.length()
+                    + "，超过了 " + MAX_URL + " 个字符的上限，请检查你填的变量取值是否过长");
+        }
+    }
+
+    /**
+     * 鉴权头取值不得超过实体列宽。
+     *
+     * <p>与 {@link #requireHttpUrl} 里的长度检查同一个理由：{@code PackageManifestParser} 没有
+     * 校验这条——manifest 里存的是变量名（{@code authHeaderVar}），不是取值，租户在安装表单里
+     * 填的一个长 JWT 或云厂商签名串轻松超过 1000，不在这里挡住就会在 {@code save()} 那一刻抛
+     * {@code DataIntegrityViolationException} → 500 + 完整 INSERT 语句回给客户端。
+     */
+    private void requireAuthHeaderLength(String header, String what) {
+        if (header.length() > MAX_AUTH_HEADER) {
+            throw new BusinessException(what + "长度为 " + header.length()
+                    + "，超过了 " + MAX_AUTH_HEADER + " 个字符的上限，请检查你填的取值是否过长");
         }
     }
 

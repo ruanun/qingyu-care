@@ -419,6 +419,54 @@ class PackageInstallServiceTest {
                 assertThat(w).contains("Context7").contains("手动同步"));
     }
 
+    /**
+     * ⚠️ 守的是「回填绑定这一步失败」——与「MCP 同步失败」（上面几条）走的是不同的代码位置。
+     * 修复前的缺陷：「已绑定 N 个……请标只读」这条 warning 加在 {@code transactionTemplate.execute}
+     * <b>之前</b>，回填失败时租户会同时看到两条自相矛盾的提示，其中「已绑定」那条把人指向一个
+     * 根本不存在的绑定去做只读标记。
+     */
+    @Test
+    @DisplayName("回填绑定事务抛异常 → warnings 不含「已绑定」，只含「没能自动完成」")
+    void 回填绑定失败时不出现已绑定的矛盾提示() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenReturn(List.of());
+        when(mcpToolRepository.findByMcpServerId(300L)).thenReturn(List.of(
+                mcpTool(400L, "resolve-library-id", false),
+                mcpTool(401L, "get-docs", false)));
+        // skillId 由 setUp() 里的 skillRepository.save 桩统一赋值为 200L；
+        // 回填步骤会重新 findById(200L)，让它在这一步抛异常模拟数据库抖动
+        when(skillRepository.findById(200L)).thenThrow(new RuntimeException("DB 抖动"));
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("文档助手").contains("没能自动完成"));
+        assertThat(result.warnings()).noneSatisfy(w ->
+                assertThat(w).contains("已绑定"));
+    }
+
+    /**
+     * ⚠️ 守的是「回填时 skill 已不存在」这一分支——修复前 lambda 返回 null 会被当成成功
+     * （不进 catch），于是只留下一条假的「已绑定」消息，而绑定其实根本没发生。
+     */
+    @Test
+    @DisplayName("回填时 skill 已不存在 → 明确提示，不能被静默当成功")
+    void 回填时skill不存在必须明确提示() {
+        seedMcpPackage();
+        when(mcpServerService.sync(300L)).thenReturn(List.of());
+        when(mcpToolRepository.findByMcpServerId(300L)).thenReturn(List.of(
+                mcpTool(400L, "resolve-library-id", false),
+                mcpTool(401L, "get-docs", false)));
+        when(skillRepository.findById(200L)).thenReturn(java.util.Optional.empty());
+
+        PackageInstallResult result = service.install("doc_pack", Map.of());
+
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("文档助手").contains("不存在"));
+        assertThat(result.warnings()).noneSatisfy(w ->
+                assertThat(w).contains("已绑定"));
+    }
+
     @Test
     @DisplayName("段二抛任何异常都不能把段一的成果连累掉")
     void 段二异常不影响段一结果() {

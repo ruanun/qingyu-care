@@ -104,7 +104,7 @@ class PackageManifestFieldCoverageTest {
                 "明文凭据。导出时升格成 secret 变量，manifest 里只留 ToolSpec.authHeaderVar 指向它；"
                         + "导出明文等于把平台管理员的密钥随包发给每一个租户"));
         aiTool.put("enabled", ex(ExclusionCategory.INSTALL_FORCED,
-                "安装产物一律 enabled=true（PackageInstallService.buildTool 里那行 setEnabled(true)）。"
+                "安装产物一律 enabled=true（PackageInstallService.installStage1 里那行 setEnabled(true)）。"
                         + "「平台管理员当时把它停用了」是平台侧的临时状态，不该随包传播给租户"));
         aiTool.put("scope", ex(ExclusionCategory.INSTALL_FORCED,
                 "安装时强制 OwnerScope.TENANT。manifest 里有这个字段就是把「租户自封 PLATFORM」"

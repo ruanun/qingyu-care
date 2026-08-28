@@ -234,6 +234,37 @@ class PackageVariableApplierTest {
         assertThat(applied.manifest().skills().get(0).content()).contains("${HOST}");
     }
 
+    /**
+     * ⚠️ {@code PackageManifestParser} 只校验了带 {@code ${VAR}} 占位符的<b>模板</b>长度——
+     * 替换成租户真值之后的长度不受它约束。一个长 JWT 轻松超过 {@code AiTool.authHeader} 的
+     * 列宽 1000，不在这里挡住会一路撞到 {@code save()} 抛 {@code DataIntegrityViolationException}。
+     */
+    @Test
+    @DisplayName("替换后的鉴权头超长必须拒绝，不能留给 save 抛 DataIntegrityViolationException")
+    void 替换后鉴权头超长被拒绝() {
+        PackageManifest manifest = manifestWith(
+                tool("https://api.example.com/x?city={city}", "AUTH"),
+                variable("AUTH", true));
+
+        String tooLong = "Authorization: Bearer " + "a".repeat(1000);
+        assertThatThrownBy(() -> applier.apply(manifest, Map.of("AUTH", tooLong)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("1000");
+    }
+
+    @Test
+    @DisplayName("替换后的 URL 超长必须拒绝，不能留给 save 抛 DataIntegrityViolationException")
+    void 替换后URL超长被拒绝() {
+        PackageManifest manifest = manifestWith(
+                tool("https://${HOST}/weather?city={city}", null),
+                variable("HOST", true));
+
+        String tooLongHost = "a".repeat(1000) + ".example.com";
+        assertThatThrownBy(() -> applier.apply(manifest, Map.of("HOST", tooLongHost)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("1000");
+    }
+
     @Test
     void 多出来的取值被忽略而不是报错() {
         PackageManifest manifest = manifestWith(tool("https://api.example.com/x?city={city}", null));

@@ -456,8 +456,11 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 4. **导出全程只读实体，绝不 setter 置空**。本项目未配 `spring.jpa.open-in-view`（即 Boot 默认
    `true`），OSIV 让查出来的实体在整个请求期保持受管——为了「不导出明文凭据」而写一句
    `setAuthHeader(null)` 会被脏检查刷回库，**把平台管理员自己的凭据真的删掉**（同
-   `SharedCredentialMasker` 那次，靠 `em.detach` 才闭合）。⚠️ 直调 service 的单测**证明不了**
-   这条（实体本来就是分离的，断言静默退化成永真），由走真实 MockMvc 的 `PackageExportIT` 钉住。
+   `SharedCredentialMasker` 那次，靠 `em.detach` 才闭合）。⚠️ 直调 service 的单测**能**抓住
+   朴素的错误（如 `setAuthHeader(null)` 忘记还原——`build()` 的 for-each 绑定的是同一个对象
+   引用，没有 copy/clone，断言不会退化成永真）；抓不住的是更窄的一类：真实 OSIV 下「设 null →
+   中途被别的查询触发 auto-flush → 之后再还原」的时序问题，这一类由走真实 MockMvc 的
+   `PackageExportIT` 钉住。
 5. **引用一律用包内 `key`，绝不用 id**。`AiSkill` 绑的是 `toolIds`，而安装时工具是新建行、id
    全新；安装期间维护 `key → 新 id` 映射再回填。漏掉这层映射**完全静默**：`resolve()` 查不到
    就跳过，界面上 skill 仍显示绑着 N 个工具（同「MCP 接入」第 7 条同一失效模式）。
