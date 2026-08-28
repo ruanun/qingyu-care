@@ -18,6 +18,7 @@ import com.qingyu.care.repository.ToolPackageRepository;
 import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.mcp.McpServerService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +40,7 @@ import java.util.regex.Pattern;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ToolPackageService {
 
     /** 包 code 的合法形状，与 MCP server 的 code 同口径（都是要被人在 URL 里读写的标识符）。 */
@@ -64,6 +66,26 @@ public class ToolPackageService {
     /** 租户侧列表：只给已发布的。 */
     public List<ToolPackage> listPublished() {
         return packageRepository.findByStatusOrderByNameAsc(PackageStatus.PUBLISHED);
+    }
+
+    /**
+     * 租户侧商店列表：逐个转成详情。
+     *
+     * <p>⚠️ <b>单个包解析失败时跳过并记日志，不让整个列表 500</b>：manifest 是平台管理员可以
+     * 手工编辑的文本，一个包被改坏不该让所有租户的商店页面打不开。这条 fail-soft 与
+     * {@code ChatServiceImpl} 检索失败时返回空上下文同源——降级到「少一个包」，好过降级到
+     * 「整页打不开」。
+     */
+    public List<PackageDetailDTO> listPublishedDetails() {
+        List<PackageDetailDTO> details = new ArrayList<>();
+        for (ToolPackage toolPackage : listPublished()) {
+            try {
+                details.add(detailOf(toolPackage));
+            } catch (RuntimeException e) {
+                log.warn("能力包 {} 的 manifest 解析失败，已从商店列表中跳过", toolPackage.getCode(), e);
+            }
+        }
+        return details;
     }
 
     public ToolPackage getById(Long id) {
