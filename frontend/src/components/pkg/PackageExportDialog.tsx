@@ -88,9 +88,13 @@ const PackageExportDialog: React.FC<Props> = ({ open, onOpenChange, onExported }
         }
     };
 
+    // ⚠️ label 返回 ReactNode 而不是 string：勾选项要显示「名字 + 灰色描述」两段，
+    // 用 JSX + Tailwind 间距做视觉分隔。**不要**在模板字符串里塞全角空格当分隔符——
+    // 那会触发 eslint 的 no-irregular-whitespace（该规则专防不可见异常空白字符混入代码，
+    // 全角空格在等宽字体下与普通空格几乎无法区分），而压掉它等于在代码里留一个隐形字符。
     const checkboxList = <T extends { id: number }>(
         items: T[], selected: number[], setSelected: (v: number[]) => void,
-        label: (item: T) => string, emptyHint: string,
+        label: (item: T) => React.ReactNode, emptyHint: string,
     ) => (
         items.length === 0
             ? <p className="text-sm text-muted-foreground py-2">{emptyHint}</p>
@@ -129,8 +133,12 @@ const PackageExportDialog: React.FC<Props> = ({ open, onOpenChange, onExported }
                     <div>
                         <p className="text-sm font-medium mb-1">工具</p>
                         {checkboxList(tools, toolIds, setToolIds,
-                            // eslint-disable-next-line no-irregular-whitespace -- 全角空格用于视觉分隔工具名与描述，故意为之
-                            (t) => `${t.name}　${t.description ?? ''}`, '当前应用下没有工具')}
+                            (t) => (
+                                <>
+                                    <span>{t.name}</span>
+                                    <span className="ml-2 text-muted-foreground">{t.description}</span>
+                                </>
+                            ), '当前应用下没有工具')}
                     </div>
                     <div>
                         <p className="text-sm font-medium mb-1">MCP 服务</p>
