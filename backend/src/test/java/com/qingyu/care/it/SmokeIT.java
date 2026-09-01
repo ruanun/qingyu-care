@@ -15,6 +15,6 @@ class SmokeIT extends AbstractPostgresIT {
 
     @Test
     void 上下文加载且默认管理员存在() {
-        assertThat(userRepository.findByUsername("admin")).isPresent();
+        assertThat(userRepository.findByUsernameAcrossTenants("admin")).isPresent();
     }
 }

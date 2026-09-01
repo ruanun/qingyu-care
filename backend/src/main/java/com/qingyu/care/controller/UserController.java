@@ -89,9 +89,13 @@ public class UserController {
             return ApiResponse.error("用户名和密码不能为空");
         }
 
-        // 检查用户名是否已存在
-        if (userRepository.findByUsername(username).isPresent()) {
-            return ApiResponse.error("用户名已存在");
+        // 检查用户名是否已存在。⚠️ 必须跨租户查：username 是全局唯一键，只在当前租户内查
+        // 会把别租户已占用的名字判成可用，放行到 INSERT 撞唯一约束（500 + 泄漏 SQL）。
+        if (userRepository.existsByUsernameAcrossTenants(username)) {
+            // 显式 400：这是用户输入问题，不是服务器内部错误。同一语义在 AuthService.register
+            // 走 InvalidOperationException → 400，两条路径必须一致。
+            // ⚠️ 本文件其余 ApiResponse.error(...) 仍是默认的 500，属既有的语义不一致，另记待办。
+            return ApiResponse.error(400, "用户名已存在");
         }
 
         UserRole role = UserRole.valueOf(roleStr);
