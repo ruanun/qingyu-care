@@ -350,4 +350,20 @@ class PackageManifestParserTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("SSE");
     }
+
+    @Test
+    @DisplayName("错误消息在英文字段名后补空格、在中文后不补")
+    void msg_在英文字段名后补空格而中文后不补() {
+        // 本类其余断言全是 hasMessageContaining（只匹配关键词片段），拼接格式它们一概抓不住
+        // ——这条专钉格式。⚠️ 两个方向都要钉：只钉「英文后有空格」会让人退回「无条件加空格」，
+        // 那会把中文那半拼成「名称 未填写」。
+        assertThat(PackageManifestParser.msg("工具「echo」的 urlTemplate", "引用了未声明的变量「X」"))
+                .isEqualTo("工具「echo」的 urlTemplate 引用了未声明的变量「X」");
+        assertThat(PackageManifestParser.msg("工具「echo」的 timeoutMs", "未填写"))
+                .isEqualTo("工具「echo」的 timeoutMs 未填写");
+        assertThat(PackageManifestParser.msg("工具「echo」的名称", "未填写"))
+                .isEqualTo("工具「echo」的名称未填写");
+        assertThat(PackageManifestParser.msg("MCP 服务「x」的地址", "为空"))
+                .isEqualTo("MCP 服务「x」的地址为空");
+    }
 }

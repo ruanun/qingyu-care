@@ -245,13 +245,13 @@ public class PackageManifestParser {
 
     private void requireKey(String key, String what, Set<String> seen) {
         if (key == null || key.isBlank()) {
-            throw new BusinessException(what + "缺少包内 key");
+            throw new BusinessException(msg(what, "缺少包内 key"));
         }
         if (key.length() > MAX_KEY) {
-            throw new BusinessException(what + "的 key「" + key + "」过长");
+            throw new BusinessException(msg(what, "的 key「" + key + "」过长"));
         }
         if (!seen.add(key)) {
-            throw new BusinessException(what + "的 key「" + key + "」重复");
+            throw new BusinessException(msg(what, "的 key「" + key + "」重复"));
         }
     }
 
@@ -279,17 +279,17 @@ public class PackageManifestParser {
 
     private void requireText(String value, int max, String what) {
         if (value == null || value.isBlank()) {
-            throw new BusinessException(what + "为空");
+            throw new BusinessException(msg(what, "为空"));
         }
         if (value.length() > max) {
-            throw new BusinessException(what + "超过 " + max + " 个字符");
+            throw new BusinessException(msg(what, "超过 " + max + " 个字符"));
         }
     }
 
     /** 可选字段：可以不填，填了就不能超列宽（对应实体上没有 {@code nullable = false} 的列）。 */
     private void requireLengthIfPresent(String value, int max, String what) {
         if (value != null && value.length() > max) {
-            throw new BusinessException(what + "超过 " + max + " 个字符");
+            throw new BusinessException(msg(what, "超过 " + max + " 个字符"));
         }
     }
 
@@ -305,11 +305,27 @@ public class PackageManifestParser {
      */
     private void requirePositive(Integer value, String what) {
         if (value == null) {
-            throw new BusinessException(what + "未填写");
+            throw new BusinessException(msg(what, "未填写"));
         }
         if (value <= 0) {
-            throw new BusinessException(what + "必须是正整数，当前是 " + value);
+            throw new BusinessException(msg(what, "必须是正整数，当前是 " + value));
         }
+    }
+
+    /**
+     * 拼接校验错误消息：{@code what} 以 ASCII 字母数字结尾时补一个空格。
+     *
+     * <p>本类与 {@link PackageVariableApplier} 的 {@code what} 分两类——中文结尾（「工具「x」的
+     * 名称」）与<b>英文字段名结尾</b>（「工具「x」的 urlTemplate」，刻意保留字段名好让人对着
+     * manifest 定位）。后面跟的又总是中文，直接拼会得到「urlTemplate引用了未声明的变量」。
+     * 统一加空格会让中文那半变成「名称 未填写」，故判末尾字符而非无条件加——一处逻辑覆盖
+     * 全部 17 个拼接点，逐条改必然随新增消息漂移。
+     */
+    static String msg(String what, String rest) {
+        char last = what.charAt(what.length() - 1);
+        boolean endsWithAsciiWord = (last >= 'a' && last <= 'z')
+                || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9');
+        return endsWithAsciiWord ? what + " " + rest : what + rest;
     }
 
     /** 字段级变量引用（{@code authHeaderVar}）必须指向一个已声明的变量；为 null 表示不需要鉴权。 */
@@ -318,7 +334,7 @@ public class PackageManifestParser {
             return;
         }
         if (!declared.contains(varName)) {
-            throw new BusinessException(what + "引用了未声明的变量「" + varName + "」");
+            throw new BusinessException(msg(what, "引用了未声明的变量「" + varName + "」"));
         }
     }
 
@@ -326,7 +342,7 @@ public class PackageManifestParser {
     private void requireInlineVarsDeclared(String text, Set<String> declared, String what) {
         for (String name : referencedVariables(text)) {
             if (!declared.contains(name)) {
-                throw new BusinessException(what + "引用了未声明的变量「" + name + "」");
+                throw new BusinessException(msg(what, "引用了未声明的变量「" + name + "」"));
             }
         }
     }
