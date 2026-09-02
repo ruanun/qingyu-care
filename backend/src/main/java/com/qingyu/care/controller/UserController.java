@@ -21,6 +21,31 @@ import java.util.Map;
 /**
  * 用户管理 API
  * 供租户管理员管理其下的用户
+ *
+ * <p><b>本类的失败响应一律是「HTTP 200 + 显式 body.code」</b>——它们是正常 {@code return}
+ * 而非抛异常，故不经 {@code GlobalExceptionHandler}，{@code code} 必须在调用点自己给。
+ * ⚠️ <b>不能图省事用 {@code ApiResponse.error(String)}</b>：那个重载默认 500，而本类的失败
+ * 全是业务校验（无权限、不存在、输入非法），没有一处是服务器内部错误。曾经 12 处全是 500，
+ * 于 2026-09-02 按下表订正。
+ *
+ * <p>取值与 {@code GlobalExceptionHandler} 的口径对齐，便于前端一视同仁：
+ * <ul>
+ *   <li><b>403</b> 权限不足（同 {@code NotPermissionException}）；</li>
+ *   <li><b>404</b> 资源不存在（同 {@code ResourceNotFoundException}）。⚠️「用户不存在<b>或</b>
+ *       无权限访问」刻意合并成这一种响应，<b>不要拆开</b>——分别返回 404 与 403 等于告诉调用方
+ *       「这个 id 确实存在」，是一条 id 枚举探测通道；</li>
+ *   <li><b>400</b> 客户端输入或请求上下文问题（同 {@code InvalidOperationException}）。</li>
+ * </ul>
+ *
+ * <p>⚠️ <b>别改成抛异常</b>（那样会走 {@code GlobalExceptionHandler} 的「真实 HTTP 状态码」
+ * 路线）：管理端前端 axios 依赖「HTTP 200 + body.code」这条约定分流，4xx 会让它直接 reject，
+ * 调用方那句 {@code if (res.code !== 200)} 根本走不到。
+ *
+ * <p>⚠️ <b>也别在这里用 401 表达「未登录」</b>：前端那条「清登录态并跳 /login」判的是
+ * <b>HTTP 状态码</b>（{@code error.response?.status === 401}）且只在 axios reject 时才走，
+ * 而本类恒返回 HTTP 200 → 走的是 success 分支，{@code code: 401} 于是被当成一条普通错误
+ * 消息静默显示，登录态该清的没清。未登录本就由 Sa-Token 抛 {@code NotLoginException}
+ * 处理（那条给真实 HTTP 401），轮不到这里表达。
  */
 @RestController
 @RequestMapping("/v1/users")
@@ -42,7 +67,7 @@ public class UserController {
             if (isPlatformAdmin()) {
                 return ApiResponse.success(userRepository.findAll());
             }
-            return ApiResponse.error("无法获取用户列表：未关联租户");
+            return ApiResponse.error(400, "无法获取用户列表：未关联租户");
         }
         List<User> users = userRepository.findByTenantId(tenantId);
         return ApiResponse.success(users);
@@ -56,7 +81,7 @@ public class UserController {
         return userRepository.findById(id)
                 .filter(user -> canAccessUser(user))
                 .map(ApiResponse::success)
-                .orElse(ApiResponse.error("用户不存在或无权限访问"));
+                .orElse(ApiResponse.error(404, "用户不存在或无权限访问"));
     }
 
     /**
@@ -67,12 +92,12 @@ public class UserController {
     public ApiResponse<User> createUser(@RequestBody Map<String, Object> request) {
         Long tenantId = TenantContext.getTenantId();
         if (tenantId == null && !isPlatformAdmin()) {
-            return ApiResponse.error("只有平台管理员或租户管理员可以创建用户");
+            return ApiResponse.error(403, "只有平台管理员或租户管理员可以创建用户");
         }
 
         // 检查当前用户是否有权限创建用户
         if (!isPlatformAdmin() && !isTenantAdmin()) {
-            return ApiResponse.error("只有管理员可以创建用户");
+            return ApiResponse.error(403, "只有管理员可以创建用户");
         }
 
         String username = (String) request.get("username");
@@ -86,15 +111,13 @@ public class UserController {
         // BCrypt.hashpw(" ") 落库，与空串同一后果——旧密码登不上、空白密码又被
         // LoginRequest 的 @NotBlank 拒绝，账号从创建那一刻起就永久锁死且毫无提示。
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            return ApiResponse.error("用户名和密码不能为空");
+            return ApiResponse.error(400, "用户名和密码不能为空");
         }
 
         // 检查用户名是否已存在。⚠️ 必须跨租户查：username 是全局唯一键，只在当前租户内查
         // 会把别租户已占用的名字判成可用，放行到 INSERT 撞唯一约束（500 + 泄漏 SQL）。
         if (userRepository.existsByUsernameAcrossTenants(username)) {
-            // 显式 400：这是用户输入问题，不是服务器内部错误。同一语义在 AuthService.register
-            // 走 InvalidOperationException → 400，两条路径必须一致。
-            // ⚠️ 本文件其余 ApiResponse.error(...) 仍是默认的 500，属既有的语义不一致，另记待办。
+            // 同一语义在 AuthService.register 走 InvalidOperationException → 400，两条路径必须一致。
             return ApiResponse.error(400, "用户名已存在");
         }
 
@@ -102,7 +125,7 @@ public class UserController {
         
         // 非平台管理员不能创建平台管理员
         if (role == UserRole.PLATFORM_ADMIN && !isPlatformAdmin()) {
-            return ApiResponse.error("无权创建平台管理员");
+            return ApiResponse.error(403, "无权创建平台管理员");
         }
 
         User user = User.builder()
@@ -122,7 +145,7 @@ public class UserController {
         if (targetTenantId != null) {
             Tenant tenant = tenantRepository.findById(targetTenantId).orElse(null);
             if (tenant == null) {
-                return ApiResponse.error("指定的租户不存在");
+                return ApiResponse.error(404, "指定的租户不存在");
             }
             user.setTenant(tenant);
         }
@@ -130,7 +153,7 @@ public class UserController {
         // 租户内角色（TENANT_ADMIN/TENANT_MEMBER）必须归属某个租户，
         // 避免产生"无租户成员"脏数据（会绕过租户数据隔离）
         if (role != UserRole.PLATFORM_ADMIN && user.getTenant() == null) {
-            return ApiResponse.error("创建租户管理员/成员时必须指定所属租户");
+            return ApiResponse.error(400, "创建租户管理员/成员时必须指定所属租户");
         }
 
         User savedUser = userRepository.save(user);
@@ -187,7 +210,7 @@ public class UserController {
                     User savedUser = userRepository.save(user);
                     return ApiResponse.success("用户更新成功", savedUser);
                 })
-                .orElse(ApiResponse.error("用户不存在或无权限访问"));
+                .orElse(ApiResponse.error(404, "用户不存在或无权限访问"));
     }
 
     /**
@@ -201,17 +224,17 @@ public class UserController {
                 .map(user -> {
                     // 不能删除自己
                     if (user.getId().equals(TenantContext.getUserId())) {
-                        return ApiResponse.<Void>error("不能删除自己的账号");
+                        return ApiResponse.<Void>error(400, "不能删除自己的账号");
                     }
                     // 只有管理员可以删除用户
                     if (!isPlatformAdmin() && !isTenantAdmin()) {
-                        return ApiResponse.<Void>error("只有管理员可以删除用户");
+                        return ApiResponse.<Void>error(403, "只有管理员可以删除用户");
                     }
                     userRepository.delete(user);
                     log.info("用户删除成功: id={}", id);
                     return ApiResponse.<Void>success("用户删除成功", null);
                 })
-                .orElse(ApiResponse.error("用户不存在或无权限访问"));
+                .orElse(ApiResponse.error(404, "用户不存在或无权限访问"));
     }
 
     /**
