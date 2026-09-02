@@ -25,7 +25,7 @@ import java.util.Map;
  * <p><b>本类的失败响应一律是「HTTP 200 + 显式 body.code」</b>——它们是正常 {@code return}
  * 而非抛异常，故不经 {@code GlobalExceptionHandler}，{@code code} 必须在调用点自己给。
  * ⚠️ <b>不能图省事用 {@code ApiResponse.error(String)}</b>：那个重载默认 500，而本类的失败
- * 全是业务校验（无权限、不存在、输入非法），没有一处是服务器内部错误。曾经 12 处全是 500，
+ * 全是业务校验（无权限、不存在、输入非法），没有一处是服务器内部错误。曾经 13 处全是 500，
  * 于 2026-09-02 按下表订正。
  *
  * <p>取值与 {@code GlobalExceptionHandler} 的口径对齐，便于前端一视同仁：
@@ -192,7 +192,7 @@ public class UserController {
                         UserRole newRole = request.getRole();
                         // 非平台管理员不能将用户提升为平台管理员
                         if (newRole == UserRole.PLATFORM_ADMIN && !isPlatformAdmin()) {
-                            return ApiResponse.<User>error("无权设置为平台管理员");
+                            return ApiResponse.<User>error(403, "无权设置为平台管理员");
                         }
                         user.setRole(newRole);
                     }
