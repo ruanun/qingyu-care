@@ -13,6 +13,12 @@ export interface AiTool {
     maxResponseChars: number;
     enabled: boolean;
     scope?: 'PLATFORM' | 'TENANT';
+    /**
+     * 归属租户。后端 `BaseTenantEntity.tenantId` 是 `@JsonProperty(READ_ONLY)`——只写出不读入，
+     * 所以响应里有、请求体里给了也绑不上。**null 表示平台管理员自己建的行**，能力包导出只收这种
+     * （见 `PackageManifestBuilder`）。
+     */
+    tenantId?: number | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -26,6 +32,8 @@ export interface AiSkill {
     /** 绑定的 MCP 工具 id 集合（{@code mcp_tool.id}），与 toolIds 并列，见后端 AiSkill 实体 */
     mcpToolIds: number[];
     enabled: boolean;
+    /** 归属租户，null 表示平台管理员自己建的行。语义同 {@link AiTool.tenantId}。 */
+    tenantId?: number | null;
     createdAt: string;
     updatedAt: string;
 }

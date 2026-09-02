@@ -175,8 +175,8 @@ public class PackageVariableApplier {
         while (m.find()) {
             String name = m.group(1);
             if (!declared.contains(name)) {
-                throw new BusinessException(what + "引用了未声明的变量「" + name
-                        + "」：请先在包的变量表里声明它，否则安装时它会被替换成空值");
+                throw new BusinessException(PackageManifestParser.msg(what, "引用了未声明的变量「" + name
+                        + "」：请先在包的变量表里声明它，否则安装时它会被替换成空值"));
             }
             String value = given.getOrDefault(name, "");
             m.appendReplacement(sb, Matcher.quoteReplacement(value));
@@ -186,9 +186,9 @@ public class PackageVariableApplier {
 
         int leftover = result.indexOf("${");
         if (leftover >= 0) {
-            throw new BusinessException(what + "里还有没被替换的变量引用「"
+            throw new BusinessException(PackageManifestParser.msg(what, "里还有没被替换的变量引用「"
                     + result.substring(leftover, Math.min(result.length(), leftover + 40))
-                    + "」：变量名必须是大写字母开头的大写字母、数字、下划线组合，且已在变量表里声明");
+                    + "」：变量名必须是大写字母开头的大写字母、数字、下划线组合，且已在变量表里声明"));
         }
         return result;
     }
@@ -202,7 +202,7 @@ public class PackageVariableApplier {
      */
     private void requireHttpUrl(String url, String what) {
         if (url == null || url.isBlank()) {
-            throw new BusinessException(what + "为空");
+            throw new BusinessException(PackageManifestParser.msg(what, "为空"));
         }
         String rest;
         if (url.startsWith("https://")) {
@@ -210,7 +210,7 @@ public class PackageVariableApplier {
         } else if (url.startsWith("http://")) {
             rest = url.substring("http://".length());
         } else {
-            throw new BusinessException(what + "必须是 http:// 或 https:// 开头的完整地址，当前是：" + url);
+            throw new BusinessException(PackageManifestParser.msg(what, "必须是 http:// 或 https:// 开头的完整地址，当前是：" + url));
         }
         int end = rest.length();
         for (int i = 0; i < rest.length(); i++) {
@@ -222,14 +222,14 @@ public class PackageVariableApplier {
         }
         String host = rest.substring(0, end);
         if (host.isBlank() || host.indexOf(' ') >= 0) {
-            throw new BusinessException(what + "的域名部分为空或含空格，替换后的结果是：" + url);
+            throw new BusinessException(PackageManifestParser.msg(what, "的域名部分为空或含空格，替换后的结果是：" + url));
         }
         if (url.length() > MAX_URL) {
             // ⚠️ PackageManifestParser 只校验了带 ${VAR} 的模板长度，替换成租户真值之后可能
             // 更长（也可能更短，取决于取值）——这道必须在替换之后单独补，不能指望 parser 那道
             // 顶上：那是发布时校验平台管理员写的模板，这是安装时校验租户填的真实取值。
-            throw new BusinessException(what + "替换变量后长度为 " + url.length()
-                    + "，超过了 " + MAX_URL + " 个字符的上限，请检查你填的变量取值是否过长");
+            throw new BusinessException(PackageManifestParser.msg(what, "替换变量后长度为 " + url.length()
+                    + "，超过了 " + MAX_URL + " 个字符的上限，请检查你填的变量取值是否过长"));
         }
     }
 
@@ -243,8 +243,8 @@ public class PackageVariableApplier {
      */
     private void requireAuthHeaderLength(String header, String what) {
         if (header.length() > MAX_AUTH_HEADER) {
-            throw new BusinessException(what + "长度为 " + header.length()
-                    + "，超过了 " + MAX_AUTH_HEADER + " 个字符的上限，请检查你填的取值是否过长");
+            throw new BusinessException(PackageManifestParser.msg(what, "长度为 " + header.length()
+                    + "，超过了 " + MAX_AUTH_HEADER + " 个字符的上限，请检查你填的取值是否过长"));
         }
     }
 

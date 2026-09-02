@@ -19,6 +19,8 @@ export interface McpServer {
     enabled: boolean;
     lastSyncedAt?: string | null;
     lastSyncError?: string | null;
+    /** 归属租户，null 表示平台管理员自己建的行。能力包导出只收这种。 */
+    tenantId?: number | null;
 }
 
 /** 从远端 MCP server 同步下来的单个工具（对应后端 McpTool 实体） */

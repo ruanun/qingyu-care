@@ -19,11 +19,17 @@ interface Props {
     onExported: (warnings: string[]) => void;
 }
 
+/** 只保留平台管理员自己建的行。判据与后端 `PackageManifestBuilder` 的导出判据一致：`tenantId == null`。 */
+const onlyPlatformOwned = <T extends { tenantId?: number | null }>(rows: T[] | undefined): T[] =>
+    (rows ?? []).filter((row) => row.tenantId == null);
+
 /**
  * 从现成配置导出成草稿包。
  *
- * ⚠️ 勾选列表来自**当前选中应用**下的工具/MCP 服务/技能。平台管理员必须先在上方选中自己的
- * 应用——选了别人租户的应用时，后端会拒绝导出（那些行的 tenant_id 非空）。
+ * ⚠️ 勾选列表来自**当前选中应用**下的工具/MCP 服务/技能，且**只列平台管理员自己建的行**
+ * （`tenantId == null`，见 {@link onlyPlatformOwned}）。这层过滤不是锦上添花：这三个列表接口
+ * 是应用级的，而 `TenantDataAspect` 对 PLATFORM_ADMIN 整体不启用 `@Filter`，选中某个租户的
+ * 应用时拿回来的是**那个租户的私有配置**——不过滤就会把它们铺出来任人勾选，勾了才被后端拒绝。
  *
  * @author ruan
  */
@@ -58,9 +64,15 @@ const PackageExportDialog: React.FC<Props> = ({ open, onOpenChange, onExported }
                 throwIfFailed(toolRes);
                 throwIfFailed(serverRes);
                 throwIfFailed(skillRes);
-                setTools(toolRes.data ?? []);
-                setServers(serverRes.data ?? []);
-                setSkills(skillRes.data ?? []);
+                // ⚠️ 只留平台管理员自己建的行（tenantId 为 null），判据必须与后端
+                // PackageManifestBuilder 的导出判据逐字一致。这三个列表都是「应用级」接口，
+                // 而 TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter——平台管理员选中
+                // 某个租户的应用时，拿回来的是**那个租户的私有配置**。不过滤的后果有两层：
+                // 界面把租户的私有工具铺出来任人勾选，勾了才被后端拒绝（用户无从区分哪个能导）；
+                // 且同一判据在前后端各写一次、会各自漂移。
+                setTools(onlyPlatformOwned(toolRes.data));
+                setServers(onlyPlatformOwned(serverRes.data));
+                setSkills(onlyPlatformOwned(skillRes.data));
             } catch (error: unknown) {
                 toast({ variant: 'destructive', title: '加载可选项失败', description: getErrorMessage(error) });
             }
@@ -138,17 +150,17 @@ const PackageExportDialog: React.FC<Props> = ({ open, onOpenChange, onExported }
                                     <span>{t.name}</span>
                                     <span className="ml-2 text-muted-foreground">{t.description}</span>
                                 </>
-                            ), '当前应用下没有工具')}
+                            ), '当前应用下没有你自己建的工具（租户自己的配置不能导出成包）')}
                     </div>
                     <div>
                         <p className="text-sm font-medium mb-1">MCP 服务</p>
                         {checkboxList(servers, serverIds, setServerIds,
-                            (s) => `${s.name}（${s.code}）`, '当前应用下没有 MCP 服务')}
+                            (s) => `${s.name}（${s.code}）`, '当前应用下没有你自己建的 MCP 服务（租户自己的配置不能导出成包）')}
                     </div>
                     <div>
                         <p className="text-sm font-medium mb-1">技能</p>
                         {checkboxList(skills, skillIds, setSkillIds,
-                            (s) => s.name, '当前应用下没有技能')}
+                            (s) => s.name, '当前应用下没有你自己建的技能（租户自己的配置不能导出成包）')}
                     </div>
                 </div>
                 <DialogFooter>

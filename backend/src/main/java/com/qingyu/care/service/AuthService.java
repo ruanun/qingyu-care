@@ -47,7 +47,7 @@ public class AuthService {
     @PostConstruct
     @Transactional
     public void init() {
-        if (!userRepository.existsByUsername("admin")) {
+        if (!userRepository.existsByUsernameAcrossTenants("admin")) {
             log.info("Creating platform admin user...");
             User admin = User.builder()
                     .username("admin")
@@ -65,7 +65,9 @@ public class AuthService {
      * 用户登录
      */
     public LoginResponse login(LoginRequest request) {
-        User user = userRepository.findByUsername(request.getUsername())
+        // 跨租户查：username 是全局唯一键，且带着上一个账号 satoken 的请求会让租户过滤器
+        // 在这里生效，把别租户的账号挡成「用户名或密码错误」（详见 UserRepository 上的说明）。
+        User user = userRepository.findByUsernameAcrossTenants(request.getUsername())
                 .orElseThrow(() -> new InvalidOperationException("用户名或密码错误"));
         
         if (!BCrypt.checkpw(request.getPassword(), user.getPassword())) {
@@ -131,7 +133,8 @@ public class AuthService {
                 "platform.registration.enabled", true)) {
             throw new BusinessException(403, "平台已关闭自助注册，请联系管理员");
         }
-        if (userRepository.existsByUsername(request.getUsername())) {
+        // 跨租户查：只在当前租户内查重名，会把重名放行到 INSERT 撞唯一约束（500 + 泄漏 SQL）。
+        if (userRepository.existsByUsernameAcrossTenants(request.getUsername())) {
             throw new InvalidOperationException("用户名已存在");
         }
         

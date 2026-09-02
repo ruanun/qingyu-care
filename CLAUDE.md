@@ -229,6 +229,9 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 4. **写入自动填充** `TenantEntityListener`：`@PrePersist` 时从 `TenantContext` 回填 `tenantId`/`appId`。
 5. **绑定层防护** `BaseTenantEntity.tenantId`/`appId` 加 `@JsonProperty(access = READ_ONLY)`：只写出、不读入，请求体给了也绑不上。⚠️ 少了它，`TenantEntityListener.prePersist` 只在字段为 null 时才回填、非 null 不覆盖——租户 POST `{"tenantId": <他人租户id>}` 就能把行建进别人租户。⚠️ **不能改成「监听器总是用 `TenantContext` 覆盖」**：`QaGenerationService` 在 `@Async` 里用 setter 从源文档向新生成的 QA 传播租户，那样会把它写成 null，重蹈「向量 metadata 落空串、对任何租户都检索不到」的事故（见本文件网站知识库、站点爬取两节）。守护两层：`entity/TenantOwnershipNotBindableTest`（单测，守反序列化方向）+ `it/CreateTenantInjectionIT`（IT，额外守序列化方向——改成 `@JsonIgnore` 会让单测仍绿但 IT 转红）。
 
+6. **按全局唯一键查找必须绕过过滤器**（`username` / `appKey`）。`User` **不继承** `BaseTenantEntity`，但类上直接标了 `@Filter(name = "tenantFilter", ...)`——一样受管，只是不显眼。而 `username` 是 `@Column(unique = true)` 的**全局**唯一键，按它查找天然跨租户，被过滤就是错的。故 `UserRepository` 只提供 native 的 `findByUsernameAcrossTenants` / `existsByUsernameAcrossTenants`，**刻意不提供**派生的 `findByUsername`（留着必被误用）。
+   ⚠️ **`TenantDataAspect` 那条「未登录则不过滤」的豁免不够**：判据 `!isLoggedIn()` 是个**间接代理量**，它假设「登录/注册总发生在未登录态」。上一个账号的 satoken 还在时该假设不成立——浏览器 cookie 残留最常见（Sa-Token 会写 cookie，前端 `localStorage.clear()` 清不掉它），此时 `TenantInterceptor` 已把上一个租户的 tenantId 写进上下文，过滤器照常生效。三种症状各不相同、**都指向错误的排查方向**：登录别租户的账号报「用户名或密码错误」（密码其实是对的，人会一路去查密码）；注册/建用户时重名查不出来 → 放行到 INSERT 撞唯一约束 → HTTP 500 且把原始 SQL 与约束名回给客户端（正确响应是 400「用户名已存在」）。`LoginIT` 的五条测试分两半守这条：前两条守「未登录态」，后三条守「带着别人的登录态」——缺陷正藏在后一半里。2026-09-02 真机验证时发现并修复。
+
 > **例外**：异步落库的实体 `WebhookDelivery`、`SysAuditLog`、`SysApiUsage` **不继承** `BaseTenantEntity`，而是持有显式的 `tenantId`/`appId` 字段——因为 `@Async` 线程没有 `TenantContext`，不能依赖 Hibernate Filter。新增异步/跨线程写入实体时务必沿用此模式。
 
 ### 核心业务：RAG 对话链路（`ChatServiceImpl`）
@@ -487,6 +490,15 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
     LLM 调用）。正确做法是 `syncMcpAndBindSkills` 在回填绑定时额外加一条 warning，明确告知
     「已绑定 N 个 MCP 工具，但默认可写、暂不会挂给 AI，请自己去 MCP 服务页标只读」——多一步
     人工确认，好过让一个可写工具静默生效。
+12. **导出的勾选列表在前端也要过滤 `tenantId == null`（真机验证挖出，2026-09-02）**：
+    `PackageExportDialog` 拉的 `aiToolService.list()` / `mcpApi.listServers()` /
+    `aiSkillService.list()` 都是**应用级**接口，而 `TenantDataAspect` 对 PLATFORM_ADMIN 整体不
+    启用 `@Filter`——平台管理员选中某个租户的应用时，拿回来的是**那个租户的私有配置**。不
+    过滤的后果有两层：界面把租户的私有工具铺出来任人勾选、勾了才被后端拒绝（用户无从区分
+    哪个能导），且同一判据在前后端各写一次会各自漂移。判据必须与 `PackageManifestBuilder`
+    的导出判据逐字一致，由 `PackageExportDialog.test.tsx` 守护（变异验证过：换回
+    `toolRes.data ?? []` 转红）。⚠️ 空状态文案也要跟着说「没有**你自己建的**工具」——
+    说成「当前应用下没有工具」是错的，那个应用下往往有一堆，只是都不是平台管理员的。
 
 **四道扫描哨兵覆盖本链路**：`PlatformEndpointGuardTest`（`/v1/platform/**` 每个端点必须调
 `requirePlatformAdmin()`）、`PackageManifestFieldCoverageTest`（实体可变字段必须进 manifest 或

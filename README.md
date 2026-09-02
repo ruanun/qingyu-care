@@ -48,8 +48,15 @@
 - **流式对话** — SSE 逐字输出，支持中途停止生成
 - **结构化卡片** — LLM 内联 ```spec 围栏产出生成式 UI，管理端与 Widget 两端纯 DOM 渲染，卡片按钮支持打开链接 / 发消息 / 复制三类动作
 - **多媒体消息** — 访客与坐席互发图片和文件；私有桶 + 带鉴权的代理端点下发，不暴露对象 URL
-- **工具调用与 Skill** — 挂 HTTP 工具让模型按需调用，带 SSRF 硬门槛
 - **人工接管** — 关键词 / 低置信度 / 连续未命中多策略触发，含坐席工作台与双向实时通道
+
+### 工具与扩展
+
+- **工具调用与 Skill** — 挂 HTTP 工具让模型按需调用，Skill 用 markdown 注入提示词决定何时调用；带 SSRF 硬门槛（校验期解析的 IP 钉进连接期，防 DNS rebinding）
+- **OpenAPI 一键导入** — 粘贴文本或填 URL 导入一份 OpenAPI 3.x schema（JSON / YAML），批量生成工具，把接入一套 REST API 的成本从「按端点数线性投入」降到「一次导入」
+- **MCP 接入** — 登记远端 MCP server，工具清单同步入库；连接不缓存，只在工具真被调用那一刻建立；只有租户手工标为「只读」的工具才会挂给模型
+- **平台共享工具** — 平台统一维护带凭据的工具，租户可用不可见，适合平台侧统一采购的能力
+- **工具商店（能力包）** — 平台把已调通的工具 / MCP 服务 / 技能导出成包上架，凭据自动升格成安装期变量；租户填自己的凭据一键安装成**自己名下的副本**，可改可停用可删
 
 ### 平台能力
 
@@ -242,7 +249,9 @@ docker compose -f docker/docker-compose.prod.yml --env-file .env up -d --build
 | `QaPairController` | QA 问答对 |
 | `PromptController` / `ChatStrategyController` | Prompt 模板与问答策略 |
 | `AiModelController` / `HandoverRuleController` | 模型配置与转人工规则 |
-| `AiToolController` / `AiSkillController` | 工具与 Skill |
+| `AiToolController` / `AiSkillController` | 工具与 Skill（含 OpenAPI schema 导入） |
+| `McpServerController` | MCP 服务登记、工具清单同步与只读标注 |
+| `ToolPackageController` / `PlatformPackageController` | 工具商店：租户侧安装、平台侧导出上架 |
 | `AgentStreamController` | 坐席实时通道（SSE 双向） |
 | `TenantController` / `ApplicationController` / `UserController` | 租户 / 应用 / 用户管理 |
 | `PlatformController` / `PlatformConfigController` / `TenantConfigController` | 平台概览与两级配置中心 |
