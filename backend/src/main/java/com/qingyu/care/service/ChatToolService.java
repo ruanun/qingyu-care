@@ -274,11 +274,19 @@ public class ChatToolService {
         return appId == null ? List.of() : skillRepository.findByAppId(appId);
     }
 
-    /** 按 id 取 skill（无密钥，用读级守卫 belongsToCurrentContext）。 */
+    /**
+     * 按 id 取 skill。
+     *
+     * <p>⚠️ <b>用写级守卫</b>。此前这里用读级守卫，理由是「skill 无密钥」——但那是个代理量，
+     * 它代理的是「值不值得保护」，而 skill 的 {@code content} 是注入每一轮系统提示的提示词，
+     * 本身就是资产；更直接的是本仓库<b>刻意不共享 skill</b>（共享它等于静默改掉所有租户的回答
+     * 行为），所以 {@code tenant_id IS NULL} 的 skill 行<b>不存在共享意图</b>，只可能是平台
+     * 管理员无上下文时建的。判据见 {@link TenantOwnershipGuard} 类注释。
+     */
     public AiSkill getSkill(Long id) {
         AiSkill s = skillRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("技能", id.toString()));
-        if (!TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId())) {
+        if (!TenantOwnershipGuard.mutableInCurrentContext(s.getTenantId(), s.getAppId())) {
             throw new ResourceNotFoundException("技能", id.toString());
         }
         return s;

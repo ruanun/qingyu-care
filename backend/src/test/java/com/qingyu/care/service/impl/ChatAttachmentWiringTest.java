@@ -86,8 +86,12 @@ class ChatAttachmentWiringTest {
         // 任务书原始夹具漏了这一桩：请求带 sessionId("s-1") 但未桩 findBySessionId，
         // getOrCreateSession 会判定"未找到"转而 createNewSession 生成随机 UUID，
         // 导致 attachToMessage 收到的第二个参数不是 "s-1" 而是随机会话 id，断言必然落空。
-        when(sessionRepository.findBySessionId("s-1")).thenReturn(
-                Optional.of(ChatSession.builder().sessionId("s-1").build()));
+        ChatSession stubSession = ChatSession.builder().sessionId("s-1").build();
+        // ⚠️ tenantId 在父类 BaseTenantEntity 上，Lombok @Builder 不覆盖父类字段，只能 setter。
+        // 必须设：真实会话由 TenantEntityListener 的 @PrePersist 回填，tenant_id 不可能为 null；
+        // 不设会让 getOrCreateSession 的写级归属守卫判成越权、每轮都新建会话。
+        stubSession.setTenantId(1L);
+        when(sessionRepository.findBySessionId("s-1")).thenReturn(Optional.of(stubSession));
         when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // 给保存的消息按顺序发 id：用户消息拿 1，AI 消息拿 2
         AtomicLong seq = new AtomicLong();

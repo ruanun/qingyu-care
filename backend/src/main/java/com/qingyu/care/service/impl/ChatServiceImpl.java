@@ -749,8 +749,10 @@ public class ChatServiceImpl implements ChatService {
         ChatSession session = sessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("会话", sessionId));
         // findBySessionId 不受 @Filter 保护，加载后显式校验归属，越权按「不存在」同语义处理防枚举探测；
-        // 无上下文（平台管理员登录后 tenantId 恒为 null）按 belongsToCurrentContext 语义放行
-        if (!TenantOwnershipGuard.belongsToCurrentContext(session.getTenantId(), session.getAppId())) {
+        // 无上下文（平台管理员登录后 tenantId 恒为 null）仍放行；⚠️ 但用写级守卫——会话没有
+        // 「平台默认会话」这一共享语义，NULL 租户的会话只可能是平台管理员在管理端聊出来的，
+        // 读级守卫会让任意租户读到它。
+        if (!TenantOwnershipGuard.mutableInCurrentContext(session.getTenantId(), session.getAppId())) {
             throw new ResourceNotFoundException("会话", sessionId);
         }
         return session;
@@ -894,7 +896,7 @@ public class ChatServiceImpl implements ChatService {
             // findBySessionId 不受 @Filter 保护，加载后须显式校验归属；越权（如平台管理员选了应用 X
             // 却传入应用 Y 的 sessionId）视同「未找到」直接建新会话，热路径不抛异常，保正常续接 UX
             return sessionRepository.findBySessionId(request.getSessionId())
-                    .filter(s -> TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId()))
+                    .filter(s -> TenantOwnershipGuard.mutableInCurrentContext(s.getTenantId(), s.getAppId()))
                     .orElseGet(() -> createNewSession(request));
         }
         return createNewSession(request);

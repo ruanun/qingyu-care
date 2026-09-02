@@ -105,8 +105,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public KnowledgeBase getKnowledgeBase(Long id) {
         KnowledgeBase kb = knowledgeBaseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Knowledge base not found: " + id));
-        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测
-        if (!TenantOwnershipGuard.belongsToCurrentContext(kb.getTenantId(), kb.getAppId())) {
+        // findById 不受 @Filter 保护，显式校验归属，不匹配按「不存在」同语义处理防枚举探测。
+        // ⚠️ 用写级守卫：知识库没有「平台默认」这一共享语义（无播种逻辑），NULL 租户的行只可能是
+        // 平台管理员无上下文时建的——读级守卫会对其无条件放行，等于任意租户都能往里插文档。
+        if (!TenantOwnershipGuard.mutableInCurrentContext(kb.getTenantId(), kb.getAppId())) {
             throw new RuntimeException("Knowledge base not found: " + id);
         }
         return kb;
@@ -220,7 +222,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
      * 供 getDocument / deleteDocument / reprocessDocument / getDocumentStatus 复用。
      */
     private void requireDocumentOwnership(Document doc, Long documentId) {
-        if (!TenantOwnershipGuard.belongsToCurrentContext(doc.getTenantId(), doc.getAppId())) {
+        // ⚠️ 必须是写级守卫：本方法被 getDocument / deleteDocument / reprocessDocument /
+        // getDocumentStatus 四处共用，读级守卫对 NULL 租户无条件放行 = 一处豁免同时放开读、删、写。
+        // 2026-09-02 实测：另一租户的管理员可读到平台私有文档正文、可将其真的删除、还能往平台
+        // 私有知识库里插文档。文档没有「平台默认」语义，NULL 只可能是平台管理员建档的既有行为。
+        if (!TenantOwnershipGuard.mutableInCurrentContext(doc.getTenantId(), doc.getAppId())) {
             throw new RuntimeException("Document not found: " + documentId);
         }
     }
@@ -399,7 +405,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         // findAllById 不受 @Filter 保护，按当前上下文归属过滤结果，剔除越权文档（不抛异常，
         // 因入参是批量 id，个别越权 id 不应影响批内其余合法查询）
         return documentRepository.findAllById(documentIds).stream()
-                .filter(doc -> TenantOwnershipGuard.belongsToCurrentContext(doc.getTenantId(), doc.getAppId()))
+                .filter(doc -> TenantOwnershipGuard.mutableInCurrentContext(doc.getTenantId(), doc.getAppId()))
                 .map(this::convertToStatusDTO)
                 .toList();
     }

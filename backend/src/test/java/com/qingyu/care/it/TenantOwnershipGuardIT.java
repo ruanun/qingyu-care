@@ -56,6 +56,8 @@ class TenantOwnershipGuardIT extends AbstractPostgresIT {
     @Autowired PromptTemplateService promptTemplateService;
     @Autowired HandoverRuleService handoverRuleService;
     @Autowired KnowledgeService knowledgeService;
+    @Autowired com.qingyu.care.repository.AiSkillRepository aiSkillRepository;
+    @Autowired com.qingyu.care.service.ChatToolService chatToolService;
 
     /** IT 线程内以指定应用的租户上下文执行（服务层归属校验读 TenantContext） */
     private <T> T withTenantContext(Application app, Supplier<T> action) {
@@ -238,5 +240,66 @@ class TenantOwnershipGuardIT extends AbstractPostgresIT {
         assertThatThrownBy(() -> withTenantContext(appB, () -> knowledgeService.getDocument(id)))
                 .isInstanceOf(RuntimeException.class);
         assertThat(withTenantContext(appA, () -> knowledgeService.getDocument(id))).isNotNull();
+    }
+
+    // ===== 无归属资源（tenant_id / app_id 均 NULL）不得对租户开放 =====
+    //
+    // 上面那批覆盖的是「A 租户 vs B 租户」，这批覆盖的是另一维：**NULL 归属**。
+    // 知识库/文档/技能都没有「平台默认」这一共享语义（无播种逻辑），库里出现 NULL 行只可能是
+    // 平台管理员在无租户上下文时建的，或「tenantId 静默落 NULL」事故。用读级守卫会对其无条件
+    // 放行——2026-09-02 实测：另一租户的管理员可读到平台私有文档正文、可将其**真的删除**、
+    // 还能往平台私有知识库里插文档。判据见 TenantOwnershipGuard 类注释。
+    //
+    // ⚠️ 每条都同时断言「平台上下文（无 TenantContext）仍可读」——只钉「租户读不到」会让人
+    // 把守卫改过头（比如无条件拒绝 NULL），那样平台管理员自己也进不去，而没有任何测试会红。
+
+    @Test
+    void 无归属知识库_租户不可见_平台上下文可读() {
+        Application appA = seedApp("guard-nk-" + System.nanoTime(), "http://nk.example.com");
+        // 刻意不 ownBy：模拟平台管理员无租户上下文时建库，tenant_id / app_id 双 NULL
+        KnowledgeBase kb = KnowledgeBase.builder().name("平台私有库").description("d").enabled(true).build();
+        Long id = knowledgeBaseRepository.saveAndFlush(kb).getId();
+
+        assertThatThrownBy(() -> withTenantContext(appA, () -> knowledgeService.getKnowledgeBase(id)))
+                .isInstanceOf(RuntimeException.class);
+        assertThat(knowledgeService.getKnowledgeBase(id)).isNotNull();
+    }
+
+    @Test
+    void 无归属文档_租户不可读也不可删_平台上下文可读() {
+        Application appA = seedApp("guard-nd-" + System.nanoTime(), "http://nd.example.com");
+        KnowledgeBase kb = KnowledgeBase.builder().name("平台私有库").description("d").enabled(true).build();
+        KnowledgeBase savedKb = knowledgeBaseRepository.saveAndFlush(kb);
+        Document doc = Document.builder()
+                .knowledgeBase(savedKb).name("平台私有文档").originalFilename("p.txt")
+                .documentType(DocumentType.TEXT).status(DocumentStatus.PENDING)
+                .filePath("s3://p").storageKey("p").fileSize(1L).build();
+        Long id = documentRepository.saveAndFlush(doc).getId();
+
+        assertThatThrownBy(() -> withTenantContext(appA, () -> knowledgeService.getDocument(id)))
+                .isInstanceOf(RuntimeException.class);
+        // ⚠️ 删除单独钉一次：requireDocumentOwnership 被 get/delete/reprocess/status 四处共用，
+        // 一处读级守卫等于同时放开读与删，而「能删」比「能读」严重得多。
+        assertThatThrownBy(() -> withTenantContext(appA, () -> {
+            knowledgeService.deleteDocument(id);
+            return null;
+        })).isInstanceOf(RuntimeException.class);
+        assertThat(documentRepository.findById(id)).isPresent();
+        assertThat(knowledgeService.getDocument(id)).isNotNull();
+    }
+
+    @Test
+    void 无归属技能_租户不可见_平台上下文可读() {
+        Application appA = seedApp("guard-ns-" + System.nanoTime(), "http://ns.example.com");
+        // skill 的 content 注入每一轮系统提示，本仓库刻意不共享 skill，故 NULL 归属绝非共享意图
+        com.qingyu.care.entity.AiSkill skill = new com.qingyu.care.entity.AiSkill();
+        skill.setName("平台私有技能");
+        skill.setContent("平台的提示词资产");
+        skill.setEnabled(true);
+        Long id = aiSkillRepository.saveAndFlush(skill).getId();
+
+        assertThatThrownBy(() -> withTenantContext(appA, () -> chatToolService.getSkill(id)))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(chatToolService.getSkill(id)).isNotNull();
     }
 }

@@ -56,7 +56,8 @@ public class QaPairService {
     public QaPair getQaPair(Long id) {
         QaPair qa = qaPairRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("问答对", id.toString()));
-        if (!TenantOwnershipGuard.belongsToCurrentContext(qa.getTenantId(), qa.getAppId())) {
+        // ⚠️ 写级守卫：QA 是知识资产，没有「平台默认 QA」这一共享语义（无播种逻辑）。
+        if (!TenantOwnershipGuard.mutableInCurrentContext(qa.getTenantId(), qa.getAppId())) {
             throw new ResourceNotFoundException("问答对", id.toString());
         }
         return qa;

@@ -92,7 +92,13 @@ class ChatServiceNoHitStreakTest {
     }
 
     private ChatSession newSession(String sessionId) {
-        return ChatSession.builder().sessionId(sessionId).status(SessionStatus.AI_PROCESSING).build();
+        ChatSession s = ChatSession.builder().sessionId(sessionId)
+                .status(SessionStatus.AI_PROCESSING).build();
+        // ⚠️ tenantId 在父类 BaseTenantEntity 上，Lombok @Builder 不覆盖父类字段，只能 setter。
+        // 必须设：真实会话由 TenantEntityListener 的 @PrePersist 回填，tenant_id 不可能为 null；
+        // 不设会让 getOrCreateSession 的写级归属守卫判成越权、每轮都新建会话。
+        s.setTenantId(1L);
+        return s;
     }
 
     /** 兜底分支通用桩：allowNoKnowledge=false，命中知识库会直接触发这条分支返回，无需 mock LLM 调用链。 */

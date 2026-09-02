@@ -232,6 +232,12 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 6. **按全局唯一键查找必须绕过过滤器**（`username` / `appKey`）。`User` **不继承** `BaseTenantEntity`，但类上直接标了 `@Filter(name = "tenantFilter", ...)`——一样受管，只是不显眼。而 `username` 是 `@Column(unique = true)` 的**全局**唯一键，按它查找天然跨租户，被过滤就是错的。故 `UserRepository` 只提供 native 的 `findByUsernameAcrossTenants` / `existsByUsernameAcrossTenants`，**刻意不提供**派生的 `findByUsername`（留着必被误用）。
    ⚠️ **`TenantDataAspect` 那条「未登录则不过滤」的豁免不够**：判据 `!isLoggedIn()` 是个**间接代理量**，它假设「登录/注册总发生在未登录态」。上一个账号的 satoken 还在时该假设不成立——浏览器 cookie 残留最常见（Sa-Token 会写 cookie，前端 `localStorage.clear()` 清不掉它），此时 `TenantInterceptor` 已把上一个租户的 tenantId 写进上下文，过滤器照常生效。三种症状各不相同、**都指向错误的排查方向**：登录别租户的账号报「用户名或密码错误」（密码其实是对的，人会一路去查密码）；注册/建用户时重名查不出来 → 放行到 INSERT 撞唯一约束 → HTTP 500 且把原始 SQL 与约束名回给客户端（正确响应是 400「用户名已存在」）。`LoginIT` 的五条测试分两半守这条：前两条守「未登录态」，后三条守「带着别人的登录态」——缺陷正藏在后一半里。2026-09-02 真机验证时发现并修复。
 
+7. **`TenantOwnershipGuard` 选哪个方法：看「这个实体的 `tenant_id IS NULL` 是不是有意共享」**。判据**不是**「读操作还是写操作」，也**不是**「带不带密钥」——那两个都是代理量，各自脱钩过。
+   - **有共享语义 → `belongsToCurrentContext`**：只限配置类（`ChatStrategy`/`PromptTemplate`/`HandoverRule`/`AiModelConfig`）。它们的 NULL 行由 `@PostConstruct` **播种**而来，是「多级配置回退」的承重结构，租户必须读得到。
+   - **无共享语义 → `mutableInCurrentContext`**：业务实体一律归此类（知识库/文档/QA/skill/工具/MCP/附件/会话/A-B 实验）。它们**没有播种逻辑**，NULL 行只可能是平台管理员无上下文时建的、或「tenantId 静默落 NULL」事故——都不是共享意图。
+   ⚠️ **这条已踩过两次**：聊天附件（平台管理员上传的附件被任意租户读到）、知识库文档（`requireDocumentOwnership` 被 get/delete/reprocess/status 四处共用，一处读级守卫同时放开读、**删**、写——2026-09-02 实测另一租户管理员可读到平台私有文档正文、可将其**真的删除**、还能往平台私有库插文档）。普查佐证：配置类表 NULL 行成片存在（`handover_rules` 3/3、`chat_strategy` 2/3、`prompt_templates` 1/1、`ai_model_config` 1/1），业务实体表几乎为零。
+   ⚠️ 改守卫时**必须同时钉「平台上下文仍可读」**（`TenantOwnershipGuardIT` 的三条 NULL 归属用例都这么写）：只钉「租户读不到」会让人把守卫改成无条件拒绝 NULL，那样平台管理员自己也进不去，而没有任何测试会红。
+
 > **例外**：异步落库的实体 `WebhookDelivery`、`SysAuditLog`、`SysApiUsage` **不继承** `BaseTenantEntity`，而是持有显式的 `tenantId`/`appId` 字段——因为 `@Async` 线程没有 `TenantContext`，不能依赖 Hibernate Filter。新增异步/跨线程写入实体时务必沿用此模式。
 
 ### 核心业务：RAG 对话链路（`ChatServiceImpl`）
