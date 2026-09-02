@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -82,11 +83,31 @@ class UserEndpointResponseCodeIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.code").value(400));
     }
 
-    private void seed(String tenantSuffix, String username, UserRole role) {
+    @Test
+    @DisplayName("租户管理员把成员提升为平台管理员返回 403 而不是 500")
+    void 越权提升角色返回403() throws Exception {
+        // 这一处藏在 updateUser 的 .map() lambda 里，与 createUser 那条「无权创建平台管理员」
+        // 同构。⚠️ 订正 12 处业务码时手工列映射表漏了它，靠一条 grep 才发现——本用例即为此补。
+        User admin = seed("code_promote", "code_promote_admin", UserRole.TENANT_ADMIN);
+        User member = seedUserIn(admin.getTenant(), "code_promote_member", UserRole.TENANT_MEMBER);
+
+        mockMvc.perform(put("/v1/users/" + member.getId())
+                        .header("satoken", login("code_promote_admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"PLATFORM_ADMIN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(403));
+    }
+
+    private User seed(String tenantSuffix, String username, UserRole role) {
         Tenant tenant = tenantRepository.save(Tenant.builder()
                 .name("IT租户-" + tenantSuffix).code("IT_" + tenantSuffix)
                 .status(TenantStatus.ACTIVE).plan(TenantPlan.FREE).build());
-        userRepository.save(User.builder()
+        return seedUserIn(tenant, username, role);
+    }
+
+    private User seedUserIn(Tenant tenant, String username, UserRole role) {
+        return userRepository.save(User.builder()
                 .username(username)
                 .password(BCrypt.hashpw("pwd123456"))
                 .nickname(username)
