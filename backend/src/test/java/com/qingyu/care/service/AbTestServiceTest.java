@@ -114,6 +114,9 @@ class AbTestServiceTest {
     @Test
     void start_变体绑他租户策略_拒绝() {
         AbExperiment exp = draft(v("A", 1L, 50), v("B", 2L, 50));
+        // ⚠️ 实验必须归属当前租户，否则第一层归属守卫就把它挡了，走不到本用例真正要测的
+        // 第二层「变体策略属于他租户」——那样断言虽仍通过，测的却已不是同一件事。
+        exp.setTenantId(2L);
         when(repository.findById(1L)).thenReturn(Optional.of(exp));
         ChatStrategy otherTenantStrategy = enabledStrategy(1L);
         otherTenantStrategy.setTenantId(9L);

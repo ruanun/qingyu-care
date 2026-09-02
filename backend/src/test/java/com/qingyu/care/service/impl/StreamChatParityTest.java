@@ -163,6 +163,10 @@ class StreamChatParityTest {
     void 检索未命中时连续未命中计数递增并落库() {
         ChatSession session = ChatSession.builder().sessionId("s1")
                 .status(SessionStatus.AI_PROCESSING).noHitStreak(2).build();
+        // ⚠️ tenantId 在父类 BaseTenantEntity 上，Lombok @Builder 不覆盖父类字段，只能 setter。
+        // 必须设：真实会话由 TenantEntityListener 的 @PrePersist 回填，tenant_id 不可能为 null；
+        // 不设会让 getOrCreateSession 的写级归属守卫判成越权、每轮都新建会话。
+        session.setTenantId(1L);
         when(sessionRepository.findBySessionId("s1")).thenReturn(Optional.of(session));
         when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
         stubRetrieval(List.of());
@@ -181,6 +185,7 @@ class StreamChatParityTest {
     void 检索命中时连续未命中计数归零() {
         ChatSession session = ChatSession.builder().sessionId("s2")
                 .status(SessionStatus.AI_PROCESSING).noHitStreak(3).build();
+        session.setTenantId(1L);
         when(sessionRepository.findBySessionId("s2")).thenReturn(Optional.of(session));
         when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
         when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -215,6 +220,7 @@ class StreamChatParityTest {
         // 未命中但 allowNoKnowledge=true 走 LLM 主路（不进兜底分支），streak 达阈值仍应建议转人工
         ChatSession session = ChatSession.builder().sessionId("s9")
                 .status(SessionStatus.AI_PROCESSING).noHitStreak(2).build();
+        session.setTenantId(1L);
         when(sessionRepository.findBySessionId("s9")).thenReturn(Optional.of(session));
         when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
         when(messageRepository.save(any(ChatMessage.class))).thenAnswer(inv -> inv.getArgument(0));

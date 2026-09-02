@@ -58,7 +58,8 @@ public class AbTestService {
     public AbExperiment getById(Long id) {
         AbExperiment exp = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("A/B 实验", id.toString()));
-        if (!TenantOwnershipGuard.belongsToCurrentContext(exp.getTenantId(), exp.getAppId())) {
+        // ⚠️ 写级守卫：实验是租户自己的，没有「平台默认实验」这一共享语义。
+        if (!TenantOwnershipGuard.mutableInCurrentContext(exp.getTenantId(), exp.getAppId())) {
             throw new ResourceNotFoundException("A/B 实验", id.toString());
         }
         return exp;
@@ -117,7 +118,7 @@ public class AbTestService {
                             "变体 " + v.getName() + " 绑定的策略不存在（id=" + v.getStrategyId() + "）"));
             // 同 getById：findById 不受 @Filter 保护，显式校验策略归属，与「不存在」同文案防探测。
             // 平台共享策略 tenantId 为 null，TenantOwnershipGuard 天然放行，这是正确语义（平台默认策略租户可绑定）。
-            if (!TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId())) {
+            if (!TenantOwnershipGuard.mutableInCurrentContext(s.getTenantId(), s.getAppId())) {
                 throw new BusinessException(
                         "变体 " + v.getName() + " 绑定的策略不存在（id=" + v.getStrategyId() + "）");
             }
@@ -205,7 +206,8 @@ public class AbTestService {
         try {
             return repository.findById(experimentId)
                     .filter(e -> e.getStatus() == ExperimentStatus.RUNNING)
-                    .filter(e -> TenantOwnershipGuard.belongsToCurrentContext(e.getTenantId(), e.getAppId()))
+                    // 实验用写级守卫；下一行的策略保持读级——ChatStrategy 有平台默认语义，见守卫类注释
+                    .filter(e -> TenantOwnershipGuard.mutableInCurrentContext(e.getTenantId(), e.getAppId()))
                     .flatMap(e -> strategyRepository.findById(variantStrategyId))
                     .filter(s -> TenantOwnershipGuard.belongsToCurrentContext(s.getTenantId(), s.getAppId()))
                     .filter(s -> Boolean.TRUE.equals(s.getEnabled()));

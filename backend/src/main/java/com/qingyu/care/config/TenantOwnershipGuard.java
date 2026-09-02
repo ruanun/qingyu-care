@@ -16,6 +16,34 @@ package com.qingyu.care.config;
  *   <li>应用维度同理。
  * </ul>
  *
+ * <h2>⚠️ 选哪个方法：看「这个实体的 tenant_id IS NULL 是不是有意共享」</h2>
+ *
+ * <p>取舍标准<b>不是</b>「读操作还是写操作」，也<b>不是</b>「带不带密钥」——那两个都是代理量，
+ * 各自在某类实体上与真实语义脱钩过（见下）。真正的判据是<b>该实体存不存在「平台默认 / 平台
+ * 共享」这一有意共享的语义</b>：
+ *
+ * <ul>
+ *   <li><b>存在 → 用 {@link #belongsToCurrentContext}</b>。仅限配置类实体：{@code ChatStrategy}
+ *       / {@code PromptTemplate} / {@code HandoverRule} / {@code AiModelConfig}。它们的 NULL 行
+ *       由各服务 {@code @PostConstruct} <b>播种</b>而来，是「多级配置回退」的承重结构，租户必须
+ *       读得到。</li>
+ *   <li><b>不存在 → 用 {@link #mutableInCurrentContext}</b>。业务实体一律归此类：知识库 / 文档
+ *       / QA / skill / 工具 / MCP / 附件 / 会话 / A/B 实验。它们<b>没有任何播种逻辑</b>，库里
+ *       出现 NULL 行只有一个来源——<b>平台管理员在无租户上下文时建的行</b>，或本仓库反复出过的
+ *       「tenantId 静默落 NULL」事故。这两种都<b>不是共享意图</b>，用读级守卫等于对全体租户开放。</li>
+ * </ul>
+ *
+ * <p><b>这条判据是 2026-09-02 用真机越权实验 + 存量普查确立的</b>，此前踩过两次：
+ * <ol>
+ *   <li>聊天附件——平台管理员上传的附件 NULL 租户从无共享意图，却被任意租户读到；</li>
+ *   <li>知识库文档——{@code requireDocumentOwnership} 被 get/delete/reprocess/status 四处共用，
+ *       一处读级守卫同时放开了读、<b>删</b>、写：实测另一租户的管理员可读到平台私有文档正文、
+ *       可将其<b>真的删除</b>、还可往平台私有知识库里插文档。</li>
+ * </ol>
+ * 两次都是同一条豁免换个实体复发。普查佐证：配置类表的 NULL 行成片存在（{@code handover_rules}
+ * 3/3、{@code chat_strategy} 2/3、{@code prompt_templates} 1/1、{@code ai_model_config} 1/1），
+ * 而业务实体表的 NULL 行<b>几乎为零</b>——正因为正常租户操作总带着上下文。
+ *
  * @author ruan
  */
 public final class TenantOwnershipGuard {
