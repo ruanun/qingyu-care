@@ -100,7 +100,11 @@ public class AiModelController {
                     .content();
             return ApiResponse.success("连接测试成功", response);
         } catch (Exception e) {
-            return ApiResponse.error("连接测试失败: " + e.getMessage());
+            // 502 而非 500：这里是平台代租户向**上游模型端点**发了一次真实请求，失败原因混在
+            // 一起且这个 catch-all 区分不了（apiKey/baseUrl 填错、对方服务挂了、超时……），
+            // 但有一点是确定的——不是本服务内部出错。502「上游没给出有效响应」不预设是谁的错，
+            // 比 500 诚实，也让排查的人一眼看出该去查出站而不是查本服务。
+            return ApiResponse.error(502, "连接测试失败: " + e.getMessage());
         }
     }
 }
