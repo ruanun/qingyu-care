@@ -89,6 +89,7 @@ class UserControllerTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         TenantContext.setTenantId(2L);
+        TenantContext.setUserId(1L); // 改的是自己：成员对他人资料/密码无权（见下方新增用例）
 
         UserUpdateRequest req = new UserUpdateRequest();
         req.setNickname("新昵称");
@@ -116,6 +117,7 @@ class UserControllerTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         TenantContext.setTenantId(2L);
+        TenantContext.setUserId(1L); // 改自己的密码
 
         UserUpdateRequest req = new UserUpdateRequest();
         req.setPassword("NewRealPassword123");   // 真实新密码，而非空白
@@ -166,6 +168,7 @@ class UserControllerTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         TenantContext.setTenantId(2L); // 与 existing 同租户，canAccessUser 放行
+        TenantContext.setUserId(1L);   // 改的是自己
 
         UserUpdateRequest req = new UserUpdateRequest();
         req.setEnabled(false);
@@ -179,6 +182,71 @@ class UserControllerTest {
             assertThat(resp.getData().getEnabled()).isTrue(); // 未被改动
             assertThat(resp.getData().getRole()).isEqualTo(UserRole.TENANT_MEMBER); // 未被改动
             assertThat(resp.getData().getNickname()).isEqualTo("新昵称");
+        }
+    }
+    // ===== 安全审查 H3（2026-09-03）：成员越过租户管理员 =====
+
+    /**
+     * 变异实验：把 updateUser 里「改他人须管理员」的门禁删掉，本条转红——坐席对本租户管理员
+     * 的 id 发一个 password 就能接管管理员账号。
+     */
+    @Test
+    void 成员不能重置他人密码() {
+        User existing = existingUser(2L);
+        String oldHash = existing.getPassword();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(99L); // 当前登录的是另一个成员
+
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setPassword("hacked123");
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
+            ApiResponse<User> resp = controller.updateUser(1L, req);
+
+            assertThat(resp.getCode()).isEqualTo(403);
+        }
+        assertThat(existing.getPassword()).isEqualTo(oldHash);
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void 成员不能改他人资料() {
+        User existing = existingUser(2L);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(99L);
+
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setNickname("被改名");
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
+            ApiResponse<User> resp = controller.updateUser(1L, req);
+
+            assertThat(resp.getCode()).isEqualTo(403);
+        }
+        assertThat(existing.getNickname()).isEqualTo("旧昵称");
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    /** 反向断言：门禁不能误伤租户管理员——管理员重置本租户成员密码是正当操作。 */
+    @Test
+    void 租户管理员可重置本租户成员密码() {
+        User existing = existingUser(2L);
+        String oldHash = existing.getPassword();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(99L);
+
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setPassword("ResetByAdmin123");
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_ADMIN")) {
+            ApiResponse<User> resp = controller.updateUser(1L, req);
+
+            assertThat(resp.getCode()).isEqualTo(200);
+            assertThat(resp.getData().getPassword()).isNotEqualTo(oldHash);
         }
     }
 }

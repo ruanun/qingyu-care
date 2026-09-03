@@ -21,10 +21,12 @@ import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.annotation.PostConstruct;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -40,25 +42,52 @@ public class AuthService {
     private final TenantRepository tenantRepository;
     private final ConfigService configService;
     private final AuditLogService auditLogService;
-    
+
+    /**
+     * 平台管理员初始口令（{@code QINGYU_ADMIN_INITIAL_PASSWORD}）。为空则首启时生成随机口令、
+     * 只打一次 WARN——绝不能回落到写死的 admin123（安全审查 H1，2026-09-03）。
+     */
+    @Value("${qingyu.care.platform.admin-initial-password:}")
+    private String adminInitialPassword;
+
+    private static final String PASSWORD_ALPHABET =
+            "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+
     /**
      * 初始化平台管理员
      */
     @PostConstruct
     @Transactional
     public void init() {
-        if (!userRepository.existsByUsernameAcrossTenants("admin")) {
-            log.info("Creating platform admin user...");
-            User admin = User.builder()
-                    .username("admin")
-                    .password(BCrypt.hashpw("admin123"))
-                    .nickname("平台管理员")
-                    .role(UserRole.PLATFORM_ADMIN)
-                    .enabled(true)
-                    .build();
-            userRepository.save(admin);
-            log.info("Platform admin created: admin / admin123");
+        if (userRepository.existsByUsernameAcrossTenants("admin")) {
+            return;
         }
+        boolean generated = adminInitialPassword == null || adminInitialPassword.isBlank();
+        String password = generated ? generateInitialPassword() : adminInitialPassword;
+        log.info("Creating platform admin user...");
+        User admin = User.builder()
+                .username("admin")
+                .password(BCrypt.hashpw(password))
+                .nickname("平台管理员")
+                .role(UserRole.PLATFORM_ADMIN)
+                .enabled(true)
+                .build();
+        userRepository.save(admin);
+        if (generated) {
+            log.warn("平台管理员 admin 已创建，初始口令: {} —— 仅显示这一次，请立即登录修改；"
+                    + "生产环境请用环境变量 QINGYU_ADMIN_INITIAL_PASSWORD 指定", password);
+        } else {
+            log.info("平台管理员 admin 已按配置的初始口令创建");
+        }
+    }
+
+    private static String generateInitialPassword() {
+        SecureRandom random = new SecureRandom();
+        StringBuilder sb = new StringBuilder(16);
+        for (int i = 0; i < 16; i++) {
+            sb.append(PASSWORD_ALPHABET.charAt(random.nextInt(PASSWORD_ALPHABET.length())));
+        }
+        return sb.toString();
     }
     
     /**
@@ -125,6 +154,11 @@ public class AuthService {
     
     /**
      * 用户注册 (同时创建租户)
+     *
+     * <p>⚠️ 自助注册<b>只能建新租户</b>。此前带 {@code tenantCode} 即可加入已有租户且身份是
+     * {@code TENANT_ADMIN}——租户 code 不是秘密（平台管理员自己填的、演示租户的写在 README 里），
+     * 等于任何人都能自封任意租户的管理员（安全审查 H2，2026-09-03）。加入已有租户只能由该租户
+     * 管理员在「成员管理」里创建账号。
      */
     @Transactional
     public LoginResponse register(RegisterRequest request) {
@@ -133,31 +167,27 @@ public class AuthService {
                 "platform.registration.enabled", true)) {
             throw new BusinessException(403, "平台已关闭自助注册，请联系管理员");
         }
+        if (request.getTenantCode() != null && !request.getTenantCode().isBlank()) {
+            throw new BusinessException(403,
+                    "自助注册只能创建新租户；加入已有租户请联系该租户管理员在「成员管理」中为你创建账号");
+        }
         // 跨租户查：只在当前租户内查重名，会把重名放行到 INSERT 撞唯一约束（500 + 泄漏 SQL）。
         if (userRepository.existsByUsernameAcrossTenants(request.getUsername())) {
             throw new InvalidOperationException("用户名已存在");
         }
         
-        Tenant tenant;
-        if (request.getTenantCode() != null && !request.getTenantCode().isEmpty()) {
-            // 加入已有租户
-            tenant = tenantRepository.findByCode(request.getTenantCode())
-                    .orElseThrow(() -> new ResourceNotFoundException("租户", request.getTenantCode()));
-        } else {
-            // 创建新租户
-            String tenantCode = "T" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-            tenant = Tenant.builder()
-                    .name(request.getTenantName() != null ? request.getTenantName() : request.getUsername() + "的企业")
-                    .code(tenantCode)
-                    .status(TenantStatus.ACTIVE)
-                    .plan(resolveDefaultPlan())
-                    .contactName(request.getNickname())
-                    .contactEmail(request.getEmail())
-                    .contactPhone(request.getPhone())
-                    .build();
-            tenant = tenantRepository.save(tenant);
-            log.info("New tenant created: {} ({})", tenant.getName(), tenant.getCode());
-        }
+        // 创建新租户
+        String tenantCode = "T" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        Tenant tenant = tenantRepository.save(Tenant.builder()
+                .name(request.getTenantName() != null ? request.getTenantName() : request.getUsername() + "的企业")
+                .code(tenantCode)
+                .status(TenantStatus.ACTIVE)
+                .plan(resolveDefaultPlan())
+                .contactName(request.getNickname())
+                .contactEmail(request.getEmail())
+                .contactPhone(request.getPhone())
+                .build());
+        log.info("New tenant created: {} ({})", tenant.getName(), tenant.getCode());
         
         // 创建用户
         User user = User.builder()

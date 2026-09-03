@@ -114,10 +114,22 @@ sa-token:
   token-style: uuid
   # 是否输出日志
   is-log: true
+  # 不读也不写 cookie：管理前端只用 satoken 请求头。Sa-Token 默认会把 token 写进 cookie，
+  # 叠加跨域配置就是一条 CSRF 通道（安全审查 H6，2026-09-03）；SPA 用不到 cookie，关掉最省事。
+  is-read-cookie: false
 
 # 轻语自定义配置
 qingyu:
   care:
+    platform:
+      # 平台管理员 admin 的初始口令。留空则首启生成随机口令、只打一次 WARN 日志；
+      # 生产务必通过环境变量指定或首启后立即修改（安全审查 H1）。
+      admin-initial-password: ${QINGYU_ADMIN_INITIAL_PASSWORD:}
+    cors:
+      # 管理端允许的跨域来源（逗号分隔，精确匹配 scheme://host[:port]）。前端与后端同源部署
+      # （nginx 反代 /api、Vite 代理）时留空即可；只有前端单独部署到别的域名才需要填。
+      # 开放 API（/open/v1/**）与 widget.js 不受此项约束，始终允许任意来源、不带凭据。
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:}
     # 知识库配置
     knowledge:
       # 文档切分配置

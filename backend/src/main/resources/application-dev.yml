@@ -1,4 +1,11 @@
 # 开发环境配置
+qingyu:
+  care:
+    platform:
+      admin-initial-password: admin123   # 开发环境固定口令；生产由 QINGYU_ADMIN_INITIAL_PASSWORD 指定或随机生成
+    cors:
+      allowed-origins: http://localhost:5173   # 前端直连 :8080（不走 Vite 代理）时需要
+
 spring:
   jpa:
     show-sql: true

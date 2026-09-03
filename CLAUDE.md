@@ -531,6 +531,19 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    人工通读一遍 manifest，确认没有明文凭据、变量的 label 与 help 是人话。凭据识别与密钥扫描都是
    启发式，**没法自动化**——同噪声剔除，这是唯一的验收方式。
 
+### 安全基线（2026-09-03 全项目审查后必须保持的几条）
+
+审查报告在 `docs/superpowers/reviews/2026-09-03-security-review.md`（分级发现 + 修复状态）。下面这些是修完后立下的不变量，改动相关代码前先读对应条目：
+
+1. **平台管理员口令不写死**：`AuthService.init` 从 `qingyu.care.platform.admin-initial-password`（`QINGYU_ADMIN_INITIAL_PASSWORD`）取，为空则随机生成、只打一次 WARN。dev/test profile 固定 `admin123`（多条 IT 靠它登录）。`AuthServiceInitTest` 守着「不回落 admin123」。
+2. **自助注册只能建新租户**：带 `tenantCode` 一律 403。租户 code 不是秘密，凭它加入曾等于自封任意租户的管理员。
+3. **同租户「改他人」必须是管理员**：`UserController.updateUser` 先判 self / admin，坐席只能改自己。`User.password` 是 `WRITE_ONLY`，实体当响应体也不会带哈希。
+4. **应用管理走 `ApplicationView`，密钥只给管理员**：list/get 全体成员可用（顶部选应用靠它）但坐席拿到的 `appSecret`/`webhookSecret` 为 null；create/update/delete/重置密钥/测试 Webhook 一律 `requireTenantAdmin`。⚠️ 脱敏不能在受管实体上 setter 置空（OSIV 会刷回库），必须走视图对象。
+5. **五条出站路径共用一套防线**：HTTP 工具、网页抓取、Webhook 走 `PinnedHttpClientFactory`（钉 IP + 禁重定向 + 超时），MCP 走 `PinnedAddressResolverGroup`，OpenAPI schema 复用抓取器。⚠️ Webhook 回调地址落库前过 `SsrfGuard.assertAllowedHttpUrl`；`qingyu.care.webhook.allow-private-targets` 只在 test profile 为 true（IT 的接收端起在 127.0.0.1），它只跳过网段校验、不跳过钉 IP。`SsrfGuard.isBlocked` 手工补了 100.64/10（阿里云元数据 100.100.100.200 在这段）、192.0.0/24、198.18/15、240/4、NAT64。
+6. **CORS 两套 + 不用 cookie**：`/open/v1/**` 与 `/widget.js` 任意来源、`allowCredentials(false)`；其余只放行 `qingyu.care.cors.allowed-origins`（默认空 = 拒绝一切跨域，前端与后端同源）。`sa-token.is-read-cookie: false`——SPA 只用 `satoken` 请求头，cookie 一开就是 CSRF 面。`CorsPolicyIT` 守着。
+7. **异常处理器不回显 `e.getMessage()`**：`RuntimeException` 回「服务器内部错误（错误编号 xxx）」，编号进日志；`IllegalArgumentException` 归 400 且同样不回显。要给用户看的原因改抛 `InvalidOperationException` / `BusinessException`。
+8. **前端退出登录走 `lib/session.performLogout`**：先调后端注销再清本地（含 `qingyu-current-app`）。
+
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
 - 控制器在 `controller/open/`，DTO 在 `dto/open/`（如 `OpenChatController` 的 `/chat/completions` 与 SSE `/chat/stream`）。

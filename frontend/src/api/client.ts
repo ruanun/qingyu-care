@@ -50,6 +50,8 @@ api.interceptors.response.use(
         // 如果是 401 未认证，清除 token 并跳转登录页
         if (error.response?.status === 401) {
             localStorage.removeItem('qingyu-auth');
+            // 当前应用一并清：残留会让下一个登录者带着上一个租户的 X-App-Id 发请求
+            localStorage.removeItem('qingyu-current-app');
             window.location.href = '/login';
         }
 

@@ -1,5 +1,6 @@
 package com.qingyu.care.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.qingyu.care.enums.UserRole;
 import jakarta.persistence.*;
 import lombok.*;
@@ -39,7 +40,11 @@ public class User {
 
     /**
      * 密码 (加密存储)
+     *
+     * <p>{@code WRITE_ONLY}：只读入、不写出。实体直接当响应体时（{@code UserController}），
+     * BCrypt 哈希会随用户列表发给全体成员，可离线爆破（安全审查 M1，2026-09-03）。
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(nullable = false, length = 128)
     private String password;
 

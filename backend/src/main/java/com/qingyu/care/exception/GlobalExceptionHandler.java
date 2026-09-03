@@ -139,12 +139,29 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 处理所有未捕获的 RuntimeException
+     * 参数类异常归 400。消息不回显：JDK 抛的 {@code No enum constant com.qingyu...} 带内部类名，
+     * 我们自己抛的多半也是给运维看的。要给用户看的原因请改抛 {@code InvalidOperationException}。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public void handleIllegalArgumentException(IllegalArgumentException e, HttpServletResponse response)
+            throws IOException {
+        log.warn("非法参数: {}", e.getMessage());
+        writeError(response, 400, 400, "请求参数错误");
+    }
+
+    /**
+     * 处理所有未捕获的 RuntimeException。
+     *
+     * <p>⚠️ 不能把 {@code e.getMessage()} 拼进响应：{@code DataIntegrityViolationException}、
+     * Hibernate、第三方 SDK 的消息带 SQL 语句、约束名、表名、内部主机名，等于把内部结构送到公网
+     * （安全审查 M2，2026-09-03；CLAUDE.md 记录的「撞唯一约束 → 500 且回显原始 SQL」正源于此）。
+     * 回一个错误编号，用它去日志里对。
      */
     @ExceptionHandler(RuntimeException.class)
     public void handleRuntimeException(RuntimeException e, HttpServletResponse response) throws IOException {
-        log.error("运行时异常: ", e);
-        writeError(response, 500, 500, "服务器内部错误: " + e.getMessage());
+        String errorId = java.util.UUID.randomUUID().toString().substring(0, 8);
+        log.error("运行时异常 errorId={}: ", errorId, e);
+        writeError(response, 500, 500, "服务器内部错误（错误编号 " + errorId + "）");
     }
 
     /**
@@ -152,8 +169,9 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public void handleException(Exception e, HttpServletResponse response) throws IOException {
-        log.error("未知异常: ", e);
-        writeError(response, 500, 500, "服务器内部错误");
+        String errorId = java.util.UUID.randomUUID().toString().substring(0, 8);
+        log.error("未知异常 errorId={}: ", errorId, e);
+        writeError(response, 500, 500, "服务器内部错误（错误编号 " + errorId + "）");
     }
 
     /** 绕开 HttpMessageConverter 内容协商，直接写 JSON——见类注释。 */

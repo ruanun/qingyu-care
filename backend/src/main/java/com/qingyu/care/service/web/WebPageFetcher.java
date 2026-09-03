@@ -1,17 +1,11 @@
 package com.qingyu.care.service.web;
 
+import com.qingyu.care.config.PinnedHttpClientFactory;
 import com.qingyu.care.config.SsrfGuard;
 import com.qingyu.care.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.DnsResolver;
-import org.apache.hc.client5.http.SystemDefaultDnsResolver;
-import org.apache.hc.client5.http.config.ConnectionConfig;
-import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
-import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
-import org.apache.hc.core5.util.Timeout;
 import org.jsoup.Jsoup;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
@@ -186,15 +180,7 @@ public class WebPageFetcher {
      * 拆成包级 static 是为了能被单测直接调用：这条防线整体没有别的可观测出口。
      */
     static DnsResolver pinnedResolver(String host, InetAddress[] pinned) {
-        return new SystemDefaultDnsResolver() {
-            @Override
-            public InetAddress[] resolve(String h) throws UnknownHostException {
-                if (!host.equalsIgnoreCase(h)) {
-                    throw new UnknownHostException("非预期主机（SSRF 钉住拒绝）: " + h);
-                }
-                return pinned;
-            }
-        };
+        return PinnedHttpClientFactory.pinnedResolver(host, pinned);
     }
 
     /**
@@ -203,21 +189,7 @@ public class WebPageFetcher {
      * 拆成包级 static 供单测把它指向本地监听器，验证 302 真的不被跟随。
      */
     static CloseableHttpClient buildHttpClient(DnsResolver dnsResolver) {
-        Timeout timeout = Timeout.ofMilliseconds(TIMEOUT_MS);
-        ConnectionConfig connectionConfig = ConnectionConfig.custom()
-                .setConnectTimeout(timeout).setSocketTimeout(timeout).build();
-        PoolingHttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
-                .setDnsResolver(dnsResolver)
-                .setDefaultConnectionConfig(connectionConfig)
-                .build();
-        RequestConfig requestConfig = RequestConfig.custom()
-                .setResponseTimeout(timeout).setConnectionRequestTimeout(timeout).build();
-
-        return HttpClients.custom()
-                .setConnectionManager(connectionManager)
-                .setDefaultRequestConfig(requestConfig)
-                .disableRedirectHandling()
-                .build();
+        return PinnedHttpClientFactory.create(dnsResolver, TIMEOUT_MS);
     }
 
     /**

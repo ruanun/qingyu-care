@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
+import { performLogout } from '@/lib/session';
 import { useAppStore } from '@/stores/appStore';
 import { platformService } from '@/api/platform';
 import AppSwitcher from '@/components/AppSwitcher';
@@ -96,7 +97,8 @@ const sections: NavSection[] = [
             },
             {
                 items: [
-                    { label: '接入配置', path: '/integration', icon: Plug },
+                    // 页面展示 appSecret / webhookSecret，后端也只对管理员返回密钥（安全审查 H4）
+                    { label: '接入配置', path: '/integration', icon: Plug, roles: ['TENANT_ADMIN', 'PLATFORM_ADMIN'] },
                 ],
             },
         ],
@@ -128,7 +130,7 @@ const allItems = sections.flatMap((s) => s.groups).flatMap((g) => g.items);
 const MainLayout: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { user, logout } = useAuthStore();
+    const { user } = useAuthStore();
     const { currentApp } = useAppStore();
     const [announcement, setAnnouncement] = useState('');
 
@@ -142,8 +144,9 @@ const MainLayout: React.FC = () => {
     const canSee = (item: NavItem) =>
         !item.roles || (!!user?.role && item.roles.includes(user.role));
 
-    const handleLogout = () => {
-        logout();
+    const handleLogout = async () => {
+        // 先让服务端作废 token 再清本地（安全审查 M7），见 lib/session.ts
+        await performLogout();
         navigate('/login');
     };
 
