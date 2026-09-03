@@ -397,3 +397,32 @@
 后果是**本机所有经 SsrfGuard 的出站调用都会被拒**，工具的「凭据真的出站」这条在本机无法验证
 （同 MCP 那次的结论）。AI 对话不受影响，它走 openai-java SDK 直连、不经守卫。生产环境不会用
 fake-IP 代理，拦 198.18.0.0/15 是对的，不因此放宽。
+
+### 2026-09-03 · 依赖漏洞扫描结果与处置
+
+NVD API key 无效（35 位，标准 UUID 是 36 位；带它请求 NVD 返回 404，不带反而 200），
+改用 **OSV 公开 API** 完成扫描——它不需要任何凭证，扫 329 个运行时依赖只用几秒。
+
+结果：13 个依赖命中 23 个漏洞，其中 CRITICAL 3、HIGH 8、MODERATE 12。
+
+**逐条核对触发条件后，只有一条对本项目成立**：
+
+| 条目 | 是否适用 | 依据 |
+|---|---|---|
+| Tomcat 11.0.22 三个 CRITICAL | 否 | 全是 Tomcat 内置认证器的漏洞（DIGEST 重放、FORM 授权、访问控制）。本项目用 Sa-Token 自己做认证，从未启用这些 authenticator，也没配 security-constraint |
+| Netty 4.2.15 八条 | 否 | 多为服务端场景（SPDY 解码、CorsHandler、HTTP/3 帧）。项目只把 Netty 当 MCP 的出站客户端用，不做服务端、不开 HTTP/3 |
+| PostgreSQL JDBC 42.7.11 | 否 | 要求启用 SCRAM 通道绑定且攻击者已在中间人位置。数据库在容器网络内 |
+| Jackson databind 两条 | 否 | 是 `@JsonView` 与 per-property `@JsonIgnoreProperties` 的绕过；本项目的绑定层边界靠 `@JsonProperty(READ_ONLY)`，没用那两个做安全控制 |
+| Log4j API 2.25.4 | 否 | 走 MapMessage 的 JSON 序列化；日志实现是 logback |
+| **HttpCore5 5.4.2（GHSA-hf6x-8p5f-cgmf，HIGH）** | **是** | HTTP 头解析可被打到内存耗尽。工具调用 / 网页抓取 / Webhook 三条出站路径都走 httpclient5，目标地址由租户自由填写，恶意服务器返回超大响应头即可触发；现有的超时与 5MB 上限都作用在 body 上，头部大小由 HttpCore 自己管，挡不住 |
+
+**处置**：只覆盖 `httpcore5.version` 到 5.4.3（连带 httpcore5-h2），不整体抬 BOM 版本——
+其余条目触发条件不成立，为它们承担 Tomcat / Netty 大版本联动的回归风险不划算。
+升级后 OSV 复查 httpcore5 与 httpcore5-h2 均「无已知漏洞」，单测 1029 + IT 177 全绿。
+
+**已知残留**：`httpclient5` 5.6.1 仍有 GHSA-hjcp-jmpx-g3qm（MODERATE，Content-Encoding 解码
+出错时连接泄漏致连接池耗尽）。本项目每次出站都新建 HttpClient 与连接管理器、用后即关
+（三处都是 try-with-resources），池本身是一次性的，泄漏影响有限，故未升。
+
+**工具选型**：`scripts/dep-audit.sh` 里的 dependency-check 需要 NVD key 且首次要同步整个漏洞库；
+OSV 不需要凭证、秒级出结果，数据源涵盖 GHSA 与 NVD。下次做扫描优先用 OSV。
