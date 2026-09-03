@@ -133,6 +133,10 @@ qingyu:
       # 平台管理员 admin 的初始口令。留空则首启生成随机口令、只打一次 WARN 日志；
       # 生产务必通过环境变量指定或首启后立即修改（安全审查 H1）。
       admin-initial-password: ${QINGYU_ADMIN_INITIAL_PASSWORD:}
+    mcp:
+      # 是否允许 MCP server 指向内网/环回（本地自建 server 时打开；生产保持 false）。
+      # 与 model / webhook 的同名开关语义一致：放行私网，但云元数据段永不放行。
+      allow-private-servers: ${MCP_ALLOW_PRIVATE_SERVERS:false}
     model:
       # 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型时打开；生产保持 false）
       allow-private-endpoints: ${MODEL_ALLOW_PRIVATE_ENDPOINTS:false}

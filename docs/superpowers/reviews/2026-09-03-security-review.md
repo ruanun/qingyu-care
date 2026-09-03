@@ -426,3 +426,35 @@ NVD API key 无效（35 位，标准 UUID 是 36 位；带它请求 NVD 返回 4
 
 **工具选型**：`scripts/dep-audit.sh` 里的 dependency-check 需要 NVD key 且首次要同步整个漏洞库；
 OSV 不需要凭证、秒级出结果，数据源涵盖 GHSA 与 NVD。下次做扫描优先用 OSV。
+
+### 2026-09-04 · MCP 链路真机验证（五条全过）与补上的私网开关
+
+第二轮曾把「MCP 真连一个 server」判为本机不可验，理由是 fake-IP 代理让公网域名落进守卫黑名单。
+**这个判断是错的**：真正的障碍不是网络，而是这条出站路径<b>缺一个开关</b>——模型端点有
+`allow-private-endpoints`、Webhook 有 `allow-private-targets`，唯独 MCP 没有，本地自建 server
+连不上。补上 `qingyu.care.mcp.allow-private-servers` 后（语义与另两个一致：放行环回与普通私网，
+云元数据段任何开关都不放行），两条路都通了：fake-IP 的 198.18.0.x 不在元数据黑名单里，公网
+MCP server 也能连。
+
+| # | 验证项 | 结果 |
+|---|---|---|
+| 21 | 登记 + 同步公开 server（context7） | 同步成功，拿到 2 个工具，`readOnly=false`（未知一律当可写），`lastSyncError` 为空 |
+| 22 | 只读门槛 | 未标只读时对话日志无「本轮启用」，即挂载 0 个；标只读后挂载 2 个 |
+| 23 | 真实工具调用 | 日志确认依次调用 `context7__resolve-library-id` 与 `context7__query-docs`，前缀正确；AI 回复内容确实来自 Context7 文档，`<tool_result>` 定界未破坏工具使用 |
+| 24 | **凭据真的出站** | 本地回显 MCP server 收到的 `tools/call` 请求头里带着登记时配置的 `X-Qingyu-Smoke: MCP-CRED-7731` |
+| 25 | SSRF | 云元数据地址同步时 400 被拒（**开关打开也拦**），`lastSyncError` 正确落库 |
+| 26 | DEPRECATED 路径 | 远端返回空工具列表后同步，工具行仍在、状态转 `DEPRECATED`、`read_only` 未被覆盖；再对话时不再挂载 |
+| 27 | 凭据不被空串清空 | 只改名字保存后 `auth_header` 原样保留 |
+
+登记时不校验 URL、只在同步时校验，这与 Webhook「落库就拦」不同，**是有理由的差异**：MCP 有
+`lastSyncError` 这条设计好的失败反馈通道（界面上有警示条），错误立即可见；而 Webhook 配错地址后
+是在事件推送时静默失败，用户不会主动去看投递表，所以必须落库就拦。
+
+**widget 真机嵌入未完成**：宿主页与编排脚本已写好（`backend/target/widget_host.html` 与
+`widget_host_server.py`，结果 POST 回本地服务、不依赖 CDP），但执行时 Docker Desktop 的 WSL 后端
+（`docker-desktop` 发行版）反复 Stopped、引擎持续返回 500，数据库与 Redis 全部不可达，后端起不来。
+今天第二次出现，属于机器环境故障。这条留待环境恢复后补。
+
+⚠️ 过程中还踩到一个自造的坑，记下来免得重犯：宿主页探针用 `MutationObserver` 观察 body subtree，
+而回调自己又改 DOM，形成自触发循环，DOM 永远不稳定，CDP 的 `evaluate_script` / `take_snapshot`
+会一直等 stable DOM 直到协议超时。探针要么定时轮询，要么把观察范围收窄到不含自己的输出节点。

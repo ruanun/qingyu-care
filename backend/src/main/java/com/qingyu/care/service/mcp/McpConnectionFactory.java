@@ -47,6 +47,39 @@ import java.time.Duration;
 public class McpConnectionFactory {
 
     /**
+     * 是否允许 MCP server 指向内网/环回（本地自建 MCP server 的开发场景）。生产保持 false。
+     *
+     * <p>补这个开关的直接原因：模型端点有 {@code allow-private-endpoints}、Webhook 有
+     * {@code allow-private-targets}，唯独这条出站路径没有，本地自建 server 根本连不上——
+     * 而那是与「本地跑 Ollama」同样正当的开发场景。三处语义现在一致：放行环回与普通私网，
+     * <b>云元数据段任何开关都不放行</b>（见 {@link SsrfGuard#assertAllowedHttpUrlAllowingPrivate}）。
+     */
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.mcp.allow-private-servers:false}")
+    private boolean allowPrivateServers;
+
+    /**
+     * 解析并校验目标地址，返回供连接期钉住的地址列表。包级可见供单测直接断言两种模式的边界。
+     *
+     * @throws IllegalArgumentException 协议不是 http(s)、主机无法解析，或地址未通过守卫
+     */
+    java.net.InetAddress[] resolvePinnedAddresses(McpServer server) {
+        String url = server.getUrl();
+        String host = URI.create(url).getHost();
+        if (host == null) {
+            throw new IllegalArgumentException("MCP server URL 无法解析主机名: " + url);
+        }
+        if (!allowPrivateServers) {
+            return SsrfGuard.resolveAndValidate(host);
+        }
+        SsrfGuard.assertAllowedHttpUrlAllowingPrivate(url);
+        try {
+            return InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            throw new IllegalArgumentException("MCP server 主机无法解析: " + host, e);
+        }
+    }
+
+    /**
      * 建立并初始化一个 MCP 连接。调用方负责 {@link McpConnection#close()}。
      *
      * @throws IllegalArgumentException      目标地址未通过 SSRF 校验
@@ -59,10 +92,7 @@ public class McpConnectionFactory {
         }
 
         String host = URI.create(server.getUrl()).getHost();
-        if (host == null) {
-            throw new IllegalArgumentException("MCP server URL 无法解析主机名: " + server.getUrl());
-        }
-        InetAddress[] pinned = SsrfGuard.resolveAndValidate(host);
+        InetAddress[] pinned = resolvePinnedAddresses(server);
 
         PinnedAddressResolverGroup resolverGroup = new PinnedAddressResolverGroup(host, pinned);
         HttpClient httpClient = buildHttpClient(resolverGroup, server.getTimeoutMs());

@@ -7,6 +7,8 @@ qingyu:
       # 只有「浏览器直连 :8080」时才需要（如 Swagger UI 里的 Try it out）。走 Vite 代理时
       # 代理已把 Origin 头摘掉（见 vite.config.ts），后端按同源处理，端口漂移到 5174/5175 也不受影响。
       allowed-origins: http://localhost:5173,http://localhost:5174,http://localhost:5175
+    mcp:
+      allow-private-servers: true     # 本地自建 MCP server
     model:
       allow-private-endpoints: true   # 本地 Ollama 等自托管模型
 
