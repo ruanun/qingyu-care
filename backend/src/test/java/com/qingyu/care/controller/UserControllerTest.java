@@ -249,4 +249,19 @@ class UserControllerTest {
             assertThat(resp.getData().getPassword()).isNotEqualTo(oldHash);
         }
     }
+    /** 安全审查 L11：非法枚举值曾一路穿到 UserRole.valueOf，变成 500 并回显内部类名。 */
+    @Test
+    void 创建用户时非法角色返回400() {
+        TenantContext.setTenantId(2L);
+        when(userRepository.existsByUsernameAcrossTenants("newbie")).thenReturn(false);
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_ADMIN")) {
+            ApiResponse<User> resp = controller.createUser(java.util.Map.of(
+                    "username", "newbie", "password", "pwd123456", "role", "SUPERUSER"));
+
+            assertThat(resp.getCode()).isEqualTo(400);
+            assertThat(resp.getMessage()).doesNotContain("com.qingyu");
+        }
+        verify(userRepository, never()).save(any(User.class));
+    }
 }

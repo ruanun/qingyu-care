@@ -543,6 +543,12 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 6. **CORS 两套 + 不用 cookie**：`/open/v1/**` 与 `/widget.js` 任意来源、`allowCredentials(false)`；其余只放行 `qingyu.care.cors.allowed-origins`（默认空 = 拒绝一切跨域，前端与后端同源）。`sa-token.is-read-cookie: false`——SPA 只用 `satoken` 请求头，cookie 一开就是 CSRF 面。`CorsPolicyIT` 守着。
 7. **异常处理器不回显 `e.getMessage()`**：`RuntimeException` 回「服务器内部错误（错误编号 xxx）」，编号进日志；`IllegalArgumentException` 归 400 且同样不回显。要给用户看的原因改抛 `InvalidOperationException` / `BusinessException`。
 8. **前端退出登录走 `lib/session.performLogout`**：先调后端注销再清本地（含 `qingyu-current-app`）。
+9. **`X-App-Id` 必须属于当前租户才进上下文**：`TenantInterceptor` 用 `findTenantIdById` 反查，不属于就忽略并 WARN（平台管理员豁免）；`WebhookDispatcher` 再兜一道「应用租户 == 事件租户」。`TenantInterceptorTest` 守着。
+10. **模型 endpoint 落库前过守卫**：`ModelRouterService.requireValidEndpoint` 只在管理面入口（建 / 改 / 测试连接，含平台共享模型）调用，不进对话热路径；`qingyu.care.model.allow-private-endpoints` 只在 dev profile 打开（本机 Ollama）。单测里 `ModelRouterService` 是 mock，控制器测试不会真的解析 DNS。
+11. **Swagger / metrics / DEBUG 日志基线关闭，只有 dev profile 打开**：三者的路径都在 Sa-Token 豁免名单里，「关掉」是唯一可靠手段。`ManagementEndpointsExposureIT` 守着基线形态（test profile 不含 dev）。
+12. **开放 API 与登录都校验租户状态与 `expireTime`**：冻结或到期的租户，widget / 开放 API / 登录一起停。⚠️ `ApplicationRepository.findByAppKey` 带 `@EntityGraph(tenant)`——鉴权在拦截器阶段执行、没有 OSIV 的 EntityManager，懒加载的 `tenant` 一碰非 id 字段就是 LazyInitializationException，而拦截器的兜底 catch 曾把它静默吞成 500（现在会记日志）。
+13. **开放 API 两层限流**：应用级（`default-rate-limit-per-minute`，应用可覆盖）之下再按「应用 + 客户端 IP」分桶（`per-client-rate-limit-per-minute`，默认 20，0 关闭）。客户端 IP 与审计日志一样取 `X-Forwarded-For` 的**最后一段**（nginx 追加模式，前面的段客户端可自填）。
+14. **知识库上传先校验再传 S3**：`getSize()` 闸门（`qingyu.care.knowledge.max-upload-bytes`）→ 非空 → 扩展名白名单（`UPLOAD_EXTENSIONS`，与 `detectDocumentType` 一一对应）→ 文件名截到 255；`documentRepository.save` 失败必须 `deleteFile` 回收对象。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。

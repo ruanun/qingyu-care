@@ -102,14 +102,14 @@ spring:
 sa-token:
   # token 名称
   token-name: satoken
-  # token 有效期 (单位秒，默认 30 天)
-  timeout: 2592000
-  # token 临时有效期 (指定时间内无操作就视为过期，单位秒，-1 代表永不过期)
-  active-timeout: -1
+  # token 有效期（秒）：7 天。曾是 30 天且无活跃超时——公共电脑上泄漏的 token 能用一个月（安全审查 M7）
+  timeout: 604800
+  # 无操作 12 小时即过期（秒）
+  active-timeout: 43200
   # 是否允许同一账号并发登录
   is-concurrent: true
-  # 在多人登录同一账号时，是否共用一个 token
-  is-share: true
+  # 多人登录同一账号时各自持有独立 token：一个 token 泄漏不等于该账号全部会话泄漏，登出也只登出自己
+  is-share: false
   # token 风格
   token-style: uuid
   # 是否输出日志
@@ -125,6 +125,9 @@ qingyu:
       # 平台管理员 admin 的初始口令。留空则首启生成随机口令、只打一次 WARN 日志；
       # 生产务必通过环境变量指定或首启后立即修改（安全审查 H1）。
       admin-initial-password: ${QINGYU_ADMIN_INITIAL_PASSWORD:}
+    model:
+      # 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型时打开；生产保持 false）
+      allow-private-endpoints: ${MODEL_ALLOW_PRIVATE_ENDPOINTS:false}
     cors:
       # 管理端允许的跨域来源（逗号分隔，精确匹配 scheme://host[:port]）。前端与后端同源部署
       # （nginx 反代 /api、Vite 代理）时留空即可；只有前端单独部署到别的域名才需要填。
@@ -132,6 +135,8 @@ qingyu:
       allowed-origins: ${CORS_ALLOWED_ORIGINS:}
     # 知识库配置
     knowledge:
+      # 单个上传文件上限（字节，默认 100MB）；扩展名白名单见 KnowledgeServiceImpl.UPLOAD_EXTENSIONS
+      max-upload-bytes: 104857600
       # 文档切分配置
       chunking:
         default-chunk-size: 1000
@@ -142,6 +147,9 @@ qingyu:
     openapi:
       # 单个应用默认每分钟请求上限（应用可覆盖）
       default-rate-limit-per-minute: 60
+      # 单个客户端（应用 + IP，X-Forwarded-For 取最后一段）每分钟上限，0 关闭。appKey 是公开的，
+      # 没有这层子桶时一个滥用者就能让该应用所有真实访客一起吃 429（安全审查 M5）
+      per-client-rate-limit-per-minute: 20
 
     # Webhook 事件推送配置
     webhook:
@@ -249,8 +257,10 @@ dromara:
 logging:
   level:
     root: INFO
-    com.qingyu.care: DEBUG
-    org.springframework.ai: DEBUG
+    # 基线 INFO；dev profile 再抬到 DEBUG。org.springframework.ai 的 DEBUG 会把完整 prompt
+    # （含知识库正文与访客消息）写进日志，生产不该开（安全审查 L4）
+    com.qingyu.care: INFO
+    org.springframework.ai: INFO
  
 
 # Actuator 配置
@@ -258,7 +268,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # 基线只暴露 health：/actuator/** 在 Sa-Token 豁免名单里，metrics 匿名可读（安全审查 M9）；dev profile 再放开
+        include: health
   endpoint:
     health:
       show-details: when-authorized
@@ -269,10 +280,13 @@ management:
       enabled: false
 
 # API 文档配置
+# API 文档：基线关闭（路径在 Sa-Token 豁免名单里，匿名可读全部接口契约），只有 dev profile 打开（安全审查 M9）
 springdoc:
   api-docs:
     path: /v3/api-docs
+    enabled: false
   swagger-ui:
     path: /swagger-ui.html
+    enabled: false
     tags-sorter: alpha
     operations-sorter: alpha

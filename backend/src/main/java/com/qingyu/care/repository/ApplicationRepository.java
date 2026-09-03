@@ -1,6 +1,7 @@
 package com.qingyu.care.repository;
 
 import com.qingyu.care.entity.Application;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,6 +15,11 @@ public interface ApplicationRepository extends JpaRepository<Application, Long> 
 
     List<Application> findByTenantIdOrderByCreatedAtDesc(Long tenantId);
 
+    /**
+     * 开放 API 鉴权按 appKey 取应用，并一起取出租户：鉴权在拦截器阶段执行、没有 OSIV 的 EntityManager，
+     * 懒加载的 {@code tenant} 一碰非 id 字段（状态 / 到期时间）就是 LazyInitializationException。
+     */
+    @EntityGraph(attributePaths = "tenant")
     Optional<Application> findByAppKey(String appKey);
 
     boolean existsByAppKey(String appKey);

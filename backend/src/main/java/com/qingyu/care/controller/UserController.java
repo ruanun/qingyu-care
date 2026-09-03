@@ -121,7 +121,12 @@ public class UserController {
             return ApiResponse.error(400, "用户名已存在");
         }
 
-        UserRole role = UserRole.valueOf(roleStr);
+        UserRole role;
+        try {
+            role = UserRole.valueOf(roleStr);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, "角色取值非法");
+        }
         
         // 非平台管理员不能创建平台管理员
         if (role == UserRole.PLATFORM_ADMIN && !isPlatformAdmin()) {

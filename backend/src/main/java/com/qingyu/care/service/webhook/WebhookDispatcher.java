@@ -50,6 +50,14 @@ public class WebhookDispatcher {
         if (!isSubscribed(app.getWebhookEvents(), event.getEventType())) {
             return;
         }
+        // 纵深防御（安全审查 M3）：应用的租户与事件的租户不一致时绝不投递——否则会用别的租户的密钥
+        // 向对方回调地址发出签名正确的伪造事件。拦截器已校验 X-App-Id 归属，这里再兜一道。
+        if (event.getTenantId() != null
+                && (app.getTenant() == null || !event.getTenantId().equals(app.getTenant().getId()))) {
+            log.warn("Webhook 事件租户与应用租户不一致，拒绝投递 appId={} eventTenantId={}",
+                    event.getAppId(), event.getTenantId());
+            return;
+        }
 
         // 先落 PENDING 行拿到 id（兼作 Delivery-Id 与 payload.id）
         WebhookDelivery delivery = deliveryRepository.save(WebhookDelivery.builder()

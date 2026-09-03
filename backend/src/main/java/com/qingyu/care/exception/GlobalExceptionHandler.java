@@ -13,6 +13,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.exception.NotPermissionException;
 import cn.dev33.satoken.exception.NotRoleException;
@@ -118,6 +120,14 @@ public class GlobalExceptionHandler {
             throws IOException {
         log.warn("JSON 解析失败: {}", e.getMessage());
         writeError(response, 400, 400, "请求体格式错误");
+    }
+
+    /**
+     * 路径不存在（含被关闭的 Swagger / actuator 端点）归 404，不落进下面的 500 兜底。
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public void handleNotFound(Exception e, HttpServletResponse response) throws IOException {
+        writeError(response, 404, 404, "资源不存在");
     }
 
     /**

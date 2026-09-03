@@ -1,10 +1,14 @@
 package com.qingyu.care.service;
 
 import com.qingyu.care.entity.Application;
+import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.repository.ApplicationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
 
 /**
  * 开放 API 认证：校验 appKey/appSecret，返回对应应用。
@@ -25,6 +29,7 @@ public class OpenApiAuthService {
         if (Boolean.FALSE.equals(app.getEnabled())) {
             throw new OpenApiException(403, "应用已停用");
         }
+        requireTenantActive(app);
         if (!apiKey.equals(app.getAppSecret())) {
             throw new OpenApiException(401, "无效的凭据");
         }
@@ -45,6 +50,7 @@ public class OpenApiAuthService {
         if (Boolean.FALSE.equals(app.getEnabled())) {
             throw new OpenApiException(403, "应用已停用");
         }
+        requireTenantActive(app);
         String allowed = app.getAllowedOrigins();
         if (allowed == null || allowed.isBlank()) {
             throw new OpenApiException(403, "该应用未开放 Widget 接入");
@@ -53,6 +59,23 @@ public class OpenApiAuthService {
             throw new OpenApiException(403, "来源域名未授权");
         }
         return app;
+    }
+
+    /**
+     * 租户被冻结或套餐到期后，其 widget 与开放 API 必须一起停（安全审查 M6，2026-09-03）：
+     * 此前只判 {@code app.enabled}，冻结的租户照常消耗模型费用。
+     */
+    private static void requireTenantActive(Application app) {
+        Tenant tenant = app.getTenant();
+        if (tenant == null) {
+            return;
+        }
+        if (tenant.getStatus() != null && tenant.getStatus() != TenantStatus.ACTIVE) {
+            throw new OpenApiException(403, "租户已被冻结");
+        }
+        if (tenant.getExpireTime() != null && tenant.getExpireTime().isBefore(LocalDateTime.now())) {
+            throw new OpenApiException(403, "租户套餐已到期");
+        }
     }
 
     /** 逗号拆分、trim 后精确匹配（首版不支持通配子域）。 */

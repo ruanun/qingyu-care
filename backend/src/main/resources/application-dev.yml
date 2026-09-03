@@ -5,6 +5,8 @@ qingyu:
       admin-initial-password: admin123   # 开发环境固定口令；生产由 QINGYU_ADMIN_INITIAL_PASSWORD 指定或随机生成
     cors:
       allowed-origins: http://localhost:5173   # 前端直连 :8080（不走 Vite 代理）时需要
+    model:
+      allow-private-endpoints: true   # 本地 Ollama 等自托管模型
 
 spring:
   jpa:
@@ -16,5 +18,18 @@ logging:
   level:
     root: INFO
     com.qingyu.care: DEBUG
+    org.springframework.ai: DEBUG
     org.hibernate.SQL: DEBUG
     jdk.internal.httpclient: WARN
+
+# 开发环境放开 Swagger 与 metrics（基线关闭，见 application.yml）
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

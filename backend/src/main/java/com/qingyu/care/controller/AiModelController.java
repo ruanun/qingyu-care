@@ -44,6 +44,7 @@ public class AiModelController {
     @PostMapping
     public ApiResponse<AiModelConfig> createModel(@RequestBody AiModelConfig config) {
         config.setId(null); // 确保是新建
+        modelRouterService.requireValidEndpoint(config.getEndpoint());   // 出站地址落库前过 SSRF 守卫（安全审查 M4）
         // 租户侧建的模型一律是租户级：scope 是客户端可控字段，不清掉的话租户可以在请求体里
         // 自封 PLATFORM，把所有租户的对话流量导向自己的 endpoint。
         // 平台共享模型只能走 /v1/platform/models（那边强制 tenantId=null）。
@@ -64,7 +65,10 @@ public class AiModelController {
         if (config.getName() != null) existing.setName(config.getName());
         if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
-        if (config.getEndpoint() != null) existing.setEndpoint(config.getEndpoint());
+        if (config.getEndpoint() != null) {
+            modelRouterService.requireValidEndpoint(config.getEndpoint());
+            existing.setEndpoint(config.getEndpoint());
+        }
         // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
         if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());
         if (config.getScenario() != null) existing.setScenario(config.getScenario());
@@ -91,8 +95,10 @@ public class AiModelController {
      */
     @PostMapping("/{id}/test")
     public ApiResponse<String> testModel(@PathVariable Long id) {
+        // 存量行也可能带着非法端点（校验是后来加的），出站前再过一次守卫；校验失败直接抛 400，不进下面的 catch
+        AiModelConfig config = modelRouterService.getById(id);
+        modelRouterService.requireValidEndpoint(config.getEndpoint());
         try {
-            AiModelConfig config = modelRouterService.getById(id);
             var client = modelRouterService.createChatClient(config);
             String response = client.prompt()
                     .user("你好，请回复 \"连接正常\"")

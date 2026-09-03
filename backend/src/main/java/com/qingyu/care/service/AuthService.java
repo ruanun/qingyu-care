@@ -107,9 +107,13 @@ public class AuthService {
             throw new InvalidOperationException("账号已被禁用");
         }
         
-        // 检查租户状态
+        // 检查租户状态与套餐到期（安全审查 M6：expireTime 此前从不参与判断）
         if (user.getTenant() != null && user.getTenant().getStatus() != TenantStatus.ACTIVE) {
             throw new InvalidOperationException("租户已被冻结或过期");
+        }
+        if (user.getTenant() != null && user.getTenant().getExpireTime() != null
+                && user.getTenant().getExpireTime().isBefore(LocalDateTime.now())) {
+            throw new InvalidOperationException("租户套餐已过期，请联系平台管理员");
         }
         
         // Sa-Token 登录

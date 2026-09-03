@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: qingyu_care
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # 只绑本机：默认口令的开发库不该对局域网开放
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -29,8 +29,8 @@ services:
     security_opt:
       - "no-new-privileges:true"
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web 控制台
+      - "127.0.0.1:9000:9000"   # S3 API（只绑本机）
+      - "127.0.0.1:9001:9001"   # Web 控制台（只绑本机）
     environment:
       - RUSTFS_VOLUMES=/data          # 单盘模式；镜像已把 /data 归属 UID 10001，命名卷自动继承权限
       - RUSTFS_CONSOLE_ENABLE=true
@@ -71,7 +71,7 @@ services:
     image: redis:7-alpine
     container_name: qingyu-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"   # 无密码的 Redis 只绑本机
     volumes:
       - redis_data:/data
     healthcheck:

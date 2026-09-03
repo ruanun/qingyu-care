@@ -27,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import com.qingyu.care.util.AfterCommit;
 
 @Service
@@ -76,6 +78,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     @Value("${qingyu.care.knowledge.chunking.default-overlap:200}")
     private int chunkOverlap;
+
+    /** 单个知识库文件上限（字节），默认 100MB；与 multipart 上限一致但在读入前就拦。 */
+    @Value("${qingyu.care.knowledge.max-upload-bytes:104857600}")
+    private long maxUploadBytes;
+
+    /** 与 {@link #detectDocumentType} 的分支一一对应；不在表里的扩展名一律拒绝，不再默认当 TEXT 摄取。 */
+    private static final Set<String> UPLOAD_EXTENSIONS = Set.of(
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "html", "htm", "txt", "md",
+            "jpg", "jpeg", "png", "gif");
+
+    private static final int MAX_FILENAME_LENGTH = 255;
 
     @Override
     @Transactional
@@ -171,23 +184,34 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Document uploadDocument(Long knowledgeBaseId, MultipartFile file) {
         KnowledgeBase kb = getKnowledgeBase(knowledgeBaseId);
-        
+        // 安全审查 M8（2026-09-03）：此前零校验——任意扩展名、任意大小（只有 multipart 的 100MB 硬顶）、
+        // 超长文件名直接进 S3，INSERT 失败时对象无人回收。校验放在传 S3 之前，且 getSize() 闸门
+        // 先于任何读取字节的操作（同 AttachmentValidator 的顺序）。
+        validateUpload(file);
+        String safeName = truncateFilename(file.getOriginalFilename());
+
         // 上传文件到 S3 存储
         FileInfo fileInfo = fileService.uploadKnowledgeFile(file);
         log.info("文件已上传到 S3: {}", fileInfo.getUrl());
-        
+
         // 创建文档记录
         Document doc = Document.builder()
                 .knowledgeBase(kb)
-                .name(file.getOriginalFilename())
-                .originalFilename(file.getOriginalFilename())
-                .documentType(detectDocumentType(file.getOriginalFilename()))
+                .name(safeName)
+                .originalFilename(safeName)
+                .documentType(detectDocumentType(safeName))
                 .status(DocumentStatus.PENDING)
                 .filePath(fileInfo.getUrl())  // 存储 S3 URL
                 .storageKey(fileInfo.getFilename())  // 存储文件 key
                 .fileSize(file.getSize())
                 .build();
-        doc = documentRepository.save(doc);
+        try {
+            doc = documentRepository.save(doc);
+        } catch (RuntimeException e) {
+            // 落库失败则回收刚传上去的对象：否则留下没有库行指向的孤儿，cleanupOrphans 只扫附件表够不到
+            fileService.deleteFile(fileInfo.getUrl());
+            throw e;
+        }
 
         // 异步处理文档。两件事都不能省：
         //   · 经 self 调用才命中 Spring 代理，@Async 才真正生效（同类直调会被隐式 this. 绕过）；
@@ -375,6 +399,41 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
     
+    /** 大小（先于任何读字节的操作）→ 非空 → 扩展名白名单。 */
+    private void validateUpload(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("文件为空");
+        }
+        if (file.getSize() > maxUploadBytes) {
+            throw new BusinessException("文件大小超过上限（" + (maxUploadBytes / 1024 / 1024) + "MB）");
+        }
+        String ext = extensionOf(file.getOriginalFilename());
+        if (!UPLOAD_EXTENSIONS.contains(ext)) {
+            throw new BusinessException("不支持的文件类型：" + (ext.isEmpty() ? "（无扩展名）" : ext));
+        }
+    }
+
+    private static String extensionOf(String filename) {
+        if (filename == null) {
+            return "";
+        }
+        int dot = filename.lastIndexOf('.');
+        return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    /** name / original_filename 列都是 varchar(255)：超长原名保留扩展名截断，不再撞列宽变 500。 */
+    private static String truncateFilename(String filename) {
+        if (filename == null) {
+            return "unnamed";
+        }
+        if (filename.length() <= MAX_FILENAME_LENGTH) {
+            return filename;
+        }
+        String ext = extensionOf(filename);
+        String suffix = ext.isEmpty() ? "" : "." + ext;
+        return filename.substring(0, MAX_FILENAME_LENGTH - suffix.length()) + suffix;
+    }
+
     private DocumentType detectDocumentType(String filename) {
         String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
         return switch (ext) {
