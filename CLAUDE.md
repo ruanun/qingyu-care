@@ -554,7 +554,8 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 17. **Webhook 签名覆盖「时间戳.请求体」**：`WebhookSignature.sign(secret, timestampMillis, body)`，时间戳同时随 `X-Qingyu-Timestamp` 发出；接收方复算 + 5 分钟窗口 + 按载荷 id 去重。改契约在未上线的现在零成本，上线后别再动。
 18. **Prompt 定界**：知识库正文包在 `<knowledge>`（`ChatServiceImpl.buildContext`）、工具返回包在 `<tool_result>`（`ToolResultDelimiter.wrap`，HTTP 工具与 MCP 都走它，截断作用在正文、标签不占额度），系统提示末尾固定追加 `DATA_GUARD_PROMPT` 声明标签内是数据不是指令。放在代码里而不是只改默认模板：模板已播种进库。是缓解不是根治。
 19. **分析 rollup 有日期锁**：`AnalyticsRollupDao.tryLockDay` 用 `pg_try_advisory_xact_lock(classId, day)` 双参数形式，与文档处理互斥的单参数形式键空间互不重叠；抢不到返回 false、`backfill` 不计入成功。其余 7 个 `@Scheduled` 各有自己的互斥（文档咨询锁 / CAS 认领 / 消费组）或重复无害，不需要锁。
-20. **依赖扫描是手动步骤**：`scripts/dep-audit.sh`（`-Pdepcheck` + `pnpm audit`），刻意不绑进 `mvn verify`，见脚本头注释。
+20. **依赖扫描是手动步骤**：`scripts/dep-audit.sh`（`-Pdepcheck` + `pnpm audit`），刻意不绑进 `mvn verify`，见脚本头注释。⚠️ `pnpm audit` 必须显式 `--registry=https://registry.npmjs.org`——npmmirror 之类的镜像没有 audit 端点，会报 `ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS`；后端那半需要免费的 `NVD_API_KEY`，不给会在更新漏洞库时直接失败。
+21. **`allow-private-*` 开关永不放行云元数据**：`model.allow-private-endpoints` 与 `webhook.allow-private-targets` 是给本地 Ollama / IT 的本地接收器用的，两者都走 `SsrfGuard.assertAllowedHttpUrlAllowingPrivate`——放行环回与普通私网，但 169.254.0.0/16、100.64.0.0/10、fe80::/10、fd00:ec2::/64 **任何开关都拦**。⚠️ 这条是**真机冒烟点出来的**：原实现打开开关后只校验 URL 形态，dev 下把模型 endpoint 填成 `http://100.100.100.200/v1`（阿里云元数据）能成功落库，而当时单测是绿的——因为断言把「只校验形态」写成了预期，测试固化了错误行为。改这两个开关时先问一句：放开的是「本地地址」还是「连元数据一起」。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。

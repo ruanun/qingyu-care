@@ -85,4 +85,40 @@ class SsrfGuardTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatCode(() -> SsrfGuard.assertAllowedHttpUrl("https://8.8.8.8/x")).doesNotThrowAnyException();
     }
+    // ===== 真机冒烟发现（2026-09-03）：放开私网时仍必须拒绝云元数据 =====
+
+    /**
+     * {@code allow-private-*} 开关是给「本地跑 Ollama / 本地 Webhook 接收器」用的，它们都在环回或
+     * 私网地址上；<b>云元数据段永远没有正当用途</b>。此前放开开关等于连
+     * {@code 169.254.169.254}（AWS/Azure/GCP）与 {@code 100.100.100.200}（阿里云）一起放开——
+     * dev profile 下实测可以把模型 endpoint 指到阿里云元数据并成功落库。
+     */
+    @Test
+    void isCloudMetadata识别各云厂商的元数据地址() throws Exception {
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("169.254.169.254"))).isTrue();
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("169.254.170.2"))).isTrue();   // ECS 任务角色
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("100.100.100.200"))).isTrue(); // 阿里云
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("fe80::1"))).isTrue();         // IPv6 链路本地
+        // 本地自托管模型的正常地址不受影响
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("127.0.0.1"))).isFalse();
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("10.0.0.5"))).isFalse();
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("192.168.1.10"))).isFalse();
+        assertThat(SsrfGuard.isCloudMetadata(InetAddress.getByName("8.8.8.8"))).isFalse();
+    }
+
+    /** 变异实验：让 assertAllowedHttpUrlAllowingPrivate 只做形态校验，第一组断言转红。 */
+    @Test
+    void assertAllowedHttpUrlAllowingPrivate放行环回与私网但拒绝元数据() {
+        assertThatThrownBy(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("http://169.254.169.254/latest/meta-data/"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("http://100.100.100.200/v1"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("ftp://127.0.0.1/v1"))
+                .isInstanceOf(IllegalArgumentException.class);
+        // 本地 Ollama / 本地接收器照常放行
+        assertThatCode(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("http://127.0.0.1:11434/v1"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("http://10.0.0.5:8080/hook"))
+                .doesNotThrowAnyException();
+    }
 }

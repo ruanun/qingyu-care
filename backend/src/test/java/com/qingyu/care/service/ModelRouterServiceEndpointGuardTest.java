@@ -56,12 +56,21 @@ class ModelRouterServiceEndpointGuardTest {
         assertThatCode(() -> service.requireValidEndpoint("  ")).doesNotThrowAnyException();
     }
 
+    /**
+     * 放开私网是给本地 Ollama 用的（真机冒烟发现，2026-09-03）：此前它把云元数据段一起放开了，
+     * dev profile 下实测可以把 endpoint 指到阿里云元数据 100.100.100.200 并成功落库。
+     */
     @Test
-    void 放开私网端点时只校验形态() {
+    void 放开私网端点时放行本地但仍拒绝云元数据() {
         ReflectionTestUtils.setField(service, "allowPrivateEndpoints", true);
 
         assertThatCode(() -> service.requireValidEndpoint("http://127.0.0.1:11434/v1")).doesNotThrowAnyException();
         assertThatThrownBy(() -> service.requireValidEndpoint("ftp://127.0.0.1/v1"))
+                .isInstanceOf(InvalidOperationException.class);
+        assertThatThrownBy(() -> service.requireValidEndpoint("http://100.100.100.200/v1"))
+                .as("阿里云元数据：放开私网也绝不放行")
+                .isInstanceOf(InvalidOperationException.class);
+        assertThatThrownBy(() -> service.requireValidEndpoint("http://169.254.169.254/v1"))
                 .isInstanceOf(InvalidOperationException.class);
     }
 }

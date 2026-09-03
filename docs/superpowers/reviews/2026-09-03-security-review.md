@@ -28,7 +28,7 @@
 | M1 | 中 | `User` 实体直接序列化，密码 BCrypt 哈希随用户列表返回给所有租户成员 | `UserController` / `User` | ✅ 已修（分支 fix/security-review-p0） |
 | M2 | 中 | 全局异常处理把 `RuntimeException.getMessage()` 回给客户端 | `GlobalExceptionHandler` | ✅ 已修（分支 fix/security-review-p0） |
 | M3 | 中 | `X-App-Id` 不校验归属：可把行建到他人应用名下、触发他人 Webhook 并用他人密钥签名 | `TenantInterceptor` / `WebhookDispatcher` | ✅ 已修（分支 fix/security-review-p0，第二批） |
-| M4 | 中 | `SsrfGuard` 漏 `100.64.0.0/10`（阿里云元数据 `100.100.100.200`）；模型 endpoint 与「测试连接」完全不过守卫 | `SsrfGuard` / `ModelRouterService` | ✅ 已修（网段 + 模型端点守卫） |
+| M4 | 中 | `SsrfGuard` 漏 `100.64.0.0/10`（阿里云元数据 `100.100.100.200`）；模型 endpoint 与「测试连接」完全不过守卫 | `SsrfGuard` / `ModelRouterService` | ✅ 已修（网段 + 模型端点守卫；真机复验时又补了「放开私网也不放行云元数据」） |
 | M5 | 中 | Origin 白名单挡不住非浏览器客户端：公开 appKey 即可无凭据烧额度、灌附件；限流键只有 appKey | `OpenApiAuthService` / `OpenApiAuthInterceptor` | 🔶 部分：限流子桶 + 单会话附件上限 20 + 孤儿 2 小时已做；租户存储配额待按套餐定数字 |
 | M6 | 中 | 开放 API 不校验租户状态；登录不校验 `expireTime` | `OpenApiAuthService` / `AuthService.login` | ✅ 已修 |
 | M7 | 中 | 前端「退出登录」不调后端注销；token 30 天有效、`is-share: true`、cookie 不清 | `MainLayout` / `application.yml` | ✅ 已修（前端调注销 + token 7 天 / 活跃 12 小时 / is-share=false） |
@@ -315,3 +315,36 @@
 | L13 | `pom.xml` 加 `depcheck` profile（dependency-check 11.1.1，CVSS ≥ 7 失败）+ `scripts/dep-audit.sh`（含三个 pnpm 项目的 `pnpm audit`，显式走官方 registry）；写进部署文档发版清单。首次实跑即抓到 react-router 高危 GHSA-qwww-vcr4-c8h2（RSC 模式 CSRF，本项目是 Vite SPA 不受影响），`react-router-dom` 7.18.1 → 7.18.3 后三个 pnpm 项目全部干净 | 手动步骤 |
 
 **仍未修**：L1 密钥哈希/加密存储（用户决定不做）；M5 的租户级存储配额（要按套餐定数字）；L2 `sa-token.is-log`。
+
+### 2026-09-03 · 真机冒烟验证（12 条）与由此挖出的缺陷
+
+三批改完后起 `dev,demo` 真机走了一遍。**自动化测试全绿、评审也看不出的一条缺陷，是真机第一次点出来的**：
+
+> **`allow-private-*` 开关放行粒度过粗，把云元数据段一起放开了。**
+> 两个开关（`qingyu.care.model.allow-private-endpoints`、`qingyu.care.webhook.allow-private-targets`）
+> 是给「本地跑 Ollama」「集成测试的本地 Webhook 接收器」用的，它们都在环回或普通私网地址上；
+> 但原实现打开后**只做形态校验**，等于连 `169.254.169.254`（AWS/Azure/GCP）与 `100.100.100.200`
+> （阿里云）也一起放开。dev profile 下实测：模型 endpoint 填阿里云元数据地址**创建成功并落库**。
+> 单测当时是绿的——因为我把「放开私网时只校验形态」当成预期行为写进了断言，测试固化了错误。
+> 修法：新增 `SsrfGuard.assertAllowedHttpUrlAllowingPrivate` 与 `isCloudMetadata`，两个开关都改走它，
+> 云元数据段（169.254.0.0/16、100.64.0.0/10、fe80::/10、fd00:ec2::/64）**任何开关都不放行**。
+> 复验：两个元数据地址均 400，本地 Ollama `127.0.0.1:11434` 仍 200。
+
+真机验证结果：
+
+| # | 验证项 | 结果 |
+|---|---|---|
+| 1 | 向量检索活性（换掉 Tika 读取器后最该验的一条）：上传新文档 → 提问 | 命中 5 条，最高 score **0.7997**，排第一的正是新文档，AI 回答准确引用其内容 |
+| 2 | Prompt 定界不破坏正常问答 | 同上，`<knowledge>` 标签与 `DATA_GUARD_PROMPT` 未影响回答质量 |
+| 3 | token 计量非零（开放 API 专属） | `sys_api_usage` 当日 call=1、token=**2718** |
+| 4 | 坐席看应用列表 | `appSecret` / `webhookSecret` 均为 `null` |
+| 5 | 坐席改应用 | 403「无权限：该操作仅限租户管理员」 |
+| 6 | 用户列表含密码哈希？ | 2 个用户，含 `password` 字段的 **0** 个 |
+| 7 | Webhook 回调地址指向内网 / 元数据 / 非 http | 三种都 400，消息可读 |
+| 8 | 模型 endpoint 指向云元数据 | **首轮放行 → 修复后 400**（见上） |
+| 9 | 模型 endpoint 指向本地 Ollama（dev） | 200，正当用途未被误伤 |
+| 10 | 管理端 CORS | 恶意 Origin **403**；配置内 Origin 200 |
+| 11 | 开放 API CORS | 任意 Origin 200、回显 Origin、**无** `Allow-Credentials` 头 |
+| 12 | 附件单会话上限 + 客户端子桶限流 | 第 1–20 个 200、第 21 个 **400**（上限）、第 22 个 **429**（IP 子桶）——一次验到两条改动 |
+
+冒烟数据已清理（文档删除、知识库恢复 4 篇演示文档、孤儿附件交给 2 小时清理任务）。

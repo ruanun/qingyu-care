@@ -70,6 +70,52 @@ public final class SsrfGuard {
     }
 
     /**
+     * 放开私网、但<b>永不放行云元数据</b>的校验，供 {@code allow-private-*} 开关使用。
+     *
+     * <p>真机冒烟发现（2026-09-03）：那两个开关是给「本地跑 Ollama」「集成测试的本地 Webhook 接收器」
+     * 用的，它们都在环回或普通私网地址上；而原实现只做形态校验，等于把
+     * {@code 169.254.169.254}（AWS/Azure/GCP）与 {@code 100.100.100.200}（阿里云）也一起放开——
+     * dev profile 下实测可以把模型 endpoint 指到阿里云元数据并成功落库。云元数据段对自托管模型
+     * 没有任何正当用途，任何开关都不该放行它。
+     */
+    public static void assertAllowedHttpUrlAllowingPrivate(String url) {
+        URI uri = requireHttpUrl(url);
+        try {
+            for (InetAddress addr : InetAddress.getAllByName(uri.getHost())) {
+                if (isCloudMetadata(addr)) {
+                    throw new IllegalArgumentException("URL 指向云元数据地址，已拒绝: " + uri.getHost());
+                }
+            }
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("URL 主机无法解析: " + uri.getHost(), e);
+        }
+    }
+
+    /**
+     * 云厂商元数据地址：链路本地 169.254.0.0/16（169.254.169.254 是 AWS/Azure/GCP/DigitalOcean
+     * 的通用入口，169.254.170.2 是 ECS 任务角色）、CGNAT 100.64.0.0/10（阿里云 100.100.100.200）、
+     * IPv6 链路本地 fe80::/10 与 AWS 的 fd00:ec2::/64。
+     */
+    public static boolean isCloudMetadata(InetAddress a) {
+        byte[] b = a.getAddress();
+        if (b.length == 4) {
+            int b0 = b[0] & 0xff;
+            int b1 = b[1] & 0xff;
+            return (b0 == 169 && b1 == 254)                 // 169.254.0.0/16
+                    || (b0 == 100 && (b1 & 0xc0) == 0x40);  // 100.64.0.0/10
+        }
+        if (b.length == 16) {
+            if (a.isLinkLocalAddress()) {                    // fe80::/10
+                return true;
+            }
+            // fd00:ec2::/64（AWS IPv6 元数据）
+            return (b[0] & 0xff) == 0xfd && (b[1] & 0xff) == 0x00
+                    && (b[2] & 0xff) == 0xec && (b[3] & 0xff) == 0x02;
+        }
+        return false;
+    }
+
+    /**
      * 解析并校验主机：返回校验通过的全部地址（供连接期 DNS 钉住复用，杜绝 rebinding——
      * 校验用的解析结果与实际连接用的必须是同一份，否则 TTL=0 域名可在两次解析间翻转 IP）。
      */

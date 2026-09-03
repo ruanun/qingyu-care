@@ -46,4 +46,12 @@ class RestClientWebhookHttpClientTest {
         assertThatThrownBy(() -> client(true).post("http://127.0.0.1:1/hook", Map.of(), "{}"))
                 .isNotInstanceOf(IllegalArgumentException.class);
     }
+    /** 同 endpoint 守卫：放开私网目标是给本地接收器用的，云元数据永远拒绝（真机冒烟发现，2026-09-03）。 */
+    @Test
+    void 放开私网目标时仍拒绝云元数据() {
+        assertThatThrownBy(() -> client(true).post("http://169.254.169.254/latest/meta-data/", Map.of(), "{}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client(true).post("http://100.100.100.200/hook", Map.of(), "{}"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

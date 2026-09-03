@@ -133,7 +133,8 @@ public class ModelRouterService {
         }
         try {
             if (allowPrivateEndpoints) {
-                SsrfGuard.requireHttpUrl(endpoint.trim());
+                // 放开私网（本地 Ollama 等），但云元数据段永不放行——见该方法注释
+                SsrfGuard.assertAllowedHttpUrlAllowingPrivate(endpoint.trim());
             } else {
                 SsrfGuard.assertAllowedHttpUrl(endpoint.trim());
             }
