@@ -4,7 +4,9 @@ qingyu:
     platform:
       admin-initial-password: admin123   # 开发环境固定口令；生产由 QINGYU_ADMIN_INITIAL_PASSWORD 指定或随机生成
     cors:
-      allowed-origins: http://localhost:5173   # 前端直连 :8080（不走 Vite 代理）时需要
+      # 只有「浏览器直连 :8080」时才需要（如 Swagger UI 里的 Try it out）。走 Vite 代理时
+      # 代理已把 Origin 头摘掉（见 vite.config.ts），后端按同源处理，端口漂移到 5174/5175 也不受影响。
+      allowed-origins: http://localhost:5173,http://localhost:5174,http://localhost:5175
     model:
       allow-private-endpoints: true   # 本地 Ollama 等自托管模型
 

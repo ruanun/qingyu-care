@@ -2,6 +2,12 @@ server:
   port: 8080
   servlet:
     context-path: /api
+  # 反向代理（nginx）终结 TLS 后转发给后端的是 http，而浏览器的 Origin 是 https——不读
+  # X-Forwarded-* 的话 Spring 重建出来的请求 URI scheme 与 Origin 不符，同源请求会被判成跨域，
+  # 撞上管理端的 CORS 白名单直接 403，整个后台登录不了（真机浏览器验证发现，2026-09-03）。
+  # nginx.conf 已经在转发 X-Forwarded-Proto / X-Real-IP / X-Forwarded-For。
+  # ⚠️ 前提是后端只经受信任的反代对外，别把 8080 直接暴露到公网——否则客户端可自造这些头。
+  forward-headers-strategy: framework
 
 spring:
   application:

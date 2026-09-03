@@ -59,4 +59,47 @@ class CorsPolicyIT extends AbstractPostgresIT {
                 .andExpect(header().exists("Access-Control-Allow-Origin"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
     }
+    /**
+     * 浏览器对<b>同源 POST</b> 也会带 {@code Origin} 头。Spring 判「是不是跨域」靠 Origin 与请求
+     * URI 的 scheme/host/port 三者比对，同源则整个 CORS 检查不参与，白名单再空也放行。
+     */
+    @Test
+    void 同源请求不受跨域白名单限制() throws Exception {
+        mockMvc.perform(post("/v1/auth/login")
+                        .with(req -> {
+                            req.setServerName("app.internal");
+                            req.setServerPort(80);
+                            return req;
+                        })
+                        .header("Origin", "http://app.internal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"admin\",\"password\":\"admin123\"}"))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * 真机浏览器验证发现（2026-09-03）：nginx 终结 TLS 后转发给后端的是 http，而浏览器的
+     * {@code Origin} 是 https——scheme 不同，Spring 判为跨域，白名单默认为空于是 403，
+     * <b>整个管理后台登录不了</b>。修法是 {@code server.forward-headers-strategy=framework}，
+     * 让 Spring 用 {@code X-Forwarded-Proto} 重建请求 URI 再比对。
+     *
+     * <p>变异实验：把该配置项删掉，本条转红。
+     */
+    @Test
+    void 反代终结TLS后同源请求仍不被当跨域() throws Exception {
+        mockMvc.perform(post("/v1/auth/login")
+                        .with(req -> {
+                            req.setServerName("admin.example.org");
+                            req.setServerPort(80);
+                            req.setScheme("http");
+                            return req;
+                        })
+                        .header("X-Forwarded-Proto", "https")
+                        .header("X-Forwarded-Host", "admin.example.org")
+                        .header("X-Forwarded-Port", "443")
+                        .header("Origin", "https://admin.example.org")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"admin\",\"password\":\"admin123\"}"))
+                .andExpect(status().isOk());
+    }
 }

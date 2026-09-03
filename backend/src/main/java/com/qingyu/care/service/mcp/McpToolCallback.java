@@ -76,7 +76,8 @@ public class McpToolCallback implements ToolCallback {
             return com.qingyu.care.service.tool.ToolResultDelimiter.wrap(truncate(resp, server.getMaxResponseChars()));
         } catch (Exception e) {
             // fail-soft：抛出会中断整轮对话，同 HttpToolCallback
-            log.warn("MCP 工具 {} 调用失败: {}", exposedName(server, tool), e.getClass().getSimpleName());
+            log.warn("MCP 工具 {} 调用失败: {}", exposedName(server, tool),
+                    com.qingyu.care.service.tool.HttpToolCallback.describeForLog(e));
             return com.qingyu.care.service.tool.ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
         }
     }

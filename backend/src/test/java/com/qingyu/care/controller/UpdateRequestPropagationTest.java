@@ -142,6 +142,8 @@ class UpdateRequestPropagationTest {
     @Mock ApplicationRepository applicationRepository;
     @Mock WebhookSender webhookSender;
     @Mock WebhookPayloadBuilder webhookPayloadBuilder;
+    // 真实实例：ApplicationController 的 webhookUrl 校验要读它的开关（默认 false = 只放行公网）
+    @org.mockito.Spy com.qingyu.care.config.WebhookProperties webhookProperties = new com.qingyu.care.config.WebhookProperties();
     @Mock TenantRepository tenantRepository;
     @Mock AuthService authService;
     @Mock UserRepository userRepository;

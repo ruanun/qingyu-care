@@ -97,4 +97,25 @@ class HttpToolCallbackTest {
         cb.call("{\"title\":\"x\"}");
         assertThat(capturedBody[0]).isEqualTo("{\"title\":\"x\"}");
     }
+    /**
+     * 真机冒烟发现（2026-09-03）：工具调用失败时日志只记异常类名，
+     * {@code 工具 xxx 调用失败: IllegalArgumentException} 看不出是被 SSRF 守卫拦下还是网络问题。
+     * 本机代理是 fake-IP 模式（所有域名解析到 198.18.0.x，恰在守卫黑名单里），排查花了好几分钟；
+     * 生产上若某个租户的工具域名解析到被拦网段，运维会完全无从下手。
+     *
+     * <p>守卫抛的 {@code IllegalArgumentException} 消息里只有 host，可安全入日志；
+     * 其余异常只记类名——它们的消息可能带完整 URL，而 URL 的 query 段可能含密钥。
+     */
+    @Test
+    void describeForLog_守卫异常记消息_其余只记类名() {
+        assertThat(HttpToolCallback.describeForLog(
+                new IllegalArgumentException("工具 URL 指向内网/环回地址，已拒绝: 198.18.0.116")))
+                .contains("IllegalArgumentException")
+                .contains("198.18.0.116");
+
+        assertThat(HttpToolCallback.describeForLog(
+                new IllegalStateException("工具 HTTP 调用失败: https://api.example.com/x?apikey=SECRET")))
+                .isEqualTo("IllegalStateException")
+                .doesNotContain("SECRET");
+    }
 }

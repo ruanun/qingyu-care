@@ -3,6 +3,7 @@ package com.qingyu.care.controller;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.SsrfGuard;
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.config.WebhookProperties;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.ApplicationUpdateRequest;
 import com.qingyu.care.dto.ApplicationView;
@@ -48,6 +49,7 @@ public class ApplicationController {
     private final AuthService authService;
     private final WebhookSender webhookSender;
     private final WebhookPayloadBuilder webhookPayloadBuilder;
+    private final WebhookProperties webhookProperties;
 
     /**
      * 获取应用列表
@@ -233,13 +235,24 @@ public class ApplicationController {
                 + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }
 
-    /** 空/空白表示未启用 Webhook，放行；否则必须是 http(s) 且主机解析到公网地址。 */
-    private static void requireValidWebhookUrl(String url) {
+    /**
+     * 空/空白表示未启用 Webhook，放行；否则必须是 http(s) 且主机解析到公网地址。
+     *
+     * <p>⚠️ 必须与出站那一关（{@code RestClientWebhookHttpClient}）看同一个开关
+     * （真机冒烟发现，2026-09-03）：原先这里是硬拦的，打开 {@code allow-private-targets} 后
+     * 出站放行了、落库仍拒绝，本地联调根本配不上地址，开关等于半失效。集成测试发现不了——
+     * 它们直接 {@code setWebhookUrl} 写库，绕过了控制器。云元数据段两种模式下都拦。
+     */
+    private void requireValidWebhookUrl(String url) {
         if (url == null || url.isBlank()) {
             return;
         }
         try {
-            SsrfGuard.assertAllowedHttpUrl(url.trim());
+            if (webhookProperties.isAllowPrivateTargets()) {
+                SsrfGuard.assertAllowedHttpUrlAllowingPrivate(url.trim());
+            } else {
+                SsrfGuard.assertAllowedHttpUrl(url.trim());
+            }
         } catch (IllegalArgumentException e) {
             throw new InvalidOperationException("Webhook 回调地址无效：" + e.getMessage());
         }

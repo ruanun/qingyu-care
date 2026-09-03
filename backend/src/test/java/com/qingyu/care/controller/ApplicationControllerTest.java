@@ -13,6 +13,7 @@ import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.repository.ApplicationRepository;
+import com.qingyu.care.config.WebhookProperties;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.webhook.WebhookPayloadBuilder;
@@ -68,6 +69,8 @@ class ApplicationControllerTest {
     WebhookSender webhookSender;
     @Mock
     WebhookPayloadBuilder webhookPayloadBuilder;
+    @org.mockito.Spy
+    WebhookProperties webhookProperties = new WebhookProperties();
     @InjectMocks
     ApplicationController controller;
 
@@ -177,6 +180,35 @@ class ApplicationControllerTest {
                     .isInstanceOf(InvalidOperationException.class);
         }
         verify(applicationRepository, never()).save(any(Application.class));
+    }
+
+    /**
+     * 真机冒烟发现（2026-09-03）：{@code allow-private-targets} 原先只作用于<b>出站</b>
+     * （{@code RestClientWebhookHttpClient}），而落库校验这一关是硬拦的——开关打开后仍然配不上
+     * 本地回调地址，开关等于半失效。集成测试发现不了：它们直接 {@code app.setWebhookUrl(...)}
+     * 写库，绕过了控制器这一关。
+     */
+    @Test
+    void 打开私网开关后可以保存本地回调地址但仍拦云元数据() {
+        TenantContext.setTenantId(TENANT_ID);
+        webhookProperties.setAllowPrivateTargets(true);
+        Application existing = app();
+        when(applicationRepository.findById(1L)).thenReturn(Optional.of(existing));
+        lenient().when(applicationRepository.save(any(Application.class))).thenAnswer(i -> i.getArgument(0));
+
+        ApplicationUpdateRequest local = new ApplicationUpdateRequest();
+        local.setWebhookUrl("http://127.0.0.1:9999/hook");
+        ApplicationUpdateRequest meta = new ApplicationUpdateRequest();
+        meta.setWebhookUrl("http://169.254.169.254/latest/meta-data/");
+
+        try (MockedStatic<StpUtil> ignored = stubRole(UserRole.TENANT_ADMIN)) {
+            controller.update(1L, local);
+            assertThat(existing.getWebhookUrl()).isEqualTo("http://127.0.0.1:9999/hook");
+
+            assertThatThrownBy(() -> controller.update(1L, meta))
+                    .as("云元数据：任何开关都不放行")
+                    .isInstanceOf(InvalidOperationException.class);
+        }
     }
 
     @Test
