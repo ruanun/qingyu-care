@@ -326,4 +326,32 @@
             </snapshots>
         </repository>
     </repositories>
+    <profiles>
+        <!-- 依赖漏洞扫描（安全审查 L13）：mvn -Pdepcheck -Dnvd.api.key=xxx org.owasp:dependency-check-maven:check
+             刻意不绑进 verify：首次要下载整个 NVD 库，国内网络可能十几分钟。入口是 scripts/dep-audit.sh -->
+        <profile>
+            <id>depcheck</id>
+            <properties>
+                <nvd.api.key></nvd.api.key>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>11.1.1</version>
+                        <configuration>
+                            <nvdApiKey>${nvd.api.key}</nvdApiKey>
+                            <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <skipTestScope>true</skipTestScope>
+                            <formats>
+                                <format>HTML</format>
+                                <format>JSON</format>
+                            </formats>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

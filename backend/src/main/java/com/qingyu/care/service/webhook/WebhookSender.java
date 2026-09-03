@@ -71,9 +71,10 @@ public class WebhookSender {
         headers.put("Content-Type", "application/json");
         headers.put("X-Qingyu-Event", event);
         headers.put("X-Qingyu-Delivery-Id", deliveryId);
-        headers.put("X-Qingyu-Timestamp", String.valueOf(System.currentTimeMillis()));
+        long timestamp = System.currentTimeMillis();
+        headers.put("X-Qingyu-Timestamp", String.valueOf(timestamp));
         if (secret != null && !secret.isBlank()) {
-            headers.put("X-Qingyu-Signature", signature.sign(secret, body));
+            headers.put("X-Qingyu-Signature", signature.sign(secret, timestamp, body));
         }
         return httpClient.post(url, headers, body);
     }

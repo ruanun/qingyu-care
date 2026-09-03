@@ -56,10 +56,10 @@ public class HttpToolCallback implements ToolCallback {
             // 审计：记录工具名与参数键（不记值，避免泄露）
             log.info("调用工具 {} 参数键={}", tool.getName(), args.keySet());
             String resp = executor.execute(tool.getHttpMethod(), url, tool.getAuthHeader(), body, tool.getTimeoutMs());
-            return truncate(resp, tool.getMaxResponseChars());
+            return ToolResultDelimiter.wrap(truncate(resp, tool.getMaxResponseChars()));
         } catch (Exception e) {
             log.warn("工具 {} 调用失败: {}", tool.getName(), e.getClass().getSimpleName());
-            return "工具调用失败: " + e.getMessage();
+            return ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
         }
     }
 

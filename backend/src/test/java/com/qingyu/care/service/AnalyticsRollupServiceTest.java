@@ -24,6 +24,8 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.when;
 
 /**
  * 单元测试：rollup 编排（先删后插顺序、区间校验、单日失败不阻断）。
@@ -48,6 +50,27 @@ class AnalyticsRollupServiceTest {
             inv.getArgument(0, Consumer.class).accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
+        lenient().when(transactionTemplate.execute(any()))
+                .thenAnswer(inv -> inv.getArgument(0, org.springframework.transaction.support.TransactionCallback.class)
+                        .doInTransaction(null));
+        // 默认抢得到日期锁（单实例）；多实例互斥见下方专门用例
+        lenient().when(rollupDao.tryLockDay(any())).thenReturn(true);
+    }
+
+    /**
+     * 安全审查 L12（2026-09-03）：多实例同时到点会双写 stat 表（先删后插各跑一遍）。
+     * 变异实验：把 rollupDay 里的 tryLockDay 判断删掉，本条转红。
+     */
+    @Test
+    void 单日聚合_抢不到日期锁则跳过且不删不插() {
+        LocalDate day = LocalDate.of(2026, 7, 8);
+        when(rollupDao.tryLockDay(day)).thenReturn(false);
+
+        boolean done = service.rollupDay(day);
+
+        assertThat(done).isFalse();
+        verify(rollupDao, never()).deleteDay(any());
+        verify(rollupDao, never()).insertQuality(any());
     }
 
     @Test

@@ -30,15 +30,25 @@ public class AnalyticsRollupService {
     @Value("${qingyu.care.analytics.hot-keyword-top-n:50}")
     private int hotKeywordTopN;
 
-    /** 聚合单日（幂等：先删后插，同一事务） */
-    public void rollupDay(LocalDate day) {
-        transactionTemplate.executeWithoutResult(tx -> {
+    /**
+     * 聚合单日（幂等：先删后插，同一事务）。
+     *
+     * @return true=本实例完成了聚合；false=别的实例正持有该日期的锁，本轮跳过（不算失败）
+     */
+    public boolean rollupDay(LocalDate day) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+            // 多实例互斥（安全审查 L12）：抢不到就让持锁方做完，重复做只会双写
+            if (!rollupDao.tryLockDay(day)) {
+                log.info("分析 rollup 跳过：同一日期已有实例在聚合 date={}", day);
+                return false;
+            }
             rollupDao.deleteDay(day);
             int q = rollupDao.insertQuality(day);
             int k = rollupDao.insertHotKeywords(day, hotKeywordTopN);
             int d = rollupDao.insertDocHits(day);
             log.info("分析 rollup 完成 date={} quality={} keywords={} docHits={}", day, q, k, d);
-        });
+            return true;
+        }));
     }
 
     /**
@@ -55,8 +65,9 @@ public class AnalyticsRollupService {
         int ok = 0;
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
             try {
-                rollupDay(d);
-                ok++;
+                if (rollupDay(d)) {
+                    ok++;
+                }
             } catch (Exception e) {
                 log.error("分析 rollup 失败 date={}: {}", d, e.getMessage(), e);
             }

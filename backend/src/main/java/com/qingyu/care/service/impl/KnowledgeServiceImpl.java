@@ -15,11 +15,9 @@ import com.qingyu.care.service.FileService;
 import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.x.file.storage.core.FileInfo;
-import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
 import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -79,9 +77,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Value("${qingyu.care.knowledge.chunking.default-overlap:200}")
     private int chunkOverlap;
 
-    /** 单个知识库文件上限（字节），默认 100MB；与 multipart 上限一致但在读入前就拦。 */
-    @Value("${qingyu.care.knowledge.max-upload-bytes:104857600}")
+    /** 单个知识库文件上限（字节），默认 30MB；在读入任何字节之前就拦。 */
+    @Value("${qingyu.care.knowledge.max-upload-bytes:31457280}")
     private long maxUploadBytes;
+
+    /** 单个文件抽取文本的字符上限，超出截断（默认 200 万字符）。 */
+    @Value("${qingyu.care.knowledge.max-extracted-chars:2000000}")
+    private int maxExtractedChars = 2_000_000;
+
+    /** 单个文档最多切多少块（默认 2000），封顶 embedding 调用次数。 */
+    @Value("${qingyu.care.knowledge.max-chunks-per-document:2000}")
+    private int maxChunksPerDocument = 2000;
 
     /** 与 {@link #detectDocumentType} 的分支一一对应；不在表里的扩展名一律拒绝，不再默认当 TEXT 摄取。 */
     private static final Set<String> UPLOAD_EXTENSIONS = Set.of(
@@ -89,6 +95,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             "jpg", "jpeg", "png", "gif");
 
     private static final int MAX_FILENAME_LENGTH = 255;
+
+    /** 纯函数、无状态，不必进容器 */
+    private final TikaTextExtractor textExtractor = new TikaTextExtractor();
 
     @Override
     @Transactional
@@ -338,10 +347,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         .text(doc.getContent() != null ? doc.getContent() : "")
                         .build());
             } else {
-                // 从 S3 下载文件并使用 Tika 解析
-                byte[] fileBytes = fileService.downloadFile(doc.getFilePath());
-                TikaDocumentReader reader = new TikaDocumentReader(new ByteArrayResource(fileBytes));
-                documents = reader.get();
+                // 从 S3 流式读取并用 Tika 抽正文，带字符上限（安全审查 M8）：不再整个文件读成 byte[]，
+                // 也不再无上限抽文本——抽出多少就切多少块、嵌多少次，费用与堆内存都要封顶
+                TikaTextExtractor.ExtractedText extracted;
+                try (java.io.InputStream in = fileService.openStream(doc.getFilePath())) {
+                    extracted = textExtractor.extract(in, maxExtractedChars);
+                }
+                if (extracted.truncated()) {
+                    log.warn("文档正文超过 {} 字符已截断，只摄取前半段 id={} name={}",
+                            maxExtractedChars, documentId, doc.getName());
+                }
+                documents = List.of(org.springframework.ai.document.Document.builder()
+                        .text(extracted.text())
+                        .build());
             }
 
             // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
@@ -349,10 +367,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                     .withChunkSize(chunkSize)
                     .withMinChunkSizeChars(chunkOverlap)
                     .withMinChunkLengthToEmbed(5)
-                    .withMaxNumChunks(10000)
+                    .withMaxNumChunks(maxChunksPerDocument)   // 单文档 chunk 封顶（安全审查 M8）
                     .withKeepSeparator(true)
                     .build();
             List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
+            // ⚠️ TokenTextSplitter 到达 maxNumChunks 后会把剩余全部文本追加成最后一块（一块可能极大），
+            // 所以上限必须在这里再截一次，否则封顶形同虚设
+            if (chunks.size() > maxChunksPerDocument) {
+                log.warn("文档切块数 {} 超过上限 {}，丢弃超出部分 id={} name={}",
+                        chunks.size(), maxChunksPerDocument, documentId, doc.getName());
+                chunks = new java.util.ArrayList<>(chunks.subList(0, maxChunksPerDocument));
+            }
             
             // 添加元数据（包含租户隔离信息）——
             // 租户/应用取自 document 行自身（@PrePersist 在请求线程已回填）：

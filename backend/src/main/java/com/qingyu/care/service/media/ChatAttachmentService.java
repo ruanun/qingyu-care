@@ -44,6 +44,13 @@ public class ChatAttachmentService {
     /** 单条消息最多携带的附件数，防止无上限的 id 列表拖慢 attachToMessage 的逐条 findById/save */
     private static final int MAX_ATTACHMENTS_PER_MESSAGE = 9;
 
+    /**
+     * 单个会话最多上传多少附件（含尚未挂到消息上的）。appKey 是公开的、会话可以随便建，没有这层上限时
+     * 一个滥用者按限流上限持续灌 20MB 文件就能填满对象存储（安全审查 M5，2026-09-03）。
+     */
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.attachment.max-per-session:20}")
+    private int maxAttachmentsPerSession = 20;
+
     /** 孤儿清理单轮批量上限，避免积压很深时一次性把全部孤儿读进持久化上下文再串行做网络删除 */
     private static final int CLEANUP_BATCH_SIZE = 200;
 
@@ -57,6 +64,10 @@ public class ChatAttachmentService {
             throw new BusinessException("文件不能超过 20MB");
         }
         requireOwnedSession(sessionId);
+        long existing = attachmentRepository.countBySessionId(sessionId);
+        if (existing >= maxAttachmentsPerSession) {
+            throw new BusinessException("该会话的附件数量已达上限（" + maxAttachmentsPerSession + " 个）");
+        }
         byte[] bytes;
         try {
             bytes = file.getBytes();

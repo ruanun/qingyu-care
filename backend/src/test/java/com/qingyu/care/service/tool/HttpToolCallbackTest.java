@@ -43,14 +43,16 @@ class HttpToolCallbackTest {
         assertThat(captured[1]).isEqualTo("http://8.8.8.8/orders/A123");
         assertThat(captured[2]).isEqualTo("Authorization: Bearer k");
         assertThat(captured[3]).isEqualTo("3000");
-        assertThat(result).isEqualTo("OK");
+        // 工具返回包在 <tool_result> 里，提示模型这是数据不是指令（安全审查 L10）
+        assertThat(result).isEqualTo("<tool_result>OK</tool_result>");
     }
 
     @Test
     void callTruncatesResponseToMaxResponseChars() {
         HttpToolCallback cb = new HttpToolCallback(tool(), (m, u, a, b, t) -> "0123456789ABCDEF", mapper);
         String result = cb.call("{\"orderId\":\"A123\"}");
-        assertThat(result).hasSize(10); // maxResponseChars=10
+        // 截断作用在正文上，定界标签不占额度
+        assertThat(result).isEqualTo("<tool_result>0123456789</tool_result>"); // maxResponseChars=10
     }
 
     @Test
@@ -70,7 +72,7 @@ class HttpToolCallbackTest {
         // executor 抛异常这一既有事实，这条测的是 URL 填充阶段抛出的新异常路径。
         HttpToolCallback cb = new HttpToolCallback(tool(), (m, u, a, b, t) -> "OK", mapper);
         String result = cb.call("{}");
-        assertThat(result).isEqualTo("工具调用失败: 缺少必填参数 orderId");
+        assertThat(result).isEqualTo("<tool_result>工具调用失败: 缺少必填参数 orderId</tool_result>");
     }
 
     @Test

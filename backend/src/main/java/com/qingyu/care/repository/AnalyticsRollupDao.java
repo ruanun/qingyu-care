@@ -20,6 +20,24 @@ public class AnalyticsRollupDao {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * 咨询锁键空间划分：文档处理互斥用的是单参数（bigint）形式，键 = document id；这里用双参数
+     * （int, int）形式，PostgreSQL 保证两种形式的键空间互不重叠。classId 常量区分用途，objId 为日期。
+     */
+    private static final int LOCK_CLASS_ROLLUP = 1;
+
+    /**
+     * 抢指定日期的聚合锁（事务级、非阻塞）。多实例同时到点时只有一个能拿到，另一个跳过本轮
+     * （安全审查 L12，2026-09-03）：先删后插不是幂等的并发操作，两个实例各跑一遍会双写 stat 表。
+     * 必须在事务内调用——事务结束锁自动释放。
+     */
+    public boolean tryLockDay(LocalDate day) {
+        Boolean locked = jdbcTemplate.queryForObject(
+                "SELECT pg_try_advisory_xact_lock(?, ?)", Boolean.class,
+                LOCK_CLASS_ROLLUP, (int) day.toEpochDay());
+        return Boolean.TRUE.equals(locked);
+    }
+
     /** 幂等清理：删除指定日期的三表已有行 */
     public void deleteDay(LocalDate day) {
         jdbcTemplate.update("DELETE FROM stat_quality_daily WHERE stat_date = ?", day);

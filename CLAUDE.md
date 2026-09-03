@@ -548,7 +548,13 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 11. **Swagger / metrics / DEBUG 日志基线关闭，只有 dev profile 打开**：三者的路径都在 Sa-Token 豁免名单里，「关掉」是唯一可靠手段。`ManagementEndpointsExposureIT` 守着基线形态（test profile 不含 dev）。
 12. **开放 API 与登录都校验租户状态与 `expireTime`**：冻结或到期的租户，widget / 开放 API / 登录一起停。⚠️ `ApplicationRepository.findByAppKey` 带 `@EntityGraph(tenant)`——鉴权在拦截器阶段执行、没有 OSIV 的 EntityManager，懒加载的 `tenant` 一碰非 id 字段就是 LazyInitializationException，而拦截器的兜底 catch 曾把它静默吞成 500（现在会记日志）。
 13. **开放 API 两层限流**：应用级（`default-rate-limit-per-minute`，应用可覆盖）之下再按「应用 + 客户端 IP」分桶（`per-client-rate-limit-per-minute`，默认 20，0 关闭）。客户端 IP 与审计日志一样取 `X-Forwarded-For` 的**最后一段**（nginx 追加模式，前面的段客户端可自填）。
-14. **知识库上传先校验再传 S3**：`getSize()` 闸门（`qingyu.care.knowledge.max-upload-bytes`）→ 非空 → 扩展名白名单（`UPLOAD_EXTENSIONS`，与 `detectDocumentType` 一一对应）→ 文件名截到 255；`documentRepository.save` 失败必须 `deleteFile` 回收对象。
+14. **知识库上传先校验再传 S3**：`getSize()` 闸门（`qingyu.care.knowledge.max-upload-bytes`，30MB）→ 非空 → 扩展名白名单（`UPLOAD_EXTENSIONS`，与 `detectDocumentType` 一一对应）→ 文件名截到 255；`documentRepository.save` 失败必须 `deleteFile` 回收对象。
+15. **摄取走 `TikaTextExtractor` 流式抽取，两道上限**：`max-extracted-chars`（200 万，超出截断 + WARN）与 `max-chunks-per-document`（2000）。⚠️ `TokenTextSplitter.withMaxNumChunks` 到顶后会把**剩余全部文本追加成最后一块**，所以切完必须再 `subList` 一次，否则封顶形同虚设。不再用 Spring AI 的 `TikaDocumentReader`（要整文件 `byte[]` 且输出无上限）；`ParseContext` 刻意不放 `Parser`，不递归解析嵌入文档。
+16. **附件单会话上限 + 孤儿 2 小时**：`ChatAttachmentService.upload` 先 `countBySessionId` 判 `max-per-session`（20）；`orphan-retain-hours` 从 24 缩到 2，它是无凭据灌存储的唯一落点。租户级存储配额尚未做（要按套餐定数字）。
+17. **Webhook 签名覆盖「时间戳.请求体」**：`WebhookSignature.sign(secret, timestampMillis, body)`，时间戳同时随 `X-Qingyu-Timestamp` 发出；接收方复算 + 5 分钟窗口 + 按载荷 id 去重。改契约在未上线的现在零成本，上线后别再动。
+18. **Prompt 定界**：知识库正文包在 `<knowledge>`（`ChatServiceImpl.buildContext`）、工具返回包在 `<tool_result>`（`ToolResultDelimiter.wrap`，HTTP 工具与 MCP 都走它，截断作用在正文、标签不占额度），系统提示末尾固定追加 `DATA_GUARD_PROMPT` 声明标签内是数据不是指令。放在代码里而不是只改默认模板：模板已播种进库。是缓解不是根治。
+19. **分析 rollup 有日期锁**：`AnalyticsRollupDao.tryLockDay` 用 `pg_try_advisory_xact_lock(classId, day)` 双参数形式，与文档处理互斥的单参数形式键空间互不重叠；抢不到返回 false、`backfill` 不计入成功。其余 7 个 `@Scheduled` 各有自己的互斥（文档咨询锁 / CAS 认领 / 消费组）或重复无害，不需要锁。
+20. **依赖扫描是手动步骤**：`scripts/dep-audit.sh`（`-Pdepcheck` + `pnpm audit`），刻意不绑进 `mvn verify`，见脚本头注释。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
@@ -590,7 +596,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - ⚠️ **`width`/`height` 对 webp 恒为 null**：JDK 内置 ImageIO 无 WebP 解码器，且 `ImageIO.read` 无解码器时是**返回 null 不抛异常**。占位代码必须容忍 null。
 - ⚠️ **读图片尺寸只读文件头、不解码像素**（`ImageIO.createImageInputStream` + `getImageReaders` + `getWidth(0)`），并对 `width*height` 设 8000 万像素上限。用 `ImageIO.read` 全解码时，一枚 410KB 的合法 PNG（IHDR 声明 12000×12000）就能分配 411MB 堆 + 2.8s CPU，**5MB 的字节限额对解码后内存零约束**。
 - **上传校验四道顺序不可换**：按类型分别限额（图 5MB/文件 20MB）→ 扩展名白名单 → **Tika 探测真实 MIME 并与扩展名比对** → 图片再读尺寸。只信客户端 `Content-Type` 等于没校验。**SVG 不进白名单**（XSS 载体，而附件从本域下发）。
-- **`getSize()` 硬闸门必须早于 `getBytes()`**：Spring 的 multipart 上限是 100MB（与知识库上传共用，**别改**），不先卡就会把 99MB 完整读进堆才拒绝。
+- **`getSize()` 硬闸门必须早于 `getBytes()`**：Spring 的 multipart 上限是 32MB（与知识库上传共用；知识库单文件 30MB、附件 20MB，改这三个数要一起改），不先卡就会把整个文件完整读进堆才拒绝。
 - ⚠️ **`RealtimeNotifier.messageJson` 是在推送那一刻现查附件**，所以 attach 必须排在 notify **之前**——顺序颠倒会让「坐席已接管、用户发截图」这个最核心场景下推给坐席的 `attachments` 恒为空数组（只有文本没有图），而没有任何测试会红。
 - ⚠️ **流式路径的 attach 走 `self.attachInNewTransaction`（REQUIRES_NEW）**：`attachToMessage` 自带 `@Transactional`，若在 `transactionTemplate.execute` 内以**参与型**事务抛异常，`globalRollbackOnParticipationFailure` 会把外层标 rollback-only，catch 住也救不回来 → 提交时抛 `UnexpectedRollbackException` 被既有 catch 吞掉 → **用户消息与 AI 回复双双回滚，而客户端收到正常 DONE、刷新后整轮问答消失**。非流式 `chat()` 保持整轮回滚（异常可见、用户能重试），两条路径的取舍**有意不同**。
 

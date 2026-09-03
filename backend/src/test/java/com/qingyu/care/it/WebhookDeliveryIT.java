@@ -61,6 +61,8 @@ class WebhookDeliveryIT extends AbstractPostgresIT {
                 captured.put("body", body);
                 String sig = exchange.getRequestHeaders().getFirst("X-Qingyu-Signature");
                 if (sig != null) captured.put("signature", sig);
+                String ts = exchange.getRequestHeaders().getFirst("X-Qingyu-Timestamp");
+                if (ts != null) captured.put("timestamp", ts);
             }
             byte[] ok = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, ok.length);
@@ -136,7 +138,8 @@ class WebhookDeliveryIT extends AbstractPostgresIT {
         });
 
         String body = captured.get("body");
-        String expected = "sha256=" + hmacSha256("whsec_it_001", body);
+        // 签名覆盖「时间戳.请求体」（安全审查 L6）：接收方按同法复算
+        String expected = "sha256=" + hmacSha256("whsec_it_001", captured.get("timestamp") + "." + body);
         assertThat(captured.get("signature")).isEqualTo(expected);
         assertThat(body).contains("session.handover_requested");
     }

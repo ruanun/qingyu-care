@@ -88,9 +88,9 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      * {@link com.qingyu.care.service.web.WebPageSyncService#syncDocument}）各自的
      * {@code @Transactional} 是这条前提，动它们的代理链路时务必一并复核。
      *
-     * <p>⚠️ 咨询锁的键空间是整库共享的。当前全库只有这一个用途（文档处理互斥，可 grep
-     * {@code advisory} 复核），故直接用 document id 作键；将来若出现第二种用途，两边必须
-     * 显式划分键空间。
+     * <p>⚠️ 咨询锁的键空间是整库共享的。本方法用单参数（bigint）形式、键 = document id；
+     * 第二个用途 {@code AnalyticsRollupDao.tryLockDay} 用双参数（int, int）形式（classId + 日期），
+     * PostgreSQL 保证两种形式的键空间互不重叠。再加第三种用途时，沿用双参数形式并换一个 classId。
      */
     @Query(value = "SELECT pg_try_advisory_xact_lock(:documentId)", nativeQuery = true)
     boolean tryLockDocumentProcessing(@Param("documentId") Long documentId);

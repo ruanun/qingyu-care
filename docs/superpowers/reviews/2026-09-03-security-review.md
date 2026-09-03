@@ -29,12 +29,12 @@
 | M2 | 中 | 全局异常处理把 `RuntimeException.getMessage()` 回给客户端 | `GlobalExceptionHandler` | ✅ 已修（分支 fix/security-review-p0） |
 | M3 | 中 | `X-App-Id` 不校验归属：可把行建到他人应用名下、触发他人 Webhook 并用他人密钥签名 | `TenantInterceptor` / `WebhookDispatcher` | ✅ 已修（分支 fix/security-review-p0，第二批） |
 | M4 | 中 | `SsrfGuard` 漏 `100.64.0.0/10`（阿里云元数据 `100.100.100.200`）；模型 endpoint 与「测试连接」完全不过守卫 | `SsrfGuard` / `ModelRouterService` | ✅ 已修（网段 + 模型端点守卫） |
-| M5 | 中 | Origin 白名单挡不住非浏览器客户端：公开 appKey 即可无凭据烧额度、灌附件；限流键只有 appKey | `OpenApiAuthService` / `OpenApiAuthInterceptor` | 🔶 部分：已加「应用 + 客户端 IP」子桶限流；附件按会话配额、租户存储配额待做 |
+| M5 | 中 | Origin 白名单挡不住非浏览器客户端：公开 appKey 即可无凭据烧额度、灌附件；限流键只有 appKey | `OpenApiAuthService` / `OpenApiAuthInterceptor` | 🔶 部分：限流子桶 + 单会话附件上限 20 + 孤儿 2 小时已做；租户存储配额待按套餐定数字 |
 | M6 | 中 | 开放 API 不校验租户状态；登录不校验 `expireTime` | `OpenApiAuthService` / `AuthService.login` | ✅ 已修 |
 | M7 | 中 | 前端「退出登录」不调后端注销；token 30 天有效、`is-share: true`、cookie 不清 | `MainLayout` / `application.yml` | ✅ 已修（前端调注销 + token 7 天 / 活跃 12 小时 / is-share=false） |
-| M8 | 中 | 知识库文档上传零校验，100MB 直入 S3，落库失败不回收；Tika 整文件进堆且输出无上限 | `KnowledgeServiceImpl.uploadDocument` | 🔶 部分：上传校验（大小/扩展名/文件名）与落库失败回收已做；Tika 流式解析与输出上限待做 |
+| M8 | 中 | 知识库文档上传零校验，100MB 直入 S3，落库失败不回收；Tika 整文件进堆且输出无上限 | `KnowledgeServiceImpl.uploadDocument` | ✅ 已修（上传校验 + 回收 + 流式抽取 + 文本/chunk 上限，第三批） |
 | M9 | 中 | `/actuator/metrics` 与 Swagger 匿名可访问 | `SaTokenConfig` / `application.yml` | ✅ 已修（基线关闭，dev profile 打开） |
-| L1–L13 | 低 | 密钥明文存库与非常量时间比较、Sa-Token 参数、默认口令、日志级别、nginx 安全头、Webhook 重放、消息长度无上限等 | 见 §4 | 部分：L3/L4/L5/L6(审计 IP)/L7/L8/L9/L11 已修；L1/L2(is-log)/L6(签名时间戳)/L10/L12/L13 待做 |
+| L1–L13 | 低 | 密钥明文存库与非常量时间比较、Sa-Token 参数、默认口令、日志级别、nginx 安全头、Webhook 重放、消息长度无上限等 | 见 §4 | 大部分已修：L3/L4/L5/L6/L7/L8/L9/L10/L11/L12/L13；剩 L1（密钥哈希，用户决定不做）、L2（`is-log`） |
 
 **上线前必须修**：H1–H6、M1、M2——**已于 2026-09-03 在分支 `fix/security-review-p0` 修完**（单测 979 + 集成测试 173 全绿，新增守护测试见 §7）。其余按 §6 路线图。
 
@@ -302,3 +302,16 @@
 | 顺带 | `OpenApiAuthInterceptor` 的兜底 catch 记日志（曾静默吞掉 LazyInitializationException，28 条 IT 一起红却查不到原因） | — |
 
 **仍未修**（都是设计层或需要产品决策）：M5 的附件按会话配额与租户存储配额、M8 的 Tika 流式解析与输出上限、L1 密钥哈希存储、L2 `is-log`、L6 Webhook 签名纳入时间戳（改契约）、L10 prompt 定界、L12 调度器分布式锁（横向扩容前）、L13 依赖扫描接入。
+
+### 2026-09-03 · 分支 `fix/security-review-p0`（第三批：讨论后选定的六项）
+
+| 项 | 改动 | 守护测试 |
+|---|---|---|
+| M5（部分） | `ChatAttachmentService.upload` 先 `countBySessionId` 判单会话上限（`max-per-session`，20）；孤儿保留 24h → 2h | `ChatAttachmentServiceTest`（+2） |
+| M8 | 新增 `TikaTextExtractor`：S3 `openStream` 流式 + `BodyContentHandler(maxChars)`，超限截断 + WARN；切分后 `subList` 封顶 chunk 数（`TokenTextSplitter` 到顶会把剩余文本追加成最后一块）；单文件上限 30MB、multipart 32MB、nginx 40m | `TikaTextExtractorTest`、`KnowledgeIngestLimitsTest` |
+| L6 | 签名改为 `HMAC(secret, timestamp + "." + body)`，`X-Qingyu-Timestamp` 同时发出；文档写明接收方三件事 | `WebhookSignatureTest`（重写）、`WebhookSenderTest`、`WebhookDeliveryIT` |
+| L10 | `buildContext` 包 `<knowledge>`；`ToolResultDelimiter.wrap` 包 `<tool_result>`（HTTP 工具 + MCP）；系统提示末尾追加 `DATA_GUARD_PROMPT` | `ChatPromptGuardTest`、`HttpToolCallbackTest`、`McpToolCallbackTest` |
+| L12 | `AnalyticsRollupDao.tryLockDay`（`pg_try_advisory_xact_lock(classId, day)`），抢不到跳过且不计入成功 | `AnalyticsRollupServiceTest`（+1） |
+| L13 | `pom.xml` 加 `depcheck` profile（dependency-check 11.1.1，CVSS ≥ 7 失败）+ `scripts/dep-audit.sh`（含三个 pnpm 项目的 `pnpm audit`，显式走官方 registry）；写进部署文档发版清单。首次实跑即抓到 react-router 高危 GHSA-qwww-vcr4-c8h2（RSC 模式 CSRF，本项目是 Vite SPA 不受影响），`react-router-dom` 7.18.1 → 7.18.3 后三个 pnpm 项目全部干净 | 手动步骤 |
+
+**仍未修**：L1 密钥哈希/加密存储（用户决定不做）；M5 的租户级存储配额（要按套餐定数字）；L2 `sa-token.is-log`。
