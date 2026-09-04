@@ -22,6 +22,9 @@ public class WebhookProperties {
     /** HTTP 连接/读取超时（毫秒）。 */
     private int timeoutMs = 5000;
 
+    /** 是否允许回调地址指向内网/环回（仅本地联调与集成测试用，生产必须 false）。 */
+    private boolean allowPrivateTargets = false;
+
     /** 重试扫描间隔（毫秒）。 */
     private long retryScanIntervalMs = 30000;
 

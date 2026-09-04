@@ -21,6 +21,16 @@
         <java.version>17</java.version>
         <spring-ai.version>2.0.0</spring-ai.version>
         <bucket4j.version>8.19.0</bucket4j.version>
+        <!--
+          覆盖 Spring Boot BOM 的 5.4.2：该版本的 HTTP 头解析可被打到内存耗尽
+          （GHSA-hf6x-8p5f-cgmf，HIGH）。本项目满足触发条件——工具调用、网页抓取、Webhook
+          三条出站路径都走 httpclient5，而目标地址由租户自由填写，恶意服务器返回超大响应头即可触发；
+          现有的超时与 5MB 上限都作用在 body 上，头部大小由 HttpCore 自己管，挡不住。
+          2026-09-03 依赖扫描（OSV）发现。同批扫出的 Tomcat/Netty/Jackson 等条目经逐条核对
+          不满足本项目的触发条件（Tomcat 认证器未启用、Netty 只作客户端、日志实现是 logback），
+          故只单独升这一个，不整体抬 BOM 版本。
+        -->
+        <httpcore5.version>5.4.3</httpcore5.version>
     </properties>
     
     <dependencyManagement>
@@ -326,4 +336,32 @@
             </snapshots>
         </repository>
     </repositories>
+    <profiles>
+        <!-- 依赖漏洞扫描（安全审查 L13）：mvn -Pdepcheck -Dnvd.api.key=xxx org.owasp:dependency-check-maven:check
+             刻意不绑进 verify：首次要下载整个 NVD 库，国内网络可能十几分钟。入口是 scripts/dep-audit.sh -->
+        <profile>
+            <id>depcheck</id>
+            <properties>
+                <nvd.api.key></nvd.api.key>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>11.1.1</version>
+                        <configuration>
+                            <nvdApiKey>${nvd.api.key}</nvdApiKey>
+                            <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <skipTestScope>true</skipTestScope>
+                            <formats>
+                                <format>HTML</format>
+                                <format>JSON</format>
+                            </formats>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

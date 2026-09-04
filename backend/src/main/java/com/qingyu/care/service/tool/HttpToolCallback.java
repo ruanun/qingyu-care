@@ -56,16 +56,33 @@ public class HttpToolCallback implements ToolCallback {
             // 审计：记录工具名与参数键（不记值，避免泄露）
             log.info("调用工具 {} 参数键={}", tool.getName(), args.keySet());
             String resp = executor.execute(tool.getHttpMethod(), url, tool.getAuthHeader(), body, tool.getTimeoutMs());
-            return truncate(resp, tool.getMaxResponseChars());
+            return ToolResultDelimiter.wrap(truncate(resp, tool.getMaxResponseChars()));
         } catch (Exception e) {
-            log.warn("工具 {} 调用失败: {}", tool.getName(), e.getClass().getSimpleName());
-            return "工具调用失败: " + e.getMessage();
+            log.warn("工具 {} 调用失败: {}", tool.getName(), describeForLog(e));
+            return ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
         }
     }
 
     @Override
     public String call(String toolInput, ToolContext toolContext) {
         return call(toolInput);
+    }
+
+    /**
+     * 失败原因的日志描述：守卫抛的 {@link IllegalArgumentException} 消息里只有 host（"指向内网/环回
+     * 地址，已拒绝: x.x.x.x"、"缺少必填参数 X"），可安全入日志；其余异常只记类名——它们的消息可能
+     * 带完整 URL，而 query 段可能含密钥。
+     *
+     * <p>真机冒烟发现（2026-09-03）：原先一律只记类名，被 SSRF 守卫拦下时日志只有
+     * {@code IllegalArgumentException} 一个词，看不出是网段被拦、参数没填还是别的。
+     *
+     * <p>{@code public} 是因为 {@code McpToolCallback} 复用它——两条工具链路的失败日志口径必须一致，
+     * 否则同一个 SSRF 拦截在 HTTP 工具上能看出原因、在 MCP 上看不出。
+     */
+    public static String describeForLog(Exception e) {
+        return e instanceof IllegalArgumentException
+                ? e.getClass().getSimpleName() + ": " + e.getMessage()
+                : e.getClass().getSimpleName();
     }
 
     private Map<String, Object> parseArgs(String toolInput) throws Exception {

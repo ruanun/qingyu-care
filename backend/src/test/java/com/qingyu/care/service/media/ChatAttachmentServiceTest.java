@@ -32,6 +32,8 @@ import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import org.springframework.mock.web.MockMultipartFile;
+
 /**
  * @author ruan
  */
@@ -46,6 +48,8 @@ class ChatAttachmentServiceTest {
     private FileService fileService;
     @Mock
     private AttachmentValidator validator;
+    @Mock
+    private com.qingyu.care.service.QuotaService quotaService;
     @InjectMocks
     private ChatAttachmentService service;
 
@@ -544,5 +548,39 @@ class ChatAttachmentServiceTest {
         ArgumentCaptor<LocalDateTime> captor = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(attachmentRepository).findByMessageIdIsNullAndCreatedAtBefore(captor.capture(), any());
         assertThat(captor.getValue()).isCloseTo(LocalDateTime.now().minusHours(1), within(5, ChronoUnit.SECONDS));
+    }
+    // ===== 安全审查 M5（2026-09-03）：单个会话的附件数上限 =====
+
+    private void stubOwnedSession(String sessionId) {
+        when(sessionRepository.findBySessionId(sessionId))
+                .thenReturn(java.util.Optional.of(ChatSession.builder().sessionId(sessionId).build()));
+    }
+
+    /** 变异实验：把 upload 里的 countBySessionId 判断删掉，本条转红。 */
+    @Test
+    void 会话附件数达到上限则拒绝且不上传() {
+        stubOwnedSession("s-1");
+        when(attachmentRepository.countBySessionId("s-1")).thenReturn(20L);
+
+        assertThatThrownBy(() -> service.upload("s-1",
+                new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.USER))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("上限");
+        verify(fileService, never()).uploadChatBytes(any(), any(), any());
+    }
+
+    @Test
+    void 未达上限时正常上传() {
+        stubOwnedSession("s-1");
+        when(attachmentRepository.countBySessionId("s-1")).thenReturn(19L);
+        when(validator.validate(any(), any()))
+                .thenReturn(new AttachmentValidator.ValidatedFile("image/png", true, 1, 1));
+        when(fileService.uploadChatBytes(any(), any(), any())).thenReturn("chat/x.png");
+        when(attachmentRepository.save(any(ChatAttachment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ChatAttachment saved = service.upload("s-1",
+                new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.USER);
+
+        assertThat(saved.getStorageKey()).isEqualTo("chat/x.png");
     }
 }

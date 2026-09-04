@@ -175,9 +175,12 @@ const UsagePage: React.FC = () => {
                             )}
                         </CardTitle>
                     </CardHeader>
-                    <CardContent className="grid md:grid-cols-2 gap-6">
+                    <CardContent className="grid md:grid-cols-3 gap-6">
                         <QuotaBar label="调用次数" used={quota.callsUsed} limit={quota.callsLimit} />
                         <QuotaBar label="Token" used={quota.tokensUsed} limit={quota.tokensLimit} />
+                        {/* 存储是累计量、不随月份重置，与上面两个按月的维度不同，故单独标注 */}
+                        <QuotaBar label="存储（累计）" used={quota.storageUsedBytes}
+                                  limit={quota.storageLimitBytes} format={formatBytes} />
                     </CardContent>
                 </Card>
             )}
@@ -266,8 +269,18 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: React.Re
     </Card>
 );
 
+/** 字节转可读单位。存储配额动辄以 GB 计，直接显示字节数没人看得懂。 */
+const formatBytes = (n: number): string => {
+    if (n < 1024) return `${n} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let v = n / 1024;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+};
+
 // 额度进度条子组件
-const QuotaBar: React.FC<{ label: string; used: number; limit: number }> = ({ label, used, limit }) => {
+const QuotaBar: React.FC<{ label: string; used: number; limit: number; format?: (n: number) => string }> = ({ label, used, limit, format }) => {
     const unlimited = limit <= 0;
     const pct = unlimited ? 0 : Math.min(100, Math.round((used / limit) * 100));
     const danger = pct >= 100;
@@ -276,7 +289,11 @@ const QuotaBar: React.FC<{ label: string; used: number; limit: number }> = ({ la
         <div className="space-y-1">
             <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-mono">{used}{unlimited ? '' : ` / ${limit}`}{unlimited && ' （不限）'}</span>
+                <span className="font-mono">
+                    {format ? format(used) : used}
+                    {unlimited ? '' : ` / ${format ? format(limit) : limit}`}
+                    {unlimited && ' （不限）'}
+                </span>
             </div>
             {!unlimited && (
                 <div className="h-2 w-full rounded-full bg-muted overflow-hidden">

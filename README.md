@@ -213,7 +213,7 @@ cd frontend && pnpm install && pnpm dev
 ### 5. 访问
 
 - 管理后台：http://localhost:5173
-- API 文档（Swagger）：http://localhost:8080/api/swagger-ui.html
+- API 文档（Swagger）：http://localhost:8080/api/swagger-ui.html（仅 `dev` profile 开启；基线配置关闭，生产不可匿名访问）
 - 健康检查：http://localhost:8080/api/actuator/health
 
 ### 6. 嵌入 Widget

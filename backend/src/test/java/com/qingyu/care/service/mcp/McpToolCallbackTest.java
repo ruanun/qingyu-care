@@ -63,7 +63,7 @@ class McpToolCallbackTest {
 
         String out = cb.call("{}");
 
-        assertThat(out).startsWith("工具调用失败");
+        assertThat(out).contains("工具调用失败");   // 外层是 <tool_result> 定界（安全审查 L10）
     }
 
     @Test
@@ -72,6 +72,9 @@ class McpToolCallbackTest {
         McpToolCallback cb = callbackFor(tool("query_order", "{}"));
         when(executor.callTool(any(), anyString(), anyMap())).thenReturn("0123456789ABCDEF");
 
-        assertThat(cb.call("{}")).hasSize(10);
+        // 截断作用在正文上，<tool_result> 定界标签不占额度（安全审查 L10）
+        String result = cb.call("{}");
+        assertThat(result).startsWith("<tool_result>").endsWith("</tool_result>");
+        assertThat(result.substring("<tool_result>".length(), result.length() - "</tool_result>".length())).hasSize(10);
     }
 }

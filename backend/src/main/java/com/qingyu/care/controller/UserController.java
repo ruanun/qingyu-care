@@ -121,7 +121,12 @@ public class UserController {
             return ApiResponse.error(400, "用户名已存在");
         }
 
-        UserRole role = UserRole.valueOf(roleStr);
+        UserRole role;
+        try {
+            role = UserRole.valueOf(roleStr);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, "角色取值非法");
+        }
         
         // 非平台管理员不能创建平台管理员
         if (role == UserRole.PLATFORM_ADMIN && !isPlatformAdmin()) {
@@ -170,6 +175,13 @@ public class UserController {
         return userRepository.findById(id)
                 .filter(this::canAccessUser)
                 .map(user -> {
+                    // 安全审查 H3（2026-09-03）：canAccessUser 只判「同租户」，此前坐席对本租户管理员
+                    // 的 id 发一个 password 就能接管管理员账号。改他人（含密码）必须是管理员；
+                    // 非管理员只能改自己。
+                    boolean self = user.getId() != null && user.getId().equals(TenantContext.getUserId());
+                    if (!self && !isPlatformAdmin() && !isTenantAdmin()) {
+                        return ApiResponse.<User>error(403, "无权修改其他用户");
+                    }
                     if (request.getNickname() != null) {
                         user.setNickname(request.getNickname());
                     }

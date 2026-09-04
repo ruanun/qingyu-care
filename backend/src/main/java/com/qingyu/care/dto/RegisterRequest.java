@@ -24,7 +24,8 @@ public class RegisterRequest {
     private String phone;
     
     /**
-     * 租户编码 (可选，不填则创建新租户)
+     * 租户编码。⚠️ 自助注册已不支持凭编码加入已有租户（安全审查 H2，2026-09-03）：
+     * 非空一律 403。字段保留只为兼容旧客户端的请求体形状，服务端不再读取它做任何事。
      */
     private String tenantCode;
     

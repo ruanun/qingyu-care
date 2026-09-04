@@ -20,6 +20,9 @@ public interface ChatAttachmentRepository extends JpaRepository<ChatAttachment, 
      */
     List<ChatAttachment> findByMessageIdInOrderById(Collection<Long> messageIds);
 
+    /** 该会话已上传的附件数（含尚未挂到消息上的），供单会话上限判断。 */
+    long countBySessionId(String sessionId);
+
     /**
      * 孤儿：始终没被任何消息引用、且早于给定时间创建。带 Pageable 分批取——
      * 积压深时一次性拉全部会把巨量实体读进持久化上下文、再串行做巨量 S3 网络删除（同

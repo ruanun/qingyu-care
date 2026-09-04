@@ -102,7 +102,10 @@ public class AuditLogAspect {
         return null;
     }
 
-    /** 从 RequestContextHolder 提取客户端 IP，X-Forwarded-For 优先。 */
+    /**
+     * 从 RequestContextHolder 提取客户端 IP，X-Forwarded-For 取<b>最后一段</b>：nginx 是追加模式，
+     * 最后一段才是 nginx 看到的直连地址，第一段可由客户端自填（安全审查 L6，2026-09-03）。
+     */
     private String clientIp() {
         try {
             ServletRequestAttributes attrs =
@@ -110,7 +113,11 @@ public class AuditLogAspect {
             if (attrs == null) return null;
             var req = attrs.getRequest();
             String xff = req.getHeader("X-Forwarded-For");
-            return (xff != null && !xff.isBlank()) ? xff.split(",")[0].trim() : req.getRemoteAddr();
+            if (xff != null && !xff.isBlank()) {
+                String[] parts = xff.split(",");
+                return parts[parts.length - 1].trim();
+            }
+            return req.getRemoteAddr();
         } catch (Exception e) {
             return null;
         }

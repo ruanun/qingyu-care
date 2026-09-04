@@ -71,7 +71,7 @@ class KnowledgeIngestMetadataTest {
         when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         String content = "轻语客服知识内容，用于测试摄取元数据。".repeat(50);
-        when(fileService.downloadFile(any())).thenReturn(content.getBytes(StandardCharsets.UTF_8));
+        when(fileService.openStream(any())).thenReturn(new java.io.ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
 
         // 不设置 TenantContext，模拟 @Async 线程（请求线程的 ThreadLocal 不会传递过去）
         service().processDocument(5L);

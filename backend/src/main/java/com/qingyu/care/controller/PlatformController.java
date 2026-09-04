@@ -54,6 +54,7 @@ public class PlatformController {
     public ApiResponse<AiModelConfig> createSharedModel(@RequestBody AiModelConfig config) {
         SecurityUtil.requirePlatformAdmin();
         config.setId(null);
+        modelRouterService.requireValidEndpoint(config.getEndpoint());   // 出站地址落库前过 SSRF 守卫（安全审查 M4）
         return ApiResponse.success("共享模型已创建", modelRouterService.saveSharedModel(config));
     }
 
@@ -69,7 +70,10 @@ public class PlatformController {
         if (config.getName() != null) existing.setName(config.getName());
         if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
-        if (config.getEndpoint() != null) existing.setEndpoint(config.getEndpoint());
+        if (config.getEndpoint() != null) {
+            modelRouterService.requireValidEndpoint(config.getEndpoint());
+            existing.setEndpoint(config.getEndpoint());
+        }
         // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
         // （与 AiModelController.updateModel 的同款判断口径一致）
         if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());

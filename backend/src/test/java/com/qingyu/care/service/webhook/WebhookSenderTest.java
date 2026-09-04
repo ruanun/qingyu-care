@@ -56,7 +56,7 @@ class WebhookSenderTest {
         when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 0)));
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(
                 Application.builder().id(9L).webhookSecret("sec").build()));
-        when(signature.sign(eq("sec"), anyString())).thenReturn("sha256=x");
+        when(signature.sign(eq("sec"), anyLong(), anyString())).thenReturn("sha256=x");
         when(httpClient.post(any(), any(), any())).thenReturn(200);
 
         sender.deliverAsync(1L);
@@ -118,7 +118,7 @@ class WebhookSenderTest {
 
     @Test
     void send_setsSignatureAndEventHeaders() {
-        when(signature.sign("sec", "{}")).thenReturn("sha256=abc");
+        when(signature.sign(eq("sec"), anyLong(), eq("{}"))).thenReturn("sha256=abc");
         ArgumentCaptor<Map<String, String>> headers = ArgumentCaptor.forClass(Map.class);
         when(httpClient.post(eq("https://u"), headers.capture(), eq("{}"))).thenReturn(204);
 
@@ -128,5 +128,8 @@ class WebhookSenderTest {
         assertThat(headers.getValue()).containsEntry("X-Qingyu-Event", "session.ended");
         assertThat(headers.getValue()).containsEntry("X-Qingyu-Delivery-Id", "d-1");
         assertThat(headers.getValue()).containsEntry("X-Qingyu-Signature", "sha256=abc");
+        // 时间戳必须随请求发出，接收方靠它复算签名并拒绝过期投递（安全审查 L6）
+        assertThat(headers.getValue()).containsKey("X-Qingyu-Timestamp");
+        assertThat(Long.parseLong(headers.getValue().get("X-Qingyu-Timestamp"))).isPositive();
     }
 }

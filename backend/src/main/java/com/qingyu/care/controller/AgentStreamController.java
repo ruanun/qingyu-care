@@ -2,6 +2,7 @@ package com.qingyu.care.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.qingyu.care.config.TenantContext;
+import com.qingyu.care.service.ChatService;
 import com.qingyu.care.service.realtime.RealtimeHub;
 import com.qingyu.care.service.realtime.RealtimeKeys;
 import com.qingyu.care.service.realtime.RealtimeNotifier;
@@ -32,6 +33,7 @@ public class AgentStreamController {
 
     private final RealtimeHub realtimeHub;
     private final RealtimeNotifier realtimeNotifier;
+    private final ChatService chatService;
     /**
      * 全局 presence 花名册（Redis ZSET）：{@code qingyu.care.realtime.redis.enabled=false} 时
      * 该 bean 不装配，用 {@link ObjectProvider#getIfAvailable()} 判空降级——单纯构造函数注入
@@ -88,6 +90,8 @@ public class AgentStreamController {
     @Operation(summary = "坐席正在输入", description = "向该会话用户端推 typing 事件（不落库）")
     public com.qingyu.care.dto.ApiResponse<Void> agentTyping(@PathVariable String sessionId) {
         SecurityUtil.requireAgent();
+        // 归属校验：越权/不存在抛 404（同 OpenSessionController.inbox），否则任何坐席拿到 UUID 就能往任意租户的访客端推事件
+        chatService.getSession(sessionId);
         realtimeNotifier.typing(RealtimeKeys.session(sessionId), sessionId, "agent");
         return com.qingyu.care.dto.ApiResponse.success(null);
     }

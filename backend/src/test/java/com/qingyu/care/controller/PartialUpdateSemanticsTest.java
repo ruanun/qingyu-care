@@ -260,7 +260,10 @@ class PartialUpdateSemanticsTest {
         ApplicationUpdateRequest req = new ApplicationUpdateRequest();
         req.setEnabled(false);   // 前端点停用开关只发这一个字段
 
-        applicationController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        // update 先过 SecurityUtil.requireTenantAdmin()（安全审查 H4）；门禁由 ApplicationControllerTest 覆盖
+        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
+            applicationController.update(1L, req);   // 直调真实控制器，而非复刻映射逻辑
+        }
 
         assertThat(existing.getThemeColor()).isEqualTo("#ff0000");
         assertThat(existing.getEnabled()).isFalse();

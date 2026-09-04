@@ -2,6 +2,12 @@ server:
   port: 8080
   servlet:
     context-path: /api
+  # 反向代理（nginx）终结 TLS 后转发给后端的是 http，而浏览器的 Origin 是 https——不读
+  # X-Forwarded-* 的话 Spring 重建出来的请求 URI scheme 与 Origin 不符，同源请求会被判成跨域，
+  # 撞上管理端的 CORS 白名单直接 403，整个后台登录不了（真机浏览器验证发现，2026-09-03）。
+  # nginx.conf 已经在转发 X-Forwarded-Proto / X-Real-IP / X-Forwarded-For。
+  # ⚠️ 前提是后端只经受信任的反代对外，别把 8080 直接暴露到公网——否则客户端可自造这些头。
+  forward-headers-strategy: framework
 
 spring:
   application:
@@ -41,8 +47,10 @@ spring:
   # 文件上传配置
   servlet:
     multipart:
-      max-file-size: 100MB
-      max-request-size: 200MB
+      # 知识库文档 30MB（qingyu.care.knowledge.max-upload-bytes）、聊天附件 20MB，这里留一点余量。
+      # 曾是 100MB：multipart 上限越大，被拒绝之前读进堆的字节就越多（安全审查 M8）
+      max-file-size: 32MB
+      max-request-size: 64MB
 
   # 异步请求超时：Servlet 规范默认 30s，长回复的流式对话（/v1/chat/stream、/open/v1/chat/stream）
   # 客户端刻意不重连（重连=重复发消息+重复计费），到点即被 cancel，用户看到半截回复且答案丢失。
@@ -102,34 +110,75 @@ spring:
 sa-token:
   # token 名称
   token-name: satoken
-  # token 有效期 (单位秒，默认 30 天)
-  timeout: 2592000
-  # token 临时有效期 (指定时间内无操作就视为过期，单位秒，-1 代表永不过期)
-  active-timeout: -1
+  # token 有效期（秒）：7 天。曾是 30 天且无活跃超时——公共电脑上泄漏的 token 能用一个月（安全审查 M7）
+  timeout: 604800
+  # 无操作 12 小时即过期（秒）
+  active-timeout: 43200
   # 是否允许同一账号并发登录
   is-concurrent: true
-  # 在多人登录同一账号时，是否共用一个 token
-  is-share: true
+  # 多人登录同一账号时各自持有独立 token：一个 token 泄漏不等于该账号全部会话泄漏，登出也只登出自己
+  is-share: false
   # token 风格
   token-style: uuid
-  # 是否输出日志
+  # 是否输出日志。保持开启：登录/注销/配置加载这些事件对排查有用。
+  # ⚠️ 内置实现会把完整会话凭证打进 INFO（实测见 TokenMaskingSaLog 的类注释），
+  # 故 SaTokenConfig 在启动时把日志实现换成脱敏版并转交 SLF4J，别把那段删掉。
   is-log: true
+  # 不读也不写 cookie：管理前端只用 satoken 请求头。Sa-Token 默认会把 token 写进 cookie，
+  # 叠加跨域配置就是一条 CSRF 通道（安全审查 H6，2026-09-03）；SPA 用不到 cookie，关掉最省事。
+  is-read-cookie: false
 
 # 轻语自定义配置
 qingyu:
   care:
+    platform:
+      # 平台管理员 admin 的初始口令。留空则首启生成随机口令、只打一次 WARN 日志；
+      # 生产务必通过环境变量指定或首启后立即修改（安全审查 H1）。
+      admin-initial-password: ${QINGYU_ADMIN_INITIAL_PASSWORD:}
+    mcp:
+      # 是否允许 MCP server 指向内网/环回（本地自建 server 时打开；生产保持 false）。
+      # 与 model / webhook 的同名开关语义一致：放行私网，但云元数据段永不放行。
+      allow-private-servers: ${MCP_ALLOW_PRIVATE_SERVERS:false}
+    model:
+      # 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型时打开；生产保持 false）
+      allow-private-endpoints: ${MODEL_ALLOW_PRIVATE_ENDPOINTS:false}
+    cors:
+      # 管理端允许的跨域来源（逗号分隔，精确匹配 scheme://host[:port]）。前端与后端同源部署
+      # （nginx 反代 /api、Vite 代理）时留空即可；只有前端单独部署到别的域名才需要填。
+      # 开放 API（/open/v1/**）与 widget.js 不受此项约束，始终允许任意来源、不带凭据。
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:}
     # 知识库配置
     knowledge:
+      # 单个上传文件上限（字节，30MB）；扩展名白名单见 KnowledgeServiceImpl.UPLOAD_EXTENSIONS
+      max-upload-bytes: 31457280
+      # 单个文件抽取正文的字符上限（超出截断，日志 WARN）与单文档 chunk 上限：封顶堆内存与 embedding 费用
+      max-extracted-chars: 2000000
+      max-chunks-per-document: 2000
       # 文档切分配置
       chunking:
         default-chunk-size: 1000
         default-overlap: 200
       # 注意: top-k 和 similarity-threshold 已移至数据库动态配置 (ChatStrategy)
     
+    # 计费额度（调用数 / token 由 QuotaService 内置默认，可用下列键覆盖）
+    billing:
+      quota:
+        # 租户对象存储上限（字节，0=不限）：知识库文件 + 聊天附件之和。
+        # 爬取产生的 URL 类文档不占 S3（正文在库里），由站点爬取自身的页数硬顶约束，不计入。
+        FREE:
+          storage-bytes: 1073741824      # 1GB
+        PRO:
+          storage-bytes: 21474836480     # 20GB
+        ENTERPRISE:
+          storage-bytes: 0               # 不限
+
     # 开放 API 配置
     openapi:
       # 单个应用默认每分钟请求上限（应用可覆盖）
       default-rate-limit-per-minute: 60
+      # 单个客户端（应用 + IP，X-Forwarded-For 取最后一段）每分钟上限，0 关闭。appKey 是公开的，
+      # 没有这层子桶时一个滥用者就能让该应用所有真实访客一起吃 429（安全审查 M5）
+      per-client-rate-limit-per-minute: 20
 
     # Webhook 事件推送配置
     webhook:
@@ -158,8 +207,11 @@ qingyu:
 
     # 聊天附件
     attachment:
-      # 「传了没发送」的孤儿保留时长（小时），超过即连同 S3 对象一起删
-      orphan-retain-hours: 24
+      # 「传了没发送」的孤儿保留时长（小时），超过即连同 S3 对象一起删。曾是 24：孤儿是无凭据灌存储的
+      # 唯一落点，窗口越短越好；2 小时足够「选了图还没点发送」的正常场景
+      orphan-retain-hours: 2
+      # 单个会话最多上传多少附件（含未挂到消息上的）
+      max-per-session: 20
       # 清理任务首次延迟与间隔（毫秒）
       cleanup-initial-delay-ms: 600000
       cleanup-interval-ms: 3600000
@@ -237,8 +289,10 @@ dromara:
 logging:
   level:
     root: INFO
-    com.qingyu.care: DEBUG
-    org.springframework.ai: DEBUG
+    # 基线 INFO；dev profile 再抬到 DEBUG。org.springframework.ai 的 DEBUG 会把完整 prompt
+    # （含知识库正文与访客消息）写进日志，生产不该开（安全审查 L4）
+    com.qingyu.care: INFO
+    org.springframework.ai: INFO
  
 
 # Actuator 配置
@@ -246,7 +300,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # 基线只暴露 health：/actuator/** 在 Sa-Token 豁免名单里，metrics 匿名可读（安全审查 M9）；dev profile 再放开
+        include: health
   endpoint:
     health:
       show-details: when-authorized
@@ -257,10 +312,13 @@ management:
       enabled: false
 
 # API 文档配置
+# API 文档：基线关闭（路径在 Sa-Token 豁免名单里，匿名可读全部接口契约），只有 dev profile 打开（安全审查 M9）
 springdoc:
   api-docs:
     path: /v3/api-docs
+    enabled: false
   swagger-ui:
     path: /swagger-ui.html
+    enabled: false
     tags-sorter: alpha
     operations-sorter: alpha

@@ -21,3 +21,11 @@ spring:
         # 先 DROP 再重建向量表：绕过 VectorStoreEntity(JPA create-drop 先建的无 embedding 列的表)
         # 与 Spring AI 建表(IF NOT EXISTS 跳过→建 HNSW 索引时 embedding 列缺失)的顺序冲突。
         remove-existing-vector-store-table: true
+
+qingyu:
+  care:
+    platform:
+      admin-initial-password: admin123   # 多条 IT 以 admin/admin123 登录平台管理员
+    webhook:
+      # IT 的 Webhook 接收端起在 127.0.0.1，放开私网目标（钉 IP 与禁重定向不受影响）
+      allow-private-targets: true

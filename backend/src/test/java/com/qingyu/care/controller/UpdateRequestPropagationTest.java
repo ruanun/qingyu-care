@@ -142,6 +142,8 @@ class UpdateRequestPropagationTest {
     @Mock ApplicationRepository applicationRepository;
     @Mock WebhookSender webhookSender;
     @Mock WebhookPayloadBuilder webhookPayloadBuilder;
+    // 真实实例：ApplicationController 的 webhookUrl 校验要读它的开关（默认 false = 只放行公网）
+    @org.mockito.Spy com.qingyu.care.config.WebhookProperties webhookProperties = new com.qingyu.care.config.WebhookProperties();
     @Mock TenantRepository tenantRepository;
     @Mock AuthService authService;
     @Mock UserRepository userRepository;
@@ -261,8 +263,15 @@ class UpdateRequestPropagationTest {
                     when(applicationRepository.findById(ID)).thenReturn(Optional.of((Application) entity));
                     when(applicationRepository.save(any(Application.class))).thenAnswer(i -> i.getArgument(0));
                     when(authService.isPlatformAdmin()).thenReturn(true);
-                    applicationController.update(ID, (ApplicationUpdateRequest) dto);
-                }));
+                    // update 现在先过 SecurityUtil.requireTenantAdmin()（安全审查 H4），
+                    // 门禁本身由 ApplicationControllerTest 覆盖，这里只管字段传播
+                    try (MockedStatic<StpUtil> ignored = stubRole(UserRole.PLATFORM_ADMIN.name())) {
+                        applicationController.update(ID, (ApplicationUpdateRequest) dto);
+                    }
+                },
+                // webhookUrl 落库前要过 http(s) + SSRF 校验（安全审查 H5），通用哨兵串过不了；
+                // 用 IP 字面量避免单测碰 DNS
+                Map.of("webhookUrl", "https://8.8.8.8/sentinel-hook")));
 
         cases.add(new UpdateCase(TenantUpdateRequest.class, "TenantController.update",
                 () -> Tenant.builder().id(ID).name("旧租户").build(),

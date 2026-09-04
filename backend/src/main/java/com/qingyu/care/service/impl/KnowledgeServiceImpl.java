@@ -15,11 +15,9 @@ import com.qingyu.care.service.FileService;
 import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.x.file.storage.core.FileInfo;
-import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
 import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -27,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import com.qingyu.care.util.AfterCommit;
 
 @Service
@@ -42,6 +42,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider;
     private final com.qingyu.care.repository.QaPairRepository qaPairRepository;
     private final com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
+
+    /**
+     * 存储配额闸门。用 setter 注入而非构造注入：本类的构造函数被 10 个单测手工调用，
+     * 加一个参数要改 10 处，而配额只在 {@code uploadDocument} 这一条路径上用到。
+     * 风格同下方的 {@code setSelf}。⚠️ 没注入时这里会 NPE 而不是静默跳过配额检查——
+     * 可见的失败好过悄悄失效。
+     */
+    private com.qingyu.care.service.QuotaService quotaService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setQuotaService(com.qingyu.care.service.QuotaService quotaService) {
+        this.quotaService = quotaService;
+    }
 
     // 自注入解决 @Async 同类调用不生效问题
     private KnowledgeServiceImpl self;
@@ -76,6 +89,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     @Value("${qingyu.care.knowledge.chunking.default-overlap:200}")
     private int chunkOverlap;
+
+    /** 单个知识库文件上限（字节），默认 30MB；在读入任何字节之前就拦。 */
+    @Value("${qingyu.care.knowledge.max-upload-bytes:31457280}")
+    private long maxUploadBytes;
+
+    /** 单个文件抽取文本的字符上限，超出截断（默认 200 万字符）。 */
+    @Value("${qingyu.care.knowledge.max-extracted-chars:2000000}")
+    private int maxExtractedChars = 2_000_000;
+
+    /** 单个文档最多切多少块（默认 2000），封顶 embedding 调用次数。 */
+    @Value("${qingyu.care.knowledge.max-chunks-per-document:2000}")
+    private int maxChunksPerDocument = 2000;
+
+    /** 与 {@link #detectDocumentType} 的分支一一对应；不在表里的扩展名一律拒绝，不再默认当 TEXT 摄取。 */
+    private static final Set<String> UPLOAD_EXTENSIONS = Set.of(
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "html", "htm", "txt", "md",
+            "jpg", "jpeg", "png", "gif");
+
+    private static final int MAX_FILENAME_LENGTH = 255;
+
+    /** 纯函数、无状态，不必进容器 */
+    private final TikaTextExtractor textExtractor = new TikaTextExtractor();
 
     @Override
     @Transactional
@@ -171,23 +206,37 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Document uploadDocument(Long knowledgeBaseId, MultipartFile file) {
         KnowledgeBase kb = getKnowledgeBase(knowledgeBaseId);
-        
+        // 安全审查 M8（2026-09-03）：此前零校验——任意扩展名、任意大小（只有 multipart 的 100MB 硬顶）、
+        // 超长文件名直接进 S3，INSERT 失败时对象无人回收。校验放在传 S3 之前，且 getSize() 闸门
+        // 先于任何读取字节的操作（同 AttachmentValidator 的顺序）。
+        validateUpload(file);
+        // 租户级存储配额（安全审查 M5 残留部分）：单文件上限之外还要管总量
+        quotaService.requireStorageAvailable(
+                com.qingyu.care.config.TenantContext.getTenantId(), file.getSize());
+        String safeName = truncateFilename(file.getOriginalFilename());
+
         // 上传文件到 S3 存储
         FileInfo fileInfo = fileService.uploadKnowledgeFile(file);
         log.info("文件已上传到 S3: {}", fileInfo.getUrl());
-        
+
         // 创建文档记录
         Document doc = Document.builder()
                 .knowledgeBase(kb)
-                .name(file.getOriginalFilename())
-                .originalFilename(file.getOriginalFilename())
-                .documentType(detectDocumentType(file.getOriginalFilename()))
+                .name(safeName)
+                .originalFilename(safeName)
+                .documentType(detectDocumentType(safeName))
                 .status(DocumentStatus.PENDING)
                 .filePath(fileInfo.getUrl())  // 存储 S3 URL
                 .storageKey(fileInfo.getFilename())  // 存储文件 key
                 .fileSize(file.getSize())
                 .build();
-        doc = documentRepository.save(doc);
+        try {
+            doc = documentRepository.save(doc);
+        } catch (RuntimeException e) {
+            // 落库失败则回收刚传上去的对象：否则留下没有库行指向的孤儿，cleanupOrphans 只扫附件表够不到
+            fileService.deleteFile(fileInfo.getUrl());
+            throw e;
+        }
 
         // 异步处理文档。两件事都不能省：
         //   · 经 self 调用才命中 Spring 代理，@Async 才真正生效（同类直调会被隐式 this. 绕过）；
@@ -314,10 +363,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         .text(doc.getContent() != null ? doc.getContent() : "")
                         .build());
             } else {
-                // 从 S3 下载文件并使用 Tika 解析
-                byte[] fileBytes = fileService.downloadFile(doc.getFilePath());
-                TikaDocumentReader reader = new TikaDocumentReader(new ByteArrayResource(fileBytes));
-                documents = reader.get();
+                // 从 S3 流式读取并用 Tika 抽正文，带字符上限（安全审查 M8）：不再整个文件读成 byte[]，
+                // 也不再无上限抽文本——抽出多少就切多少块、嵌多少次，费用与堆内存都要封顶
+                TikaTextExtractor.ExtractedText extracted;
+                try (java.io.InputStream in = fileService.openStream(doc.getFilePath())) {
+                    extracted = textExtractor.extract(in, maxExtractedChars);
+                }
+                if (extracted.truncated()) {
+                    log.warn("文档正文超过 {} 字符已截断，只摄取前半段 id={} name={}",
+                            maxExtractedChars, documentId, doc.getName());
+                }
+                documents = List.of(org.springframework.ai.document.Document.builder()
+                        .text(extracted.text())
+                        .build());
             }
 
             // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
@@ -325,10 +383,17 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                     .withChunkSize(chunkSize)
                     .withMinChunkSizeChars(chunkOverlap)
                     .withMinChunkLengthToEmbed(5)
-                    .withMaxNumChunks(10000)
+                    .withMaxNumChunks(maxChunksPerDocument)   // 单文档 chunk 封顶（安全审查 M8）
                     .withKeepSeparator(true)
                     .build();
             List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
+            // ⚠️ TokenTextSplitter 到达 maxNumChunks 后会把剩余全部文本追加成最后一块（一块可能极大），
+            // 所以上限必须在这里再截一次，否则封顶形同虚设
+            if (chunks.size() > maxChunksPerDocument) {
+                log.warn("文档切块数 {} 超过上限 {}，丢弃超出部分 id={} name={}",
+                        chunks.size(), maxChunksPerDocument, documentId, doc.getName());
+                chunks = new java.util.ArrayList<>(chunks.subList(0, maxChunksPerDocument));
+            }
             
             // 添加元数据（包含租户隔离信息）——
             // 租户/应用取自 document 行自身（@PrePersist 在请求线程已回填）：
@@ -375,6 +440,41 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
     
+    /** 大小（先于任何读字节的操作）→ 非空 → 扩展名白名单。 */
+    private void validateUpload(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("文件为空");
+        }
+        if (file.getSize() > maxUploadBytes) {
+            throw new BusinessException("文件大小超过上限（" + (maxUploadBytes / 1024 / 1024) + "MB）");
+        }
+        String ext = extensionOf(file.getOriginalFilename());
+        if (!UPLOAD_EXTENSIONS.contains(ext)) {
+            throw new BusinessException("不支持的文件类型：" + (ext.isEmpty() ? "（无扩展名）" : ext));
+        }
+    }
+
+    private static String extensionOf(String filename) {
+        if (filename == null) {
+            return "";
+        }
+        int dot = filename.lastIndexOf('.');
+        return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    /** name / original_filename 列都是 varchar(255)：超长原名保留扩展名截断，不再撞列宽变 500。 */
+    private static String truncateFilename(String filename) {
+        if (filename == null) {
+            return "unnamed";
+        }
+        if (filename.length() <= MAX_FILENAME_LENGTH) {
+            return filename;
+        }
+        String ext = extensionOf(filename);
+        String suffix = ext.isEmpty() ? "" : "." + ext;
+        return filename.substring(0, MAX_FILENAME_LENGTH - suffix.length()) + suffix;
+    }
+
     private DocumentType detectDocumentType(String filename) {
         String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
         return switch (ext) {

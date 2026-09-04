@@ -10,6 +10,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.qingyu.care.enums.TenantStatus;
+
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -151,5 +154,41 @@ class OpenApiAuthServiceTest {
         assertThatThrownBy(() -> service.authenticateByOrigin("app_x", null))
                 .isInstanceOf(OpenApiException.class)
                 .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+    // ===== 安全审查 M6（2026-09-03）：开放 API 必须校验租户状态与到期时间 =====
+
+    private Application appOf(Tenant tenant) {
+        return Application.builder().id(1L).name("测试应用").appKey("app_x").appSecret("sec")
+                .enabled(true).allowedOrigins("https://a.com").tenant(tenant).build();
+    }
+
+    @Test
+    void authenticate_403_whenTenantFrozen() {
+        Tenant frozen = Tenant.builder().id(9L).status(TenantStatus.FROZEN).build();
+        when(applicationRepository.findByAppKey("app_x")).thenReturn(Optional.of(appOf(frozen)));
+
+        assertThatThrownBy(() -> service.authenticate("app_x", "sec"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+
+    @Test
+    void authenticateByOrigin_403_whenTenantExpired() {
+        Tenant expired = Tenant.builder().id(9L).status(TenantStatus.ACTIVE)
+                .expireTime(LocalDateTime.now().minusMinutes(1)).build();
+        when(applicationRepository.findByAppKey("app_x")).thenReturn(Optional.of(appOf(expired)));
+
+        assertThatThrownBy(() -> service.authenticateByOrigin("app_x", "https://a.com"))
+                .isInstanceOf(OpenApiException.class)
+                .satisfies(e -> assertThat(((OpenApiException) e).getStatus()).isEqualTo(403));
+    }
+
+    @Test
+    void authenticateByOrigin_passes_whenTenantActiveAndNotExpired() {
+        Tenant active = Tenant.builder().id(9L).status(TenantStatus.ACTIVE)
+                .expireTime(LocalDateTime.now().plusDays(30)).build();
+        when(applicationRepository.findByAppKey("app_x")).thenReturn(Optional.of(appOf(active)));
+
+        assertThat(service.authenticateByOrigin("app_x", "https://a.com").getId()).isEqualTo(1L);
     }
 }

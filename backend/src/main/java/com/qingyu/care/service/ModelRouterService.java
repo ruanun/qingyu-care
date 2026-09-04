@@ -2,6 +2,8 @@ package com.qingyu.care.service;
 
 import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.SharedCredentialMasker;
+import com.qingyu.care.config.SsrfGuard;
+import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
@@ -110,6 +112,35 @@ public class ModelRouterService {
             throw new ResourceNotFoundException("AI模型配置", id.toString());
         }
         return config;
+    }
+
+    /**
+     * 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型的开发环境用；生产保持 false）。
+     */
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.model.allow-private-endpoints:false}")
+    private boolean allowPrivateEndpoints;
+
+    /**
+     * 校验租户填的模型 endpoint（安全审查 M4，2026-09-03）：协议限 http(s)、主机须解析到公网地址。
+     * 只在管理面入口（建 / 改 / 测试连接）调用，不放每轮对话的热路径；空值表示沿用默认 base-url。
+     * {@code allowPrivateEndpoints} 打开时只校验形态。
+     *
+     * @throws InvalidOperationException 端点非法，消息可直接给用户看
+     */
+    public void requireValidEndpoint(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return;
+        }
+        try {
+            if (allowPrivateEndpoints) {
+                // 放开私网（本地 Ollama 等），但云元数据段永不放行——见该方法注释
+                SsrfGuard.assertAllowedHttpUrlAllowingPrivate(endpoint.trim());
+            } else {
+                SsrfGuard.assertAllowedHttpUrl(endpoint.trim());
+            }
+        } catch (IllegalArgumentException e) {
+            throw new InvalidOperationException("模型端点无效：" + e.getMessage());
+        }
     }
 
     /**

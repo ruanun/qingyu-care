@@ -14,6 +14,7 @@ import com.qingyu.care.dto.QuotaCheckResult;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,7 @@ import org.springframework.web.servlet.AsyncHandlerInterceptor;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
 
     public static final String ATTR_APP = "openApiApplication";
@@ -40,6 +42,13 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
     /** 平台默认每分钟限额，可在配置中覆盖；@Value 不能注入 final 字段，用普通字段 */
     @Value("${qingyu.care.openapi.default-rate-limit-per-minute:60}")
     private int defaultRateLimit;
+
+    /**
+     * 单个客户端（应用 + IP）每分钟上限，0 关闭（安全审查 M5，2026-09-03）：appKey 是公开的、Origin
+     * 头非浏览器客户端随便填，只有应用级一个桶时，一个滥用者就能让该应用所有真实访客一起吃 429。
+     */
+    @Value("${qingyu.care.openapi.per-client-rate-limit-per-minute:20}")
+    private int perClientRateLimit;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
@@ -74,6 +83,17 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
                 writeError(response, 429, "请求过于频繁");
                 return false;
             }
+            // 应用级之下再按客户端 IP 分桶，单个来源占不满整个应用的额度
+            if (perClientRateLimit > 0) {
+                String clientIp = resolveClientIp(request);
+                if (clientIp != null && !clientIp.isBlank()
+                        && !rateLimitService.tryConsume("client:" + app.getAppKey() + ":" + clientIp, perClientRateLimit)) {
+                    TenantContext.clear();
+                    response.setHeader("Retry-After", "60");
+                    writeError(response, 429, "请求过于频繁");
+                    return false;
+                }
+            }
 
             // 额度检查（开放 API 专属）：超额 403，近阈值放行 + 软提示 + 审计
             QuotaCheckResult quota = quotaService.check(app.getTenant().getId());
@@ -102,7 +122,9 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
             writeError(response, e.getStatus(), e.getMessage());
             return false;
         } catch (Exception e) {
-            // 兜底：认证过程中的其它异常统一返回 500，同样先清理上下文
+            // 兜底：认证过程中的其它异常统一返回 500，同样先清理上下文。
+            // ⚠️ 必须记日志：这里曾静默吞掉 LazyInitializationException，28 条 IT 一起红却查不到原因。
+            log.error("[OpenAPI] 鉴权/限流阶段异常", e);
             TenantContext.clear();
             writeError(response, 500, "服务器内部错误");
             return false;
@@ -126,6 +148,20 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
     public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
                                                Object handler) {
         TenantContext.clear();
+    }
+
+    /**
+     * 客户端 IP：取 {@code X-Forwarded-For} 的<b>最后一段</b>。nginx 是追加模式
+     * （{@code $proxy_add_x_forwarded_for}），最后一段才是 nginx 自己看到的直连地址，
+     * 前面的段都是客户端可自填的；没有转发头就用直连地址。
+     */
+    static String resolveClientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            String[] parts = xff.split(",");
+            return parts[parts.length - 1].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     /** 取 Origin 头；缺失时从 Referer 解析出 scheme://host[:port]。 */

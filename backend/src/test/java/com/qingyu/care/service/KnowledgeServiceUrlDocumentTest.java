@@ -81,7 +81,7 @@ class KnowledgeServiceUrlDocumentTest {
         service().processDocument(6L);
 
         // 核心断言：URL 类型绝不能碰 S3 下载
-        verify(fileService, never()).downloadFile(any());
+        verify(fileService, never()).openStream(any());
         assertThat(doc.getStatus()).isEqualTo(DocumentStatus.COMPLETED);
         // 不因切分重建逻辑而被覆盖出多余的前导换行，保持与抓取正文逐字一致
         assertThat(doc.getContent()).isEqualTo(pageContent);
@@ -120,12 +120,12 @@ class KnowledgeServiceUrlDocumentTest {
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
         when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         String content = "轻语客服知识内容，用于验证非 URL 分支未被本次改动波及。".repeat(30);
-        when(fileService.downloadFile(any())).thenReturn(content.getBytes(StandardCharsets.UTF_8));
+        when(fileService.openStream(any())).thenReturn(new java.io.ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
 
         service().processDocument(7L);
 
-        // 核心断言：非 URL 类型必须仍然走 S3 下载 + Tika（这是本次改动最容易悄悄破坏的既有主路）
-        verify(fileService).downloadFile("kb/说明书.txt");
+        // 核心断言：非 URL 类型必须仍然走 S3 流式读取 + Tika（这是本次改动最容易悄悄破坏的既有主路）
+        verify(fileService).openStream("kb/说明书.txt");
         assertThat(doc.getStatus()).isEqualTo(DocumentStatus.COMPLETED);
         verify(vectorStore).add(any());
     }

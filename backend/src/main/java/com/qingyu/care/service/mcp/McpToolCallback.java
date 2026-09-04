@@ -73,11 +73,12 @@ public class McpToolCallback implements ToolCallback {
             log.info("调用 MCP 工具 {} 参数键={}", exposedName(server, tool), args.keySet());
             // ⚠️ 发给远端的是原始工具名，前缀只存在于暴露给 LLM 的那一层
             String resp = executor.callTool(server, tool.getName(), args);
-            return truncate(resp, server.getMaxResponseChars());
+            return com.qingyu.care.service.tool.ToolResultDelimiter.wrap(truncate(resp, server.getMaxResponseChars()));
         } catch (Exception e) {
             // fail-soft：抛出会中断整轮对话，同 HttpToolCallback
-            log.warn("MCP 工具 {} 调用失败: {}", exposedName(server, tool), e.getClass().getSimpleName());
-            return "工具调用失败: " + e.getMessage();
+            log.warn("MCP 工具 {} 调用失败: {}", exposedName(server, tool),
+                    com.qingyu.care.service.tool.HttpToolCallback.describeForLog(e));
+            return com.qingyu.care.service.tool.ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
         }
     }
 

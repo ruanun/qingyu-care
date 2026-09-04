@@ -43,14 +43,16 @@ class HttpToolCallbackTest {
         assertThat(captured[1]).isEqualTo("http://8.8.8.8/orders/A123");
         assertThat(captured[2]).isEqualTo("Authorization: Bearer k");
         assertThat(captured[3]).isEqualTo("3000");
-        assertThat(result).isEqualTo("OK");
+        // 工具返回包在 <tool_result> 里，提示模型这是数据不是指令（安全审查 L10）
+        assertThat(result).isEqualTo("<tool_result>OK</tool_result>");
     }
 
     @Test
     void callTruncatesResponseToMaxResponseChars() {
         HttpToolCallback cb = new HttpToolCallback(tool(), (m, u, a, b, t) -> "0123456789ABCDEF", mapper);
         String result = cb.call("{\"orderId\":\"A123\"}");
-        assertThat(result).hasSize(10); // maxResponseChars=10
+        // 截断作用在正文上，定界标签不占额度
+        assertThat(result).isEqualTo("<tool_result>0123456789</tool_result>"); // maxResponseChars=10
     }
 
     @Test
@@ -70,7 +72,7 @@ class HttpToolCallbackTest {
         // executor 抛异常这一既有事实，这条测的是 URL 填充阶段抛出的新异常路径。
         HttpToolCallback cb = new HttpToolCallback(tool(), (m, u, a, b, t) -> "OK", mapper);
         String result = cb.call("{}");
-        assertThat(result).isEqualTo("工具调用失败: 缺少必填参数 orderId");
+        assertThat(result).isEqualTo("<tool_result>工具调用失败: 缺少必填参数 orderId</tool_result>");
     }
 
     @Test
@@ -94,5 +96,26 @@ class HttpToolCallbackTest {
         HttpToolCallback cb = new HttpToolCallback(postTool, exec, mapper);
         cb.call("{\"title\":\"x\"}");
         assertThat(capturedBody[0]).isEqualTo("{\"title\":\"x\"}");
+    }
+    /**
+     * 真机冒烟发现（2026-09-03）：工具调用失败时日志只记异常类名，
+     * {@code 工具 xxx 调用失败: IllegalArgumentException} 看不出是被 SSRF 守卫拦下还是网络问题。
+     * 本机代理是 fake-IP 模式（所有域名解析到 198.18.0.x，恰在守卫黑名单里），排查花了好几分钟；
+     * 生产上若某个租户的工具域名解析到被拦网段，运维会完全无从下手。
+     *
+     * <p>守卫抛的 {@code IllegalArgumentException} 消息里只有 host，可安全入日志；
+     * 其余异常只记类名——它们的消息可能带完整 URL，而 URL 的 query 段可能含密钥。
+     */
+    @Test
+    void describeForLog_守卫异常记消息_其余只记类名() {
+        assertThat(HttpToolCallback.describeForLog(
+                new IllegalArgumentException("工具 URL 指向内网/环回地址，已拒绝: 198.18.0.116")))
+                .contains("IllegalArgumentException")
+                .contains("198.18.0.116");
+
+        assertThat(HttpToolCallback.describeForLog(
+                new IllegalStateException("工具 HTTP 调用失败: https://api.example.com/x?apikey=SECRET")))
+                .isEqualTo("IllegalStateException")
+                .doesNotContain("SECRET");
     }
 }
