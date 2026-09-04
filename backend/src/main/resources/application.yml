@@ -158,6 +158,18 @@ qingyu:
         default-overlap: 200
       # 注意: top-k 和 similarity-threshold 已移至数据库动态配置 (ChatStrategy)
     
+    # 计费额度（调用数 / token 由 QuotaService 内置默认，可用下列键覆盖）
+    billing:
+      quota:
+        # 租户对象存储上限（字节，0=不限）：知识库文件 + 聊天附件之和。
+        # 爬取产生的 URL 类文档不占 S3（正文在库里），由站点爬取自身的页数硬顶约束，不计入。
+        FREE:
+          storage-bytes: 1073741824      # 1GB
+        PRO:
+          storage-bytes: 21474836480     # 20GB
+        ENTERPRISE:
+          storage-bytes: 0               # 不限
+
     # 开放 API 配置
     openapi:
       # 单个应用默认每分钟请求上限（应用可覆盖）

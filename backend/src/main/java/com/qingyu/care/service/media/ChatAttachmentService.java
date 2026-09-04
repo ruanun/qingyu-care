@@ -58,6 +58,7 @@ public class ChatAttachmentService {
     private final ChatSessionRepository sessionRepository;
     private final FileService fileService;
     private final AttachmentValidator validator;
+    private final com.qingyu.care.service.QuotaService quotaService;
 
     public ChatAttachment upload(String sessionId, MultipartFile file, MessageRole uploaderRole) {
         if (file.getSize() > MAX_UPLOAD_BYTES) {
@@ -68,6 +69,8 @@ public class ChatAttachmentService {
         if (existing >= maxAttachmentsPerSession) {
             throw new BusinessException("该会话的附件数量已达上限（" + maxAttachmentsPerSession + " 个）");
         }
+        // 租户级存储配额：单会话上限挡不住「不断建新会话」，总量闸门在这里
+        quotaService.requireStorageAvailable(com.qingyu.care.config.TenantContext.getTenantId(), file.getSize());
         byte[] bytes;
         try {
             bytes = file.getBytes();

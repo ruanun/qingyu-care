@@ -29,7 +29,7 @@
 | M2 | 中 | 全局异常处理把 `RuntimeException.getMessage()` 回给客户端 | `GlobalExceptionHandler` | ✅ 已修（分支 fix/security-review-p0） |
 | M3 | 中 | `X-App-Id` 不校验归属：可把行建到他人应用名下、触发他人 Webhook 并用他人密钥签名 | `TenantInterceptor` / `WebhookDispatcher` | ✅ 已修（分支 fix/security-review-p0，第二批） |
 | M4 | 中 | `SsrfGuard` 漏 `100.64.0.0/10`（阿里云元数据 `100.100.100.200`）；模型 endpoint 与「测试连接」完全不过守卫 | `SsrfGuard` / `ModelRouterService` | ✅ 已修（网段 + 模型端点守卫；真机复验时又补了「放开私网也不放行云元数据」） |
-| M5 | 中 | Origin 白名单挡不住非浏览器客户端：公开 appKey 即可无凭据烧额度、灌附件；限流键只有 appKey | `OpenApiAuthService` / `OpenApiAuthInterceptor` | 🔶 部分：限流子桶 + 单会话附件上限 20 + 孤儿 2 小时已做；租户存储配额待按套餐定数字 |
+| M5 | 中 | Origin 白名单挡不住非浏览器客户端：公开 appKey 即可无凭据烧额度、灌附件；限流键只有 appKey | `OpenApiAuthService` / `OpenApiAuthInterceptor` | ✅ 已修（限流子桶 + 单会话上限 + 孤儿 2 小时 + 租户级存储配额） |
 | M6 | 中 | 开放 API 不校验租户状态；登录不校验 `expireTime` | `OpenApiAuthService` / `AuthService.login` | ✅ 已修 |
 | M7 | 中 | 前端「退出登录」不调后端注销；token 30 天有效、`is-share: true`、cookie 不清 | `MainLayout` / `application.yml` | ✅ 已修（前端调注销 + token 7 天 / 活跃 12 小时 / is-share=false） |
 | M8 | 中 | 知识库文档上传零校验，100MB 直入 S3，落库失败不回收；Tika 整文件进堆且输出无上限 | `KnowledgeServiceImpl.uploadDocument` | ✅ 已修（上传校验 + 回收 + 流式抽取 + 文本/chunk 上限，第三批） |
@@ -314,7 +314,7 @@
 | L12 | `AnalyticsRollupDao.tryLockDay`（`pg_try_advisory_xact_lock(classId, day)`），抢不到跳过且不计入成功 | `AnalyticsRollupServiceTest`（+1） |
 | L13 | `pom.xml` 加 `depcheck` profile（dependency-check 11.1.1，CVSS ≥ 7 失败）+ `scripts/dep-audit.sh`（含三个 pnpm 项目的 `pnpm audit`，显式走官方 registry）；写进部署文档发版清单。首次实跑即抓到 react-router 高危 GHSA-qwww-vcr4-c8h2（RSC 模式 CSRF，本项目是 Vite SPA 不受影响），`react-router-dom` 7.18.1 → 7.18.3 后三个 pnpm 项目全部干净 | 手动步骤 |
 
-**仍未修**：L1 密钥哈希/加密存储（用户决定不做）；M5 的租户级存储配额（要按套餐定数字）；L2 `sa-token.is-log`。
+**仍未修**：L1 密钥哈希/加密存储（用户决定不做）；L2 `sa-token.is-log`。M5 的租户级存储配额已于 2026-09-04 补齐，见末节。
 
 ### 2026-09-03 · 真机冒烟验证（12 条）与由此挖出的缺陷
 
@@ -481,3 +481,39 @@ user 气泡已在、文本不再变化，被误判成「回复已完成」而提
 ⚠️ 另一个自造的坑：宿主页探针用 `MutationObserver` 观察 body subtree，而回调自己又改 DOM，
 形成自触发循环，DOM 永远不稳定，CDP 的 `evaluate_script` / `take_snapshot` 会一直等 stable DOM
 直到协议超时。探针要么定时轮询，要么把观察范围收窄到不含自己的输出节点。
+
+### 2026-09-04 · 租户级存储配额（M5 最后一块）
+
+此前只有「每次」「每个」的上限：单文件 30MB / 20MB、单会话 20 个附件、孤儿 2 小时清理。
+缺的是总量闸门——appKey 是公开信息，攻击者可以不断建新会话把每个都灌满，而<b>已发送的附件不会被
+孤儿清理</b>，那是永久占用；租户自己往知识库灌几千份文档同样没人拦。
+
+**额度（用户拍板）**：
+
+| 套餐 | 存储上限 |
+|---|---|
+| FREE | 1GB |
+| PRO | 20GB |
+| ENTERPRISE | 不限 |
+
+配置键 `qingyu.care.billing.quota.<PLAN>.storage-bytes`，0 表示不限，与既有的 calls / tokens
+两维度同一套机制。超限行为是**硬拒绝新上传**，已有数据不动；统计组件故障时 fail-open 放行，
+与既有额度检查同惯例。
+
+**计量口径只算对象存储**：`document.file_size + chat_attachment.file_size`，按 `tenant_id` 分别求和
+（`StorageUsageDao`，native SQL 手写租户条件，因为两张表都受 `@Filter` 影响而配额检查可能发生在
+无租户上下文的路径上）。
+
+⚠️ **爬取产生的 URL 类文档不计入**，这是有依据的取舍而非遗漏：它们的 `file_size` 为 null，正文存在
+数据库里、S3 上没有对象；而那条链路的用量已由站点爬取自身的页数硬顶（`max-pages-limit`，500）约束。
+最初讨论时列的第三个决策点「爬取中途超限怎么办」，因此自动消失。
+
+**检查点两处**：`KnowledgeServiceImpl.uploadDocument` 与 `ChatAttachmentService.upload`，都在传 S3
+之前。前者用 setter 注入 `QuotaService`——本类的构造函数被 10 个单测手工调用，加参数要改 10 处，
+而配额只在这一条路径上用到；没注入时会 NPE 而不是静默跳过检查。
+
+前端用量页新增第三个进度条「存储（累计）」，并加了字节转可读单位的格式化。存储是累计量、不随月份
+重置，与上面两个按月的维度不同，故在标签上标注出来。
+
+守护测试 `QuotaServiceStorageTest` 六条：三档默认值、超限拒绝、边界放行、不限时不查用量、
+无租户上下文放行、统计失败 fail-open。

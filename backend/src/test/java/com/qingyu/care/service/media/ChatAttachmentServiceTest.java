@@ -48,6 +48,8 @@ class ChatAttachmentServiceTest {
     private FileService fileService;
     @Mock
     private AttachmentValidator validator;
+    @Mock
+    private com.qingyu.care.service.QuotaService quotaService;
     @InjectMocks
     private ChatAttachmentService service;
 

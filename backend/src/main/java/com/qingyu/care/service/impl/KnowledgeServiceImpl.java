@@ -43,6 +43,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final com.qingyu.care.repository.QaPairRepository qaPairRepository;
     private final com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
+    /**
+     * 存储配额闸门。用 setter 注入而非构造注入：本类的构造函数被 10 个单测手工调用，
+     * 加一个参数要改 10 处，而配额只在 {@code uploadDocument} 这一条路径上用到。
+     * 风格同下方的 {@code setSelf}。⚠️ 没注入时这里会 NPE 而不是静默跳过配额检查——
+     * 可见的失败好过悄悄失效。
+     */
+    private com.qingyu.care.service.QuotaService quotaService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setQuotaService(com.qingyu.care.service.QuotaService quotaService) {
+        this.quotaService = quotaService;
+    }
+
     // 自注入解决 @Async 同类调用不生效问题
     private KnowledgeServiceImpl self;
 
@@ -197,6 +210,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         // 超长文件名直接进 S3，INSERT 失败时对象无人回收。校验放在传 S3 之前，且 getSize() 闸门
         // 先于任何读取字节的操作（同 AttachmentValidator 的顺序）。
         validateUpload(file);
+        // 租户级存储配额（安全审查 M5 残留部分）：单文件上限之外还要管总量
+        quotaService.requireStorageAvailable(
+                com.qingyu.care.config.TenantContext.getTenantId(), file.getSize());
         String safeName = truncateFilename(file.getOriginalFilename());
 
         // 上传文件到 S3 存储

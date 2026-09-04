@@ -7,6 +7,9 @@ export interface QuotaView {
     callsLimit: number;
     tokensUsed: number;
     tokensLimit: number;
+    /** 对象存储：知识库文件 + 聊天附件之和，字节。limit 为 0 表示不限 */
+    storageUsedBytes: number;
+    storageLimitBytes: number;
     warnThreshold: number;
     resetDate: string | null;
 }

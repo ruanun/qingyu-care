@@ -58,6 +58,7 @@ class KnowledgeUploadValidationTest {
         ReflectionTestUtils.setField(service, "chunkSize", 800);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);
         ReflectionTestUtils.setField(service, "maxUploadBytes", 1024L);   // 单测用 1KB 上限，免得造大文件
+        service.setQuotaService(org.mockito.Mockito.mock(QuotaService.class));   // 配额检查另有专测
         // 上传成功后经 self 投递异步摄取；单测没有 Spring 代理，给一个桩免 NPE
         ReflectionTestUtils.setField(service, "self", org.mockito.Mockito.mock(KnowledgeServiceImpl.class));
         return service;

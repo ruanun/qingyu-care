@@ -11,9 +11,10 @@ public record QuotaViewDTO(
         String plan,
         long callsUsed, long callsLimit,
         long tokensUsed, long tokensLimit,
+        long storageUsedBytes, long storageLimitBytes,
         int warnThreshold, LocalDate resetDate) {
 
     public static QuotaViewDTO empty() {
-        return new QuotaViewDTO(null, 0, 0, 0, 0, 0, null);
+        return new QuotaViewDTO(null, 0, 0, 0, 0, 0, 0, 0, null);
     }
 }
