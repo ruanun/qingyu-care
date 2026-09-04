@@ -34,6 +34,18 @@ public class SaTokenConfig implements WebMvcConfigurer {
     }
 
 
+    /**
+     * 把 Sa-Token 的日志换成脱敏实现（安全审查 L2）。内置的 {@code SaLogForConsole} 会把完整
+     * 会话凭证打进 INFO 并直接 {@code System.out}；{@link TokenMaskingSaLog} 脱掉凭证后转交 SLF4J。
+     *
+     * <p>用 {@code @PostConstruct} 显式设置而非依赖自动装配：这条链路一旦静默失效，症状是
+     * token 又开始进日志，而没有任何报错——显式调用至少能在启动日志里看到下面这行确认。
+     */
+    @jakarta.annotation.PostConstruct
+    public void installMaskingLog() {
+        cn.dev33.satoken.SaManager.setLog(new TokenMaskingSaLog());
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // 注册 Sa-Token 拦截器

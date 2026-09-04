@@ -120,7 +120,9 @@ sa-token:
   is-share: false
   # token 风格
   token-style: uuid
-  # 是否输出日志
+  # 是否输出日志。保持开启：登录/注销/配置加载这些事件对排查有用。
+  # ⚠️ 内置实现会把完整会话凭证打进 INFO（实测见 TokenMaskingSaLog 的类注释），
+  # 故 SaTokenConfig 在启动时把日志实现换成脱敏版并转交 SLF4J，别把那段删掉。
   is-log: true
   # 不读也不写 cookie：管理前端只用 satoken 请求头。Sa-Token 默认会把 token 写进 cookie，
   # 叠加跨域配置就是一条 CSRF 通道（安全审查 H6，2026-09-03）；SPA 用不到 cookie，关掉最省事。

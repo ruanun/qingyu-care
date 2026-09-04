@@ -314,7 +314,7 @@
 | L12 | `AnalyticsRollupDao.tryLockDay`（`pg_try_advisory_xact_lock(classId, day)`），抢不到跳过且不计入成功 | `AnalyticsRollupServiceTest`（+1） |
 | L13 | `pom.xml` 加 `depcheck` profile（dependency-check 11.1.1，CVSS ≥ 7 失败）+ `scripts/dep-audit.sh`（含三个 pnpm 项目的 `pnpm audit`，显式走官方 registry）；写进部署文档发版清单。首次实跑即抓到 react-router 高危 GHSA-qwww-vcr4-c8h2（RSC 模式 CSRF，本项目是 Vite SPA 不受影响），`react-router-dom` 7.18.1 → 7.18.3 后三个 pnpm 项目全部干净 | 手动步骤 |
 
-**仍未修**：L1 密钥哈希/加密存储（用户决定不做）；L2 `sa-token.is-log`。M5 的租户级存储配额已于 2026-09-04 补齐，见末节。
+**仍未修**：只剩 L1 密钥哈希/加密存储（用户决定不做）。M5 的租户级存储配额与 L2 的登录日志脱敏均已于 2026-09-04 补齐，见末两节。
 
 ### 2026-09-03 · 真机冒烟验证（12 条）与由此挖出的缺陷
 
@@ -517,3 +517,32 @@ user 气泡已在、文本不再变化，被误判成「回复已完成」而提
 
 守护测试 `QuotaServiceStorageTest` 六条：三档默认值、超限拒绝、边界放行、不限时不查用量、
 无租户上下文放行、统计失败 fail-open。
+
+### 2026-09-04 · L2 登录日志脱敏（不是关日志，是脱凭证）
+
+原建议是「生产关掉 `sa-token.is-log`」。用户提出登录日志需要保留——这个诉求是对的，
+**但原建议的前提被实测推翻了两次，方向也不对**：
+
+先查证「开着到底会不会泄露」。历史启动日志里 Sa-Token 只打了版本 banner、全局配置、
+`SaSession [...] 创建成功`，看起来无害；但把真实 token 拿去搜，在日志文件里命中了 4 次、5 次、
+1 次，翻出这两行：
+
+```
+SA [INFO] -->: 账号 23 登录成功 (loginType=login), 会话凭证 token=257a91de-6b79-4838-8ee8-13a06b70a35b
+SA [INFO] -->: 账号 23 注销登录 (loginType=login), 会话凭证 token=...
+```
+
+**内置的 `SaLogForConsole` 会把完整会话凭证打进 INFO，而且直接 `System.out`**（不走 logback，
+所以 logback 的 pattern 过滤也够不到）。token 有效期 7 天，日志收集系统、备份、排查时误发的截图
+都是泄露面。
+
+所以正确的做法不是二选一，而是**只脱掉凭证**：`TokenMaskingSaLog` 复用 Sa-Token 自己的
+`StrFormatter` 渲染消息（不必猜它的占位符语法），整体正则脱敏后交给 SLF4J；`SaTokenConfig` 用
+`@PostConstruct` 显式 `SaManager.setLog(...)` 接线。顺带收益是这些日志进了 logback，有时间戳、
+logger 名，能按级别控制、随其它日志滚动。
+
+⚠️ 脱敏正则必须带 `` 词边界：配置日志里的 `tokenName=satoken` 不能被误伤，那条正是排查
+「请求头名字配错」时要看的。守护测试 `TokenMaskingSaLogTest` 五条，其中一条就是钉这个边界，
+变异验证过（去掉 `` 即转红）。
+
+真机确认：登录与注销日志都在、`token=***`、本次 token 在日志里命中 0 次、`tokenName=satoken` 完好。
