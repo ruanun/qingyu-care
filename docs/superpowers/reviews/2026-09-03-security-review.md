@@ -450,11 +450,34 @@ MCP server 也能连。
 `lastSyncError` 这条设计好的失败反馈通道（界面上有警示条），错误立即可见；而 Webhook 配错地址后
 是在事件推送时静默失败，用户不会主动去看投递表，所以必须落库就拦。
 
-**widget 真机嵌入未完成**：宿主页与编排脚本已写好（`backend/target/widget_host.html` 与
-`widget_host_server.py`，结果 POST 回本地服务、不依赖 CDP），但执行时 Docker Desktop 的 WSL 后端
-（`docker-desktop` 发行版）反复 Stopped、引擎持续返回 500，数据库与 Redis 全部不可达，后端起不来。
-今天第二次出现，属于机器环境故障。这条留待环境恢复后补。
+**widget 真机嵌入**：首次执行时 Docker Desktop 的 WSL 后端反复 Stopped、引擎持续 500，环境恢复后已补做，
+结果见下节。
 
 ⚠️ 过程中还踩到一个自造的坑，记下来免得重犯：宿主页探针用 `MutationObserver` 观察 body subtree，
 而回调自己又改 DOM，形成自触发循环，DOM 永远不稳定，CDP 的 `evaluate_script` / `take_snapshot`
 会一直等 stable DOM 直到协议超时。探针要么定时轮询，要么把观察范围收窄到不含自己的输出节点。
+
+### 2026-09-04 · widget 真机嵌入（补做，全过）
+
+宿主页 `backend/target/widget_host.html` 用一行 `<script src=".../widget.js?appKey=...">` 嵌入，
+与真实接入方式一致；页面自带编排脚本驱动 widget，结果 POST 回 `widget_host_server.py` 的
+`/report`，外部 curl 读取，**不依赖 CDP**。
+
+| # | 验证项 | 结果 |
+|---|---|---|
+| 28 | widget 挂载与展开 | Shadow DOM 挂出、气泡按钮在、面板可展开 |
+| 29 | 流式对话与卡片增量渲染 | 首字第 32 秒到达，卡片第 36 秒整张出现，回复 340 字 |
+| 30 | 卡片按钮 | 三个按钮全部渲染：访问官网、复制政策、咨询配送时效 |
+| 31 | `msg://` 动作 | 点「咨询配送时效」后消息数 3 → 5，确实作为用户消息发出 |
+| 32 | 点击无异常 | `window.onerror` / `unhandledrejection` 全程为空，点击后面板仍在 |
+| 33 | 会话恢复 | 重开页面后从 `qingyu_widget_session_<appKey>` 恢复，历史 2 条渲染正确，**历史里的卡片与三个按钮一并恢复**（证明 `ui_spec` 落库正确） |
+
+⚠️ **踩坑记录：等待条件写错会把功能测成缺陷。** 第一轮编排用「消息节点数 + 文本长度连续 3 轮不变」
+当回复完成的判据，测出卡片数 0，看着像渲染缺陷。实际是模型首个 delta 要 32 秒才到，这期间
+user 气泡已在、文本不再变化，被误判成「回复已完成」而提前退出。查库发现 `ui_spec` 里明明有
+`kind":"ui"` 片段，才定位到是探针的问题。**判据改成「等首字出现 → 等卡片出现」后一次通过。**
+写真机等待逻辑时，别用「一段时间没变化」代替「目标状态已出现」。
+
+⚠️ 另一个自造的坑：宿主页探针用 `MutationObserver` 观察 body subtree，而回调自己又改 DOM，
+形成自触发循环，DOM 永远不稳定，CDP 的 `evaluate_script` / `take_snapshot` 会一直等 stable DOM
+直到协议超时。探针要么定时轮询，要么把观察范围收窄到不含自己的输出节点。
