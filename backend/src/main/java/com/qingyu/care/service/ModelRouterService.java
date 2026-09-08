@@ -211,19 +211,16 @@ public class ModelRouterService {
      * 根据模型配置创建 ChatClient
      */
     public ChatClient createChatClient(AiModelConfig config) {
-        String provider = config.getProvider().toLowerCase();
-        
-        switch (provider) {
-            case "openai":
-            case "dashscope":
-            case "moonshot":
-            case "deepseek":
-                // 这些都兼容 OpenAI API 格式
-                return createOpenAiCompatibleClient(config);
-            default:
-                log.warn("Unknown provider: {}, using OpenAI compatible client", provider);
-                return createOpenAiCompatibleClient(config);
-        }
+        // 刻意没有 provider 分派：本项目目前只接 OpenAI 兼容协议，所有 provider 走同一条路径，
+        // provider 字段的实际作用只是查 ModelProviderCatalog 拿默认端点、以及界面展示。
+        //
+        // ⚠️ 这里曾是个 switch，四个已知 provider 各一个 case、default 分支打 WARN
+        // 「Unknown provider」。厂商预设扩到 12 家之后那条 WARN 就错了：12 家里有 8 家
+        // 会落进 default，而 createChatClient 在每轮对话都被调用（callWithFallback /
+        // streamWithFallback 各一次），等于给合法配置刷热路径日志。
+        // 将来真要接非 OpenAI 协议的厂商（Anthropic 原生 messages、Gemini 原生
+        // generateContent），分派在这里重新长出来，那时 default 分支才重新有意义。
+        return createOpenAiCompatibleClient(config);
     }
 
     /**
@@ -264,9 +261,11 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取提供商的默认端点。
+     * 获取提供商的默认端点。清单与「为什么每一项都不能想当然地补 /v1」的完整说明
+     * 都在 {@link ModelProviderCatalog}——那里是唯一一份，前端经
+     * {@code GET /v1/ai-models/providers} 拉同一份数据渲染下拉与徽章。
      *
-     * <p><b>四个分支必须统一自带 {@code /v1}</b>：Spring AI 2.0 起改用官方 openai-java SDK，
+     * <p><b>清单里每一项都必须自带正确后缀</b>：Spring AI 2.0 起改用官方 openai-java SDK，
      * 它只往 baseUrl 后拼 {@code chat/completions} / {@code embeddings}，**不再补 {@code /v1}**
      * （1.x 的 {@code OpenAiApi} 拼的是 {@code /v1/chat/completions}，故当年要求 baseUrl 不带 /v1，
      * 契约在 2.0 正好翻转）。且 {@code OpenAiSetup.calculateBaseUrl()} 对 OPEN_AI provider 原样
@@ -275,12 +274,7 @@ public class ModelRouterService {
      * <p>刻意不做「缺 /v1 就自动补全」的归一化：404 是可见错误，自动补全只会掩盖配置错误。
      */
     private String getDefaultEndpoint(String provider) {
-        return switch (provider.toLowerCase()) {
-            case "dashscope" -> "https://dashscope.aliyuncs.com/compatible-mode/v1";
-            case "moonshot" -> "https://api.moonshot.cn/v1";
-            case "deepseek" -> "https://api.deepseek.com/v1";
-            default -> "https://api.openai.com/v1";
-        };
+        return ModelProviderCatalog.defaultEndpointFor(provider);
     }
 
     /**
