@@ -106,6 +106,12 @@ services:
     image: qingyu-care-backend:latest
     container_name: qingyu-backend-prod
     environment:
+      # 激活的 Spring profile。生产留空，用基线配置。
+      # 演示环境填 demo：DemoDataSeeder（@Profile("demo")）播种「云舟科技」整套演示数据。
+      # ⚠️ 不要填 dev。dev 会打开 Swagger、把 org.springframework.ai 调到 DEBUG（完整
+      # prompt 进日志），并放开模型端点与 MCP 指向内网——对外可访问的演示环境不该开这三条。
+      # demo 不依赖 dev，单独激活即可。
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       AI_BASE_URL: ${AI_BASE_URL}
       AI_CHAT_MODEL: ${AI_CHAT_MODEL}
