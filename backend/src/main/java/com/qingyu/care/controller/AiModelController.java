@@ -5,6 +5,7 @@ import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.service.ModelProviderCatalog;
 import com.qingyu.care.service.ModelRouterService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +28,21 @@ public class AiModelController {
     @GetMapping
     public ApiResponse<List<AiModelConfig>> getAllModels() {
         return ApiResponse.success(modelRouterService.getAllModels());
+    }
+
+    /**
+     * 厂商预设清单：界面用它渲染提供商下拉与徽章，并在选中预设时自动填入默认端点。
+     *
+     * <p>只是静态元数据，不含任何凭据，登录后即可读。清单本身与「为什么各家端点后缀
+     * 不能想当然地补 /v1」的说明都在 {@link com.qingyu.care.service.ModelProviderCatalog}，
+     * 全仓只此一份——前端不再自带一份会漂移的副本。
+     *
+     * <p>⚠️ 路径必须排在 {@code /{id}} 之前理解：字面量路径优先于模板路径匹配，否则
+     * "providers" 会被当成 id 去转 Long。
+     */
+    @GetMapping("/providers")
+    public ApiResponse<List<ModelProviderCatalog.ProviderPreset>> listProviders() {
+        return ApiResponse.success(ModelProviderCatalog.presets());
     }
 
     /**

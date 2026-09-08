@@ -21,13 +21,17 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { aiModelService } from '@/api/ai-model';
-import type { AiModelConfig } from '@/api/ai-model';
+import type { AiModelConfig, ProviderPreset } from '@/api/ai-model';
+import { ProviderField } from '@/components/model/ProviderField';
+import { ProviderBadge } from '@/components/model/ProviderBadge';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 const ModelConfigPage: React.FC = () => {
     const [models, setModels] = useState<AiModelConfig[]>([]);
+    // 厂商预设清单。唯一事实源在后端 ModelProviderCatalog，前端只渲染，不另存一份。
+    const [providers, setProviders] = useState<ProviderPreset[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingModel, setEditingModel] = useState<Partial<AiModelConfig> | null>(null);
@@ -47,9 +51,22 @@ const ModelConfigPage: React.FC = () => {
         }
     };
 
+    // 预设清单是锦上添花：拉不到时降级成「提供商纯文本框 + 端点自己填」，
+    // 与改造前的平台共享模型页同形态，不该让整页报错。
+    const fetchProviders = async () => {
+        try {
+            const response = await aiModelService.listProviders();
+            throwIfFailed(response);
+            setProviders(response.data);
+        } catch {
+            setProviders([]);
+        }
+    };
+
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
         fetchModels();
+        fetchProviders();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -135,15 +152,6 @@ const ModelConfigPage: React.FC = () => {
         setIsDialogOpen(true);
     };
 
-    const getProviderBadge = (provider: string) => {
-        const p = provider.toLowerCase();
-        if (p === 'openai') return <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 border-emerald-200">OpenAI</Badge>;
-        if (p === 'dashscope') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-blue-200">通义千问</Badge>;
-        if (p === 'moonshot') return <Badge variant="secondary" className="bg-orange-100 text-orange-700 border-orange-200">Kimi</Badge>;
-        if (p === 'deepseek') return <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 border-indigo-200">DeepSeek</Badge>;
-        return <Badge variant="outline">{provider}</Badge>;
-    };
-
     const getScenarioBadge = (scenario: string) => {
         switch (scenario) {
             case 'default': return <Badge variant="outline">默认</Badge>;
@@ -187,7 +195,7 @@ const ModelConfigPage: React.FC = () => {
                             <Card key={model.id} className={cn("flex flex-col transition-all hover:shadow-md", !model.enabled && "opacity-60")}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-center justify-between mb-2">
-                                        {getProviderBadge(model.provider)}
+                                        <ProviderBadge provider={model.provider} presets={providers} />
                                         <div className="flex items-center gap-2">
                                             <Switch
                                                 checked={model.enabled}
@@ -259,23 +267,19 @@ const ModelConfigPage: React.FC = () => {
                                 placeholder="如：GPT-4o Mini"
                             />
                         </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
-                            <label className="text-right text-sm font-medium">提供商</label>
-                            <Select
-                                value={editingModel?.provider || 'openai'}
-                                onValueChange={val => setEditingModel({ ...editingModel, provider: val })}
-                            >
-                                <SelectTrigger className="col-span-3">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="openai">OpenAI</SelectItem>
-                                    <SelectItem value="dashscope">通义千问 (OpenAI 兼容)</SelectItem>
-                                    <SelectItem value="moonshot">Kimi (OpenAI 兼容)</SelectItem>
-                                    <SelectItem value="deepseek">DeepSeek (OpenAI 兼容)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        <ProviderField
+                            provider={editingModel?.provider || ''}
+                            presets={providers}
+                            onProviderChange={val => setEditingModel({ ...editingModel, provider: val })}
+                            onPresetSelect={preset => setEditingModel({
+                                ...editingModel,
+                                provider: preset.key,
+                                // 端点一并填上：各家后缀并不统一（智谱 /api/paas/v4、火山 /api/v3、
+                                // Groq /openai/v1、Gemini /v1beta/openai），让人自己猜就是本仓库
+                                // 最难排查的那类静默 404。
+                                endpoint: preset.defaultEndpoint,
+                            })}
+                        />
                         <div className="grid grid-cols-4 items-center gap-4">
                             <label className="text-right text-sm font-medium">模型 ID</label>
                             <Input

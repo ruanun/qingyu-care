@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Edit2, Trash2 } from 'lucide-react';
 import { platformService } from '@/api/platform';
-import type { AiModelConfig } from '@/api/ai-model';
+import { aiModelService } from '@/api/ai-model';
+import type { AiModelConfig, ProviderPreset } from '@/api/ai-model';
+import { ProviderField } from '@/components/model/ProviderField';
+import { ProviderBadge } from '@/components/model/ProviderBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +37,8 @@ const SharedModelPage: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<Partial<AiModelConfig>>(empty);
   const [isSaving, setIsSaving] = useState(false);
+  // 厂商预设清单。唯一事实源在后端 ModelProviderCatalog，两个模型页共用同一份。
+  const [providers, setProviders] = useState<ProviderPreset[]>([]);
 
   const reload = async () => {
     try {
@@ -48,14 +53,41 @@ const SharedModelPage: React.FC = () => {
     }
   };
 
+  // 预设拉不到就降级成纯文本框（本页改造前就是这个形态），不挡住整页
+  const loadProviders = async () => {
+    try {
+      const res = await aiModelService.listProviders();
+      if (res.code !== 200) throw new Error(res.message);
+      setProviders(res.data);
+    } catch {
+      setProviders([]);
+    }
+  };
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- effect 里调的取数函数开头会 setIsLoading(true)，加载态本就要触发一次重渲染；正解是改用数据请求库替掉 effect 取数，见技术债 7
     reload();
+    loadProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setField = (k: keyof AiModelConfig, v: unknown) =>
     setForm((p) => ({ ...p, [k]: v }));
+
+  // 提供商字段要插在「名称」和「模型 ID」之间，单个 map 表达不了这个位置，故拆成小函数复用
+  const renderTextFields = (fields: [keyof AiModelConfig, string, string][]) =>
+    fields.map(([k, label, placeholder]) => (
+      <div key={k} className="grid grid-cols-4 items-center gap-4">
+        <label htmlFor={k} className="text-right text-sm font-medium">{label}</label>
+        <Input
+          id={k}
+          className="col-span-3"
+          value={(form[k] as string) ?? ''}
+          onChange={(e) => setField(k, e.target.value)}
+          placeholder={placeholder}
+        />
+      </div>
+    ));
 
   const openCreate = () => {
     setForm(empty);
@@ -110,15 +142,6 @@ const SharedModelPage: React.FC = () => {
     }
   };
 
-  const getProviderLabel = (provider: string) => {
-    const p = provider.toLowerCase();
-    if (p === 'openai') return <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 border-emerald-200">OpenAI</Badge>;
-    if (p === 'dashscope') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-blue-200">通义千问</Badge>;
-    if (p === 'moonshot') return <Badge variant="secondary" className="bg-orange-100 text-orange-700 border-orange-200">Kimi</Badge>;
-    if (p === 'deepseek') return <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 border-indigo-200">DeepSeek</Badge>;
-    return <Badge variant="outline">{provider}</Badge>;
-  };
-
   return (
     <div className="p-8 h-full overflow-y-auto">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -159,7 +182,7 @@ const SharedModelPage: React.FC = () => {
                 {list.map((m) => (
                   <tr key={m.id} className="border-t hover:bg-muted/20 transition-colors">
                     <td className="p-3 font-medium">{m.name}</td>
-                    <td className="p-3">{getProviderLabel(m.provider)}</td>
+                    <td className="p-3"><ProviderBadge provider={m.provider} presets={providers} /></td>
                     <td className="p-3 font-mono text-xs">{m.modelId}</td>
                     <td className="p-3">{m.scenario}</td>
                     <td className="p-3">{m.priority}</td>
@@ -205,26 +228,22 @@ const SharedModelPage: React.FC = () => {
             <DialogTitle>{form.id ? '编辑共享模型' : '新增共享模型'}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            {(
-              [
-                ['name', '名称', 'text', '如：通义千问默认'],
-                ['provider', '提供商', 'text', '如：dashscope / openai'],
-                ['modelId', '模型 ID', 'text', '如：qwen-plus'],
-                ['endpoint', '端点（选填）', 'text', '留空使用厂商官方端点'],
-                ['scenario', '场景', 'text', 'default / complaint / faq'],
-              ] as [keyof AiModelConfig, string, string, string][]
-            ).map(([k, label, , placeholder]) => (
-              <div key={k} className="grid grid-cols-4 items-center gap-4">
-                <label htmlFor={k} className="text-right text-sm font-medium">{label}</label>
-                <Input
-                  id={k}
-                  className="col-span-3"
-                  value={(form[k] as string) ?? ''}
-                  onChange={(e) => setField(k, e.target.value)}
-                  placeholder={placeholder}
-                />
-              </div>
-            ))}
+            {renderTextFields([['name', '名称', '如：通义千问默认']])}
+            <ProviderField
+              provider={form.provider || ''}
+              presets={providers}
+              onProviderChange={(val) => setField('provider', val)}
+              onPresetSelect={(preset) => {
+                setField('provider', preset.key);
+                // 端点一并填上：各家后缀并不统一，让人自己猜就是最难排查的那类静默 404
+                setField('endpoint', preset.defaultEndpoint);
+              }}
+            />
+            {renderTextFields([
+              ['modelId', '模型 ID', '如：qwen-plus'],
+              ['endpoint', '端点（选填）', '留空使用厂商官方端点'],
+              ['scenario', '场景', 'default / complaint / faq'],
+            ])}
             <div className="grid grid-cols-4 items-center gap-4">
               <label htmlFor="apiKey" className="text-right text-sm font-medium">API Key</label>
               <Input
