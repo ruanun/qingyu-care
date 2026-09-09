@@ -93,7 +93,7 @@
 
 ### 访客侧：嵌入客户网站的 Widget
 
-一行 `<script>` 嵌进任意网站，访客提问由知识库检索增强作答，可随时转人工。下图中的电商页面是**演示用的示例站点**，用来说明 Widget 嵌入后的样子：
+一行 `<script>` 嵌进任意网站，访客提问由知识库检索增强作答，可随时转人工。下图中的电商页面是**演示用的示例站点**，源码在 [`demo-site/`](./demo-site/)，`npx serve demo-site -l 3000` 即可起（端口必须是 3000，原因见该目录的 README）：
 
 ![Widget 实机](./docs/images/15-widget-chat.png)
 
@@ -158,6 +158,8 @@ qingyu-care/
 │   └── Dockerfile
 ├── frontend/                # 管理后台（React + Vite），含 Dockerfile 与 nginx.conf
 ├── widget/                  # 可嵌入网页的 Widget SDK（独立子项目，产物 widget.js）
+├── cli/                     # 命令行调试客户端（独立子项目，复用 widget 协议层）
+├── demo-site/               # 「云舟商城」示例站点，演示 Widget 嵌入第三方网站的样子
 ├── docker/                  # 基础设施编排（开发版与生产版 compose）
 ├── docs/                    # 使用手册、部署文档、开发流程、截图与开发存档
 ├── .env.example             # 环境变量模板
