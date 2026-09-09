@@ -1,0 +1,195 @@
+/*
+ * 云舟商城演示站点样式
+ *
+ * 刻意保持零依赖、零构建：一个 HTML 加一个 CSS，npx serve 就能起。
+ * 配色有意与轻语品牌绿区分开——这个页面扮演的是「第三方客户网站」，
+ * 绿色气泡浮在紫色系页面上，才看得出 widget 是嵌进来的外部组件。
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #f8f9fb;
+  color: #1f2937;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 顶部导航 ---------- */
+
+.nav {
+  background: #fff;
+  border-bottom: 1px solid #e8eaed;
+}
+
+/* 1440 是截图基准宽度，减两侧 48 边距得 1344 内容宽——四列卡片各 318px，与
+   docs/images/15-widget-chat.png 对齐。max-width 要含 padding，别写成 1344。 */
+.nav-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 48px;
+  height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 36px;
+}
+
+.logo {
+  font-size: 19px;
+  font-weight: 700;
+  color: #6c5ce7;
+  text-decoration: none;
+  letter-spacing: .5px;
+  white-space: nowrap;
+}
+
+.nav-links {
+  display: flex;
+  gap: 28px;
+}
+
+.nav-links a {
+  font-size: 14px;
+  color: #374151;
+  text-decoration: none;
+  transition: color .15s;
+}
+
+.nav-links a:hover { color: #6c5ce7; }
+
+/* ---------- 主体 ---------- */
+
+.main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 48px 48px 40px;
+}
+
+.hero h1 {
+  margin: 0 0 10px;
+  font-size: 40px;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: -.5px;
+}
+
+.hero p {
+  margin: 0 0 40px;
+  font-size: 15px;
+  color: #6b7280;
+}
+
+/* ---------- 商品卡片 ---------- */
+
+.goods {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 12px;
+  padding: 18px;
+  transition: box-shadow .18s, transform .18s;
+}
+
+.card:hover {
+  box-shadow: 0 6px 20px rgba(17, 24, 39, .07);
+  transform: translateY(-2px);
+}
+
+.thumb {
+  height: 146px;
+  border-radius: 8px;
+  background: #e5e7eb;
+  margin-bottom: 18px;
+}
+
+.title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.5;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.price {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e11d48;
+}
+
+/* ---------- 提示区 ---------- */
+
+.tips {
+  margin-top: 48px;
+  padding: 24px 28px;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 12px;
+}
+
+.tips h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.tips ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 2;
+}
+
+.tips-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+/* ---------- 页脚 ---------- */
+
+.footer {
+  max-width: 1440px;
+  /* 右侧留白避开 widget 气泡（默认停在右下角），否则页脚文字会被压在气泡底下 */
+  margin: 0 auto;
+  padding: 32px 110px 56px 48px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #9ca3af;
+}
+
+.footer strong { color: #6b7280; }
+
+/* ---------- 窄屏 ---------- */
+
+@media (max-width: 1100px) {
+  .goods { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .nav-inner { padding: 0 20px; gap: 20px; overflow-x: auto; }
+  .main { padding: 32px 20px; }
+  .hero h1 { font-size: 27px; }
+  .goods { grid-template-columns: 1fr; }
+  .footer { padding: 24px 20px 48px; }
+}
