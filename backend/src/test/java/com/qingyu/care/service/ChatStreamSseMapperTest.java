@@ -11,7 +11,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 单元测试：ChatStreamEvent → ServerSentEvent 的事件名与 payload 序列化契约。
- * 协议见 docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3。
  *
  * @author ruan
  */

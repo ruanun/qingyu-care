@@ -1,5 +1,5 @@
 // 卡片按钮的 Action URI 协议：{protocol}://{content}
-// 协议见 docs/superpowers/specs/2026-08-04-card-action-uri-design.md §3
+// 与 frontend/src/lib/actionUri.ts 是同一套规则的两份实现，白名单必须逐字一致
 
 import { safeUrl } from './safeUrl.js';
 

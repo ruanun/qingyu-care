@@ -56,7 +56,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 刻意**不判红**：这些条目自动化测试永远覆盖不到，判红只会逼人为了绿而空跑流程。
 
 ### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事
-这三条自动化测试**永远覆盖不到**——IT 里 `VectorStore` 与 `ChatClient` 全被 mock，`streamUsage` 静默失效不抛异常，出站 URL 更是测试看不到的东西。Boot 4.1 + Spring AI 2.0 迁移就是靠这三条真机冒烟才闭合的（`docs/superpowers/specs/2026-07-30-boot4-springai2-migration-design.md` §8.1/§8.3）：
+这三条自动化测试**永远覆盖不到**——IT 里 `VectorStore` 与 `ChatClient` 全被 mock，`streamUsage` 静默失效不抛异常，出站 URL 更是测试看不到的东西。Boot 4.1 + Spring AI 2.0 迁移就是靠这三条真机冒烟才闭合的：
 1. **向量检索活性**：上传文档 → 提问 → 确认命中且 `score > 0`。
 2. **token 计量非零**：打一次流式对话 → 查 `sys_api_usage.token_count` 非零（`streamUsage` 一旦失效是静默的，记 0 不抛）。
 3. **出站 URL 形态**：把 `AI_BASE_URL` 临时指向本地 HTTP 监听器抓包，确认实际请求路径是 `/v1/chat/completions` 与 `/v1/embeddings`。
@@ -124,7 +124,7 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
 6. **B 的双向真机联调**：坐席发消息 → widget 展开着 → 坐席端出现「已读」；把 widget **收起**再让坐席发一条 → 坐席端**不该**出现已读。收起是 widget 内部状态，jsdom 里测的是我们自己的桩。
 7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着甲，让乙的访客读消息 → 标记必须落在乙上。这是多会话列表引入的新失效模式，只在真机多开时现形。
 
-⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复，沿革见 `docs/superpowers/specs/2026-08-20-agent-message-role-design.md`。
+⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复。
 
 **第 2 条（Page Visibility）的真机配方** —— 2026-08-20 摸索并验证通过，复用这套、别重走弯路：
 
@@ -311,7 +311,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 
 远端 MCP server 的工具清单同步进 `mcp_server`/`mcp_tool` 两张表（均继承
 `BaseTenantEntity`），运行时由 `ChatToolService.resolve()` 与现有 HTTP 工具合并进同一份
-`toolCallbacks`。设计文档：`docs/superpowers/specs/2026-08-21-mcp-integration-design.md`。
+`toolCallbacks`。
 
 ⚠️ 容易写错的地方：
 
@@ -384,7 +384,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 函数**，`OpenAPI` + 配置 → 候选列表 + warnings，本特性规则最密的地方）、
 `OpenApiSchemaFetcher`（委托 `WebPageFetcher.downloadRaw` 拉取 URL，复用其 SSRF 硬门槛而
 非另起一套出站防线）、`OpenApiImportService`（编排：取文本 → 解析 → 映射 → 冲突标记 / 批量
-落库）。设计文档：`docs/superpowers/specs/2026-08-23-openapi-tool-import-design.md`。
+落库）。
 
 同批顺带把 `HttpToolCallback.fillTemplate` 抽成独立纯函数类 `UrlTemplateFiller`，修了一个
 既有缺陷：旧实现对 LLM 未填的占位符原样保留，可选 query 参数因此一直是坏的（
@@ -439,7 +439,6 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 一键安装成**自己名下的副本**（可改可停用可删）。三个纯函数类关住全部规则：
 `PackageManifestBuilder`（实体 → manifest + warnings）、`PackageManifestParser`（JSON ↔ manifest
 + 结构校验）、`PackageVariableApplier`（变量填充 + 残留检测）；两个 `@Service` 只做取数与落库。
-设计文档：`docs/superpowers/specs/2026-08-25-tool-package-store-design.md`。
 
 ⚠️ Java 包名用 `pkg` 而非 `package`——后者是关键字，`service.package` 编译不过。
 
@@ -485,7 +484,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    只加列、不改已有列的类型。
 9. **冲突检测按 name 整体拒绝，不自动改名**；工具名的已占用集合**必须算上平台共享工具**——
    `resolve()` 遇到重名会静默跳过其中一个，与共享工具重名的工具装进去了也挂不上 LLM。
-10. **不建安装记录表**（spec §2.3）：一次性、装完断开。有了它就会长出「已安装」状态，而那个
+10. **不建安装记录表**：安装是一次性的、装完断开。有了它就会长出「已安装」状态，而那个
     状态是假的——租户随手删掉装下来的工具，表里仍写着已安装。
 11. **⚠️ 绑定完成 ≠ AI 能用（真机验证挖出，2026-08-28）**：`syncMcpAndBindSkills` 只按名字把
     刚同步出来的 `mcp_tool` id 塞进 `skill.mcpToolIds`，而 `McpServerService.sync()` 对全新
@@ -534,7 +533,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 
 ### 安全基线（2026-09-03 全项目审查后必须保持的几条）
 
-审查报告在 `docs/superpowers/reviews/2026-09-03-security-review.md`（分级发现 + 修复状态）。下面这些是修完后立下的不变量，改动相关代码前先读对应条目：
+2026-09-03 做过一次全项目安全审查（6 高 9 中 13 低），高危与中危已全部修完。下面这些是修完后立下的不变量，改动相关代码前先读对应条目：
 
 1. **平台管理员口令不写死**：`AuthService.init` 从 `qingyu.care.platform.admin-initial-password`（`QINGYU_ADMIN_INITIAL_PASSWORD`）取，为空则随机生成、只打一次 WARN。dev/test profile 固定 `admin123`（多条 IT 靠它登录）。`AuthServiceInitTest` 守着「不回落 admin123」。
 2. **自助注册只能建新租户**：带 `tenantCode` 一律 403。租户 code 不是秘密，凭它加入曾等于自封任意租户的管理员。
@@ -593,7 +592,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - ⚠️ **robots.txt 解析两处易错**：连续 `User-agent` 行属同一组（规范上如此，逐行重置状态会丢掉该组的 `Disallow`）；UTF-8 BOM 附着在首行 key 上，`trim()` 不剥 U+FEFF，会让整份文件的 `Disallow` 全部静默失效。两条错误方向都是「放行站点明确禁止的路径」，遵守 robots.txt 是替租户出站的合规承诺，故这两条判定"现在修"不留技术债。
 - ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘以 500 页硬顶就是 40 多小时，全程占着长任务池（`AsyncConfig.LONG_TASK_EXECUTOR`，固定 6 线程）的一个线程。
 - ⚠️ **删站点勾选删文档时必须逐篇走 `knowledgeService.deleteDocument`**，不能 `repository.deleteAll`——只删库行会留下再也没有库行指向、**却仍参与检索**的孤儿向量（继续被命中并拼进 Prompt，而界面上已看不到这些文档）。同附件孤儿清理必须连 S3 一起删。
-- **重爬时已存在的页会被抓两次**（一次为提链接、一次在 `syncDocument` 内部）。这是刻意的取舍：抽取 `syncDocument` 的三分支能省下这些请求，但那段代码的每条注释都是一个真实缺陷的墓碑。触发重新考虑的条件写在 `docs/superpowers/specs/2026-08-06-site-crawl-design.md` §5.2。
+- **重爬时已存在的页会被抓两次**（一次为提链接、一次在 `syncDocument` 内部）。这是刻意的取舍：抽取 `syncDocument` 的三分支能省下这些请求，但那段代码的每条注释都是一个真实缺陷的墓碑（`contentHash` 何时落库、失败计数何时清零、`truncate` 的 flush 时机、咨询锁的位置）。**触发重新考虑的条件**：实测重爬耗时不可接受（如 200 页站点重爬超过 15 分钟）时再做这个抽取，并为抽出的方法补齐守护上述四条语义的测试。⚠️ 另注意已存在的页必须**同步**调 `syncDocument` 而非 `syncDocumentAsync`——后者会让 N 篇瞬间涌进 `@Async` 池，robots 的 `Crawl-delay` 与 1 秒限速当场失效，等于对目标站点发起一次并发冲击。
 - ⚠️ **前端轮询两个坑**（`CrawlSiteList.tsx`）：进度/定时器必须按 `jobId` 而非 `siteId` 索引（后端 `maxConcurrentJobs=2` 明确支持双任务并发，按 `siteId` 索引会在旧任务收尾与新任务写入之间的窗口期互相覆盖）；`isMountedRef` **必须在 effect 的 setup 阶段复位为 true**——只在 cleanup 里置 false，会被 `<StrictMode>` 的 `setup→cleanup→setup` 卡死在 false，`pnpm dev` 下轮询一次都跑不起来（进度不更新/不续期/不 toast/不刷新列表），而 `vite build` 不受影响、React 18 起也没有 console 警告，极难发现。
 
 ### 聊天附件（多媒体消息，`service/media/` + `controller/support/AttachmentResponses`）
@@ -660,9 +659,9 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - 本仓库允许 `git commit`；在默认分支上先建特性分支再改，未获授权不 `git push`。
 
 ## 文档地图
-- `docs/README.md`：文档索引，区分「使用者该读的」与「开发过程存档」。
+- `docs/README.md`：文档索引，区分「使用者该读的」与「开发者该读的」。
 - `docs/使用手册.md`：面向租户管理员的功能操作指南（配截图）。改了界面行为要同步。
 - `docs/部署文档.md`：部署、容器化、备份恢复、监控与**故障手册**——本文件里那些「不报错只静默异常」的坑，运维视角的版本在那儿。
-- `SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）的详细任务与接口设计。
+- `docs/开发流程文档.md`：环境搭建、分支与提交规范、测试体系、各子项目的开发约定。
+- `SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）/ Phase 5（智能客服能力补齐）的详细任务与接口设计。
 - `brand/README.md`：logo 与品牌色。⚠️ 图形的路径数据在仓库里存了**五份**（favicon / 管理端组件 / widget 常量 / 字标 / 基准），三个独立构建目标之间没有共享模块的通道。`frontend/scripts/brandAssetSync.test.ts` 守着五处同源，改一处漏其它即红；**改了 `widget/src/logo.ts` 还必须重新 build 并提交 `widget.js`**。
-- `docs/superpowers/` 下为各子功能的 spec 与实现计划（开发过程存档，刻意不迁走：本文件有若干带章节号的指针指向具体 spec，且它是写 spec 的默认路径）。

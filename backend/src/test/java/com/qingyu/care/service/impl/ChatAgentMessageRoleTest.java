@@ -48,8 +48,7 @@ import static org.mockito.Mockito.when;
  *
  * <p>守的是一个真实缺陷：agentReply 长期落库写 ASSISTANT，而 MessageRole.AGENT 从未被写入，
  * 导致访客刷新页面后坐席说过的话被 widget 的历史恢复分支当成 AI 回复渲染
- * （widget/src/history.ts 按 role 分派）。详见
- * docs/superpowers/specs/2026-08-20-agent-message-role-design.md
+ * （widget/src/history.ts 按 role 分派）。
  *
  * @author ruan
  */

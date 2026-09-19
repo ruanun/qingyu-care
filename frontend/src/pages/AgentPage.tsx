@@ -395,8 +395,7 @@ const AgentPage: React.FC = () => {
     //
     // 判据是 role === 'AGENT'：坐席消息落库写的就是 MessageRole.AGENT
     // （ChatServiceImpl#agentReply）。⚠️ 上面本地乐观插入的那条消息 role 是前端硬编码的，
-    // 必须与这里保持一致，否则坐席自己刚发的消息标不上已读、要刷新才对——
-    // 见 docs/superpowers/specs/2026-08-20-agent-message-role-design.md §4.2。
+    // 必须与这里保持一致，否则坐席自己刚发的消息标不上已读、要刷新才对。
     // 历史沿革：本判据曾经是 'ASSISTANT'，因为那时 agentReply 落库写的是 ASSISTANT、
     // MessageRole.AGENT 从未被写入。该根因已于 2026-08-20 修复。
     const visitorReadUpTo = selectedSession ? visitorReadMap[selectedSession.sessionId] : undefined;

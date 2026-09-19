@@ -38,11 +38,11 @@ test-output/
 # Compiled class files
 *.class
 
-# 参考项目目录（仅本地参考，不纳入版本控制）
+# 本地资料目录（仅本机查阅，不纳入版本控制）
 /references/
 
 # Cygwin/Git Bash 崩溃转储（脚本跑挂时会掉在当前目录）
 *.stackdump
 
-# Superpowers SDD 工作区（ledger/简报/review 包，纯临时产物）
+# 本地工作区临时产物
 .superpowers/

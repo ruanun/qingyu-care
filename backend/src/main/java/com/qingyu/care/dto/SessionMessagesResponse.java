@@ -31,7 +31,7 @@ public class SessionMessagesResponse {
      * 访客读到哪了（对方的已读水位线）。⚠️ 只带对方（访客）的，不带坐席自己的——把自己的
      * 也返回会诱使前端拿它当本地状态的事实源，而本地水位线的推进条件（坐席是否选中该会话且
      * 页面前台可见）只有客户端自己知道，服务端那份必然滞后。访客尚未产生任何已读回执时为
-     * {@code null}。见 docs/superpowers/specs/2026-08-19-message-read-receipt-design.md §4.4。
+     * {@code null}。
      */
     private Long visitorReadUpToMessageId;
 }

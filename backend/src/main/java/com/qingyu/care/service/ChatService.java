@@ -26,8 +26,8 @@ public interface ChatService {
     ChatResponse chat(ChatRequest request);
     
     /**
-     * 流式聊天（内部调用，不计量）。返回结构化事件流，协议见
-     * docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3。
+     * 流式聊天（内部调用，不计量）。返回结构化事件流：
+     * START → (DELTA|CARD)* → DONE；失败时以 ERROR 收尾。
      */
     Flux<ChatStreamEvent> streamChat(ChatRequest request);
 
