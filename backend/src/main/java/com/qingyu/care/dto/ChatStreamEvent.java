@@ -3,7 +3,7 @@ package com.qingyu.care.dto;
 import java.util.List;
 
 /**
- * 流式对话的一个 SSE 事件。协议见 docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3。
+ * 流式对话的一个 SSE 事件。
  *
  * <p>事件语义：
  * <ul>

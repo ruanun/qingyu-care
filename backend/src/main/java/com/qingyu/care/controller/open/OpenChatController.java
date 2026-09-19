@@ -75,7 +75,7 @@ public class OpenChatController {
     }
 
     /**
-     * 流式对话（SSE）。事件协议见 docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3：
+     * 流式对话（SSE）。事件协议：
      * start（会话/转人工建议/知识命中）→ delta|card（正文增量与卡片）→ done（messageId）；失败以 error 收尾。
      * 流结束时经计量回调异步记录用量（计量保持开放 API 专属）；挂了工具触发降级为非流式的这一轮，
      * 首次以 0 token 记账后由 {@code onFallbackTokensUsed} 补记回退实际用掉的 token（见

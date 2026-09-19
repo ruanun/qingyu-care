@@ -5,7 +5,6 @@
 --   ChatServiceImpl.saveMessages（AI 回复）：参数是基本类型 double，语法上不可能为 null
 --   DemoDataSeeder（演示数据）：显式 .confidenceScore(confidence)
 --   ChatServiceImpl.agentReply（坐席回复）：从不设置 → null
--- 详见 docs/superpowers/specs/2026-08-20-agent-message-role-design.md §6.1
 --
 -- 幂等：改完之后这些行的 role 已是 AGENT，WHERE 不再命中，可重复执行。
 --

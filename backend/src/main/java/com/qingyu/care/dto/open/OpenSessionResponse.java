@@ -43,8 +43,7 @@ public class OpenSessionResponse {
      * 坐席读到哪了（对方的已读水位线）。⚠️ 只带对方（坐席）的，不带访客自己的——把自己的
      * 也返回会诱使前端拿它当本地状态的事实源，而本地水位线的推进条件（widget 是否真的展开且
      * 页面可见）只有客户端自己知道，服务端那份必然滞后。会话尚无坐席接管、或坐席还未产生任何
-     * 已读回执时为 {@code null}。见
-     * docs/superpowers/specs/2026-08-19-message-read-receipt-design.md §4.4。
+     * 已读回执时为 {@code null}。
      */
     private Long agentReadUpToMessageId;
 

@@ -76,8 +76,7 @@ public class AiTool extends BaseTenantEntity {
      * check (...)"）会被 PostgreSQL 整体拒绝（ERROR: column "scope" ... contains null
      * values），而 SchemaUpdate 对单条 DDL 失败只打 WARN、不阻断启动——后果是列压根没
      * 建出来，应用照常起来，直到运行时查询 ai_tool 才炸，且无任何现象提醒（已真机验证
-     * 复现，详见平台共享工具设计文档
-     * docs/superpowers/specs/2026-08-12-platform-shared-tools-design.md）。带上 default
+     * 复现）。带上 default
      * 后 PostgreSQL 用它一次性回填存量行，同一条 DDL 就能成功，不需要额外的手工迁移脚本。
      */
     @Enumerated(EnumType.STRING)

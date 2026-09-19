@@ -5,8 +5,7 @@
 `readline`，HTTP 用原生 `fetch`。
 
 它同时是 `widget/src/core/`（widget 协议层）的第一个非浏览器消费者——存在的意义不只是工具
-本身，而是逼出协议层里还粘着多少浏览器假设（详见 `widget/src/core/platform.ts` 顶部注释与
-`docs/superpowers/specs/2026-08-24-widget-core-extraction-design.md`）。
+本身，而是逼出协议层里还粘着多少浏览器假设（详见 `widget/src/core/platform.ts` 顶部注释）。
 
 ## 两种身份
 

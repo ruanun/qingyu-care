@@ -1,6 +1,5 @@
 // frontend/src/lib/actionUri.ts
 // 卡片按钮的 Action URI 协议：{protocol}://{content}
-// 协议见 docs/superpowers/specs/2026-08-04-card-action-uri-design.md §3
 // 与 widget/src/actionUri.ts 是同一套规则的两份实现（widget 不依赖 React，无法共享）
 
 import { safeUrl } from './safeUrl';

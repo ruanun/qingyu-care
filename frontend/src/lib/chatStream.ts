@@ -1,7 +1,7 @@
 // frontend/src/lib/chatStream.ts
 // 对话流专用的一次性 POST SSE：与 sse.ts（GET + 自动重连，inbox 长连接用）刻意分开——
 // 对话流绝不能自动重连，重连等于重复发消息、重复计费。
-// 事件协议见 docs/superpowers/specs/2026-08-04-streaming-chat-design.md §3。
+// 事件协议：start → (delta|card)* → done，失败以 error 收尾。
 
 import { authHeaders, parseSseChunk } from './sse';
 import type { KnowledgeHit, UiNode } from '@/types';
