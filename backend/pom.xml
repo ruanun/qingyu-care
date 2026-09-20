@@ -18,7 +18,29 @@
     <description>轻语 - AI智能客服系统</description>
     
     <properties>
-        <java.version>17</java.version>
+        <java.version>25</java.version>
+        <!--
+          Mockito 的 inline mock-maker（mockStatic 等）需要一个 Java agent。JDK 21 起
+          （JEP 451）self-attach 会打一串告警，且「未来版本默认禁止动态加载 agent」——
+          届时不是告警而是直接失效。故显式把 mockito-core 挂成 -javaagent，见下方
+          surefire/failsafe 的 argLine。
+          ⚠️ 不要改用 -XX:+EnableDynamicAgentLoading：它只是把告警静音，self-attach 本身
+          没变，JDK 真禁掉那天照样断，而那时的现象是一堆 mockStatic 测试同时红。
+          ⚠️ argLine 里刻意不写 @{argLine} 前缀：本仓库没有 JaCoCo 之类会预置 argLine
+          的插件，写了反而会因属性未定义而启动失败。将来若引入 JaCoCo，必须补回前缀，
+          否则会把它的 agent 覆盖掉。
+          ⚠️ **路径必须用引号包起来**：Surefire/Failsafe 按空白切分 argLine，而本地仓库
+          默认在 `%USERPROFILE%\.m2\repository`——Windows 账户名带空格（微软账户「名 姓」
+          很常见）就会把 -javaagent 的路径劈成两段。实测症状是
+          `Error opening zip file or JAR manifest missing : D:/fake` +
+          `The forked VM terminated without properly saying goodbye`，**整个 mvn test /
+          mvn verify 全军覆没且报错完全看不出跟 agent 有关**。
+          ⚠️ argLine 声明成属性而非写进两个插件的 configuration：Surefire 与 Failsafe 的
+          argLine 参数都默认取 ${argLine}，一处声明两边生效。抄成两份必然各自漂移
+          （本仓库在 AiTool/AiModelConfig 双注册上已经吃过这个亏）。
+        -->
+        <mockito.agent>${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</mockito.agent>
+        <argLine>"-javaagent:${mockito.agent}"</argLine>
         <spring-ai.version>2.0.0</spring-ai.version>
         <bucket4j.version>8.19.0</bucket4j.version>
         <!--

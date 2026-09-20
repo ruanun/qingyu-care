@@ -105,7 +105,7 @@
 
 | 技术 | 版本 | 说明 |
 |------|------|------|
-| Java | 17 | LTS |
+| Java | 25 | LTS |
 | Spring Boot | 4.1.0 | 应用框架 |
 | Spring AI | 2.0.0 | AI 能力集成（OpenAI 兼容模式） |
 | 通义千问 DashScope | - | 默认 LLM 与向量模型；可切任意 OpenAI 兼容端点 |
@@ -170,7 +170,7 @@ qingyu-care/
 
 ### 环境要求
 
-JDK 17+ · Maven 3.9+ · Node.js 20+ 与 pnpm · Docker & Docker Compose
+JDK 25+ · Maven 3.9+ · Node.js 20+ 与 pnpm · Docker & Docker Compose
 
 ### 1. 启动基础设施
 
