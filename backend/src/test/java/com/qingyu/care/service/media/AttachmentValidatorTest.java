@@ -92,7 +92,7 @@ class AttachmentValidatorTest {
 
     @Test
     void WEBP通过校验但因JDK无解码器宽高恒为空() {
-        // JDK 17 内置 ImageIO 没有 webp reader；Tika 仅靠 RIFF/WEBP 魔数即可探测，不需要完整文件
+        // JDK 内置 ImageIO 至今（实测到 25）都没有 webp reader；Tika 仅靠 RIFF/WEBP 魔数即可探测，不需要完整文件
         byte[] webp = new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'};
 
         AttachmentValidator.ValidatedFile r = validator.validate(webp, "pic.webp");
