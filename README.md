@@ -170,7 +170,7 @@ qingyu-care/
 
 ### 环境要求
 
-JDK 17+ · Maven 3.9+ · Node.js 20+ 与 pnpm · Docker & Docker Compose
+JDK 25+ · Maven 3.9+ · Node.js 20+ 与 pnpm · Docker & Docker Compose
 
 ### 1. 启动基础设施
 
