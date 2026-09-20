@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  * （发布前要补变量的 label/help，spec §4.1）。后者意味着任何字段都可能被改坏，而安装是在
  * 租户名下批量建行——不在这里拦住，就会在 {@code save} 那一刻抛
  * {@code DataIntegrityViolationException}，被 {@code GlobalExceptionHandler} 接成 HTTP 500 +
- * 完整 INSERT 语句回给客户端（CLAUDE.md「MCP 接入」第 9 条那个坑，换个位置复发）。
+ * 完整 INSERT 语句回给客户端（docs/dev/子系统要点.md「MCP 接入」第 9 条那个坑，换个位置复发）。
  *
  * <p><b>长度上限直接对齐实体列宽</b>，每个常量都注明来源。⚠️ 改实体列宽时必须同步改这里，
  * 否则要么这里白拦（更严，用户被无谓挡住），要么拦不住（更松，500 复发）。
@@ -266,7 +266,7 @@ public class PackageManifestParser {
      * <p>而 {@code name}/{@code code} 才是<b>真正落库的字段</b>：安装出两行同名 {@code AiTool}
      * 后，{@code ChatToolService.resolve()} 遇到重名只 {@code log.warn} 一句就跳过其一
      * （<code>if (!exposedNames.add(t.getName())) continue;</code>）——界面上两个都在，
-     * 技能挂给 LLM 的工具却少一个，全程无异常无日志。与 CLAUDE.md「MCP 接入」第 7 条
+     * 技能挂给 LLM 的工具却少一个，全程无异常无日志。与 docs/dev/子系统要点.md「MCP 接入」第 7 条
      * 「静默降级」是同一种失效模式。{@code PackageInstallService.requireNoConflict} 的冲突检测
      * 只防住了「与<b>已有的</b>重名」这一半，包<b>内部</b>自己重名必须在这里、发布之前就拦下——
      * 坏包不该等到某个租户点安装才炸，见类注释里那条「后者意味着任何字段都可能被改坏」。

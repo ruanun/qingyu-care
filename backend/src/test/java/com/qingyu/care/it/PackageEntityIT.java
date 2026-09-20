@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>长度由包里有多少工具、skill 的 markdown 有多长决定，没有可预估的上限。
  * {@code McpTool.description} 就是设成 {@code varchar(1000)} 之后在真机接入 context7 时
  * 直接抛 {@code value too long for type character varying(1000)}，整个 server 接不进来
- * （CLAUDE.md「MCP 接入」第 10 条）。本 IT 与 {@code McpToolLongDescriptionIT} 同源，
+ * （docs/dev/子系统要点.md「MCP 接入」第 10 条）。本 IT 与 {@code McpToolLongDescriptionIT} 同源，
  * 同一个坑不换位置再踩一次。
  *
  * <p>⚠️ 本 IT 只守新建库。存量库另需迁移 SQL——{@code ddl-auto: update} 只加列、

@@ -130,7 +130,7 @@ public class OpenApiImportService {
      * 调用本接口的客户端（urlTemplate/httpMethod 前端不给编辑入口，但请求体层面完全可控）。
      * 不校验直接落库的后果：超出列宽时 {@code saveAll} 抛
      * {@code DataIntegrityViolationException}，被 {@code GlobalExceptionHandler} 接成
-     * HTTP 500 + 完整 INSERT 语句回给客户端——同 CLAUDE.md「MCP 接入」第 9 条记录的坑，换了
+     * HTTP 500 + 完整 INSERT 语句回给客户端——同 docs/dev/子系统要点.md「MCP 接入」第 9 条记录的坑，换了
      * 个位置复发。
      */
     private void validateCandidate(OpenApiToolCandidate c) {
