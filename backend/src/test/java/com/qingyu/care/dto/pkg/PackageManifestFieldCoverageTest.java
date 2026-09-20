@@ -108,7 +108,7 @@ class PackageManifestFieldCoverageTest {
                         + "「平台管理员当时把它停用了」是平台侧的临时状态，不该随包传播给租户"));
         aiTool.put("scope", ex(ExclusionCategory.INSTALL_FORCED,
                 "安装时强制 OwnerScope.TENANT。manifest 里有这个字段就是把「租户自封 PLATFORM」"
-                        + "那条真实事故（CLAUDE.md 平台共享工具第 1 条）换条路径复活"));
+                        + "那条真实事故（docs/dev/子系统要点.md 平台共享工具第 1 条）换条路径复活"));
         whitelist.put("AiTool", aiTool);
 
         Map<String, Exclusion> aiSkill = new LinkedHashMap<>();

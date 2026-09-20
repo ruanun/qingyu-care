@@ -79,7 +79,7 @@ public class ToolPackage {
      *
      * <p>⚠️ <b>必须是 {@code text}，不能设列宽</b>：长度由包里有多少工具、skill 的 markdown
      * 有多长决定，没有可预估的上限。{@code McpTool.description} 就是设成 {@code varchar(1000)}
-     * 之后在真机接入 context7 时整个 server 接不进来（CLAUDE.md「MCP 接入」第 10 条）。
+     * 之后在真机接入 context7 时整个 server 接不进来（docs/dev/子系统要点.md「MCP 接入」第 10 条）。
      * 由 {@code PackageEntityIT} 守护；⚠️ 存量库另需迁移 SQL——{@code ddl-auto: update}
      * 只加列、不改已有列的类型。
      */

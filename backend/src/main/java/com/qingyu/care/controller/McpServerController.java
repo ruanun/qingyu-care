@@ -44,9 +44,9 @@ public class McpServerController {
         // 由 TenantEntityListener 回填
         server.setId(null);
         // 不信任请求体里的 scope：McpServer.scope 无 @JsonProperty(READ_ONLY) 保护，
-        // 租户可在请求体里自封 PLATFORM（AiToolController.create 那一行同源，见 CLAUDE.md
-        // 记载的真实事故——租户自封 PLATFORM 后，工具带着攻击者的 authHeader 出现在所有租户的
-        // 共享列表里，被别的租户绑进 skill 调用）
+        // 租户可在请求体里自封 PLATFORM（AiToolController.create 那一行同源，见
+        // docs/dev/子系统要点.md「平台共享工具」第 1 条记载的真实事故——租户自封 PLATFORM 后，
+        // 工具带着攻击者的 authHeader 出现在所有租户的共享列表里，被别的租户绑进 skill 调用）
         server.setScope(OwnerScope.TENANT);
         return ApiResponse.success("创建成功", mcpServerService.saveServer(server));
     }

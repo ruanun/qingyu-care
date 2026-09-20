@@ -54,7 +54,7 @@ public class OpenApiToolMapper {
      * {@code name={name}} 2n+4 字符），报表/搜索类 API 达到这个量级不算罕见。不设防会让
      * {@code saveAll} 抛 {@code DataIntegrityViolationException}，被
      * {@code GlobalExceptionHandler} 接成 HTTP 500 + 完整 INSERT 语句回给客户端——同
-     * CLAUDE.md「MCP 接入」第 9 条记录的坑。
+     * docs/dev/子系统要点.md「MCP 接入」第 9 条记录的坑。
      */
     static final int MAX_URL_TEMPLATE = 1000;
 

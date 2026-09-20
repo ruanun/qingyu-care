@@ -31,7 +31,7 @@ import java.util.Set;
  *
  * <p><b>为什么必须分两段</b>（spec §4.3）：{@code McpServerService.sync()} 是<b>网络出站 +
  * 自己写库</b>，且<b>刻意不带 {@code @Transactional}</b>（它的半截状态靠重新同步收敛，
- * CLAUDE.md「MCP 接入」第 9 条）。把它包进安装事务有两重问题：长事务占着数据库连接做网络
+ * docs/dev/子系统要点.md「MCP 接入」第 9 条）。把它包进安装事务有两重问题：长事务占着数据库连接做网络
  * 往返；以及跟它自己的非事务语义直接打架。
  *
  * <p><b>段二失败不回滚段一</b>，这是<b>有意的部分成功</b>：MCP 服务已经装好了，界面明确提示
@@ -335,7 +335,7 @@ public class PackageInstallService {
                     // readOnly=false（「未知一律当可写、不挂载」），而运行时
                     // ChatToolService.resolveMcpCallbacks 走的是 findByIdInAndStatusAndReadOnlyTrue
                     // —— 只取 readOnly=true 的。所以这些刚绑上的工具此刻挂不给 LLM。
-                    // ⚠️ 这里**绝不能自动帮租户标只读**：CLAUDE.md「MCP 接入」第 3 条明令「同步绝不
+                    // ⚠️ 这里**绝不能自动帮租户标只读**：docs/dev/子系统要点.md「MCP 接入」第 3 条明令「同步绝不
                     // 覆盖 readOnly」——它是租户自己标注的安全判据，替他标就是安全降级且完全静默
                     // （一个可写工具会被 LLM 调用）。所以只能明确告知、让他自己去标。
                     // 不加这条 warning 的后果正是本特性真机验证时实拍到的：安装报告零 warning、
