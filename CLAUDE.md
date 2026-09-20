@@ -32,135 +32,6 @@ mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe �
   ⚠️ **但「一律带 `/v1`」只对 DashScope 这类厂商成立，不是通则**：库里 `ai_model_config.endpoint` 是租户逐个模型填的，各家 OpenAI 兼容模式的 base 路径后缀并不统一（智谱 `/api/paas/v4`、火山方舟 `/api/v3`、Gemini `/v1beta/openai`），给它们补 `/v1` 就是 404。判据是「拼上 `chat/completions` 是否恰好等于该厂商的真实请求地址」，不是「有没有 `/v1`」。各家的正确值见 `ModelProviderCatalog`，那是全仓唯一一份厂商清单，前端经 `GET /v1/ai-models/providers` 拉同一份渲染下拉与徽章——**别在前端另起一份**。
 - 服务上下文路径是 `/api`，Swagger 在 `http://localhost:8080/api/swagger-ui.html`。
 
-### 演示数据与截图
-
-`DemoDataSeeder`（`@Profile("demo")` + `ApplicationRunner`）播种「云舟科技」整套演示数据：租户/应用/用户、租户级问答策略、知识库 4 篇文档（走真实 `uploadDocument()`，S3 + Tika + 真实 embedding，向量可检索）、8 条 QA、12 组会话（铺在最近 30 天）、30 天用量、分析日表经 `backfill` 真实聚合。幂等键是租户 code `demo-cloudboat`，反复重启不重播。演示账号 `demo_admin` / `demo123456`（租户管理员）、`demo_agent` / `demo123456`（坐席）。
-
-⚠️ 三个坑已写在类注释里，改动时别退化：
-
-1. **`ApplicationRunner` 没有 `TenantContext`**，不手工搬运则知识库与文档的 `tenant_id` 静默落 NULL——后果不是「对所有租户可见」而是反过来「对任何租户都检索不到」（metadata 写成 `tenantId: ""`，与 `tenantId == '<真实id>'` 永远匹配不上）。`finally` 里必须 `clear()`，启动线程会被后续请求复用。
-2. **`ChatSession`/`ChatMessage` 的 `createdAt` 带 `@CreationTimestamp`**，Hibernate 在 INSERT 时覆盖任何手工赋值，必须落库后用原生 UPDATE 回填，否则 12 条会话全落在今天，而 rollup 按 `cm.created_at` 分日聚合，30 天曲线退化成一根柱子。
-3. **`hit_document_ids` 必须写 JSON 数组字面量**（`"[16]"`）而非裸数字：`AnalyticsRollupDao.insertDocHits` 用 `json_array_elements_text` 展开，标量直接抛，而 `rollupDay` 把三条 insert 包在同一事务里——那一天的质量与热词聚合会被一起回滚。
-
-`docs/images/` 的 15 张截图基于这套数据实拍（1440×900）。改了界面要重拍时：起 `dev,demo` profile，用 `demo_admin` 登录并**在顶部选中「云舟商城客服」应用**（应用级配置页外包 `<RequireApp>`，未选应用截出来是空白），按编号顺序走一遍。⚠️ 每张截图都在 README 或使用手册里有引用，删改文件名要同步改引用。
-
-### 下面几节「必须手工验证」不用全背——用脚本按改动点名
-
-```bash
-./scripts/manual-smoke-hints.sh              # 看工作区改动触发了哪几节
-./scripts/manual-smoke-hints.sh master...HEAD  # 看整个分支
-```
-
-按本次改动的文件，只列出下面**对应那几节**的标题，让人展开去读。**它只存「路径 → 章节标题」的映射、不复述任何条目内容**——复述就会产生第二份会漂移的文案，正是卡片协议白名单分裂三处那个病。引用的章节标题在 CLAUDE.md 里找不到时脚本 exit 1（标题被改却忘了同步规则，会让对应提示静默消失，和「本次改动无需验证」长得一模一样）。
-
-刻意**不判红**：这些条目自动化测试永远覆盖不到，判红只会逼人为了绿而空跑流程。
-
-### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事
-这三条自动化测试**永远覆盖不到**——IT 里 `VectorStore` 与 `ChatClient` 全被 mock，`streamUsage` 静默失效不抛异常，出站 URL 更是测试看不到的东西。Boot 4.1 + Spring AI 2.0 迁移就是靠这三条真机冒烟才闭合的：
-1. **向量检索活性**：上传文档 → 提问 → 确认命中且 `score > 0`。
-2. **token 计量非零**：打一次流式对话 → 查 `sys_api_usage.token_count` 非零（`streamUsage` 一旦失效是静默的，记 0 不抛）。
-3. **出站 URL 形态**：把 `AI_BASE_URL` 临时指向本地 HTTP 监听器抓包，确认实际请求路径是 `/v1/chat/completions` 与 `/v1/embeddings`。
-
-### 改动流式对话链路后必须手工验证
-同样是自动化测试永远覆盖不到的（IT 里 `ChatClient` 全被 mock，工具调用与真实 SSE 时序都看不见）：
-1. **逐字增量**：回复真的逐字出现而非一次性刷出（用 `MutationObserver` 采样最直接，肉眼容易被短回复骗过）。
-2. **流式 token 计量**：走 widget 发一条 → `sys_api_usage.token_count` 非零（管理端不计量，只有开放 API 计量）。
-3. **流式工具调用** ⚠️ **本项目最大的一处上游坑**：挂一个 HTTP 工具并提问**触发它**。Spring AI 2.0 + Qwen 组合下，LLM 实际调用工具时 `OpenAiChatModel$ChunkMerger.chunkToChatCompletion` 会抛 `NoSuchElementException`（Qwen 分帧发 tool_call：首帧带 `function.name`、后续帧只有 `arguments`，Spring AI 未按 index 聚合；上游 [issue #4790](https://github.com/spring-projects/spring-ai/issues/4790) 仍 open、修复 PR #4794 未合并、2.0.0 已是最新稳定版**无版本可升**）。故 `ChatServiceImpl.streamChat` 内置降级：**本轮挂了工具且尚未吐出任何正文时**，失败则用非流式 `chat()` 重跑一次并把结果补发为 delta/card/done。验证点：客户端收到 delta/card + done 而非 error；DB 只落一条 AI 消息；`sessionId` 与 START 事件一致。**上游修复后可整段删除该降级**（`fallbackToNonStreaming`）。
-4. **卡片增量渲染 + 历史一致**：卡片在围栏闭合瞬间整张出现；刷新后历史顺序与流式时一致（验证落库 `ui_spec` 正确）。
-5. **停止生成不落库**：管理端点「停止」后半截回复留在屏上，刷新即消失（`Flux.concat` 的落库 Mono 在 cancel 时不被订阅）。
-
-### 改动卡片 Action URI 协议后必须同步三处
-卡片按钮的动作协议（`url://` 打开链接 / `msg://` 发消息 / `copy://` 复制）白名单分散在三个语言里：
-
-1. `ChatServiceImpl.CARD_PROMPT`（Java 字符串，决定 LLM 会生成什么）
-2. `frontend/src/lib/actionUri.ts` 的 `VALID_PROTOCOLS`
-3. `widget/src/core/actionUri.ts` 的 `VALID_PROTOCOLS`
-
-漏改任一处的后果：LLM 产出客户端不认的协议 → 按钮退化成发一条奇怪的消息，或彻底静默。
-
-**`CardActionProtocolSyncTest`（Surefire 单测）现在守住了「三处白名单集合必须逐字相等」**：反射读 `CARD_PROMPT` 抽 `xxx://`（排掉嵌在示例链接里的 `https` 等通用 scheme），正则抽两份 TS 的 `VALID_PROTOCOLS`，三者两两比对。改一处忘另两处即红。四轮变异验证过：单端加协议 / 两端加而 prompt 不加 / 只 prompt 加 / 抽取正则失配，全部转红——最后一条尤其重要，正则一旦失配集合会静默变空、断言退化成「空==空」永真，故先各自断言非空。
-
-⚠️ **它只比对白名单集合，不验证行为**。「三个协议各自实现得对不对」（fail-closed 语义、`safeUrl` 白名单、剪贴板降级）它一概不管——改协议后仍须真机点一遍三类按钮。
-
-⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
-
-⚠️ **widget 侧解析与执行已拆分**：`widget/src/core/actionUri.ts` 只负责解析（`resolveActionUri`），不碰任何浏览器 API；执行（`window.open`/`navigator.clipboard`）留在 `widget/src/actionUri.ts`。`ResolvedAction` 的 `none`（协议无效，调用方应回退发送原文）与 `blocked`（协议有效但内容被拦下，调用方不得回退）是这条 fail-closed 语义跨模块成立的承载点，二者语义不同，不能合并成一种「失败」。
-
-### 改动网站知识库同步 / 站点爬取链路后必须手工验证
-自动化测试覆盖不到的三条（单测里 `WebPageFetcher` 与 `VectorStore` 全被 mock，调度线程的过滤器状态更是单测造不出来）：
-1. **二次同步不重嵌**：**等第一次同步跑完再点第二次**，确认 `chunk_count` 与 `vector_store` 行数**都没变**。退化成每次重嵌不会报错、只会悄悄烧 embedding 的钱。⚠️ **别连点两次**——第二次会被咨询锁挡下（日志 `网页同步跳过：同一文档已有同步在进行`），此时行数不变是「被锁挡住」而非「hash 未变跳过」，会把并发互斥的效果误当成变更检测的效果。
-2. **调度器真能查到文档**：把某文档 `last_synced_at` 改到很久以前，等 `@Scheduled` 触发（临时用 `-Dqingyu.care.web-sync.interval-ms=30000` 缩短间隔），确认日志打出「网页定时同步：N 篇到期」。原生 SQL 一旦被改回 JPQL，这里会**静默地一篇都查不到**。
-3. **人工读一遍入库正文**：`SELECT content FROM document WHERE id=?`，看有没有混进导航栏/Cookie 提示/页脚版权。这是启发式剔噪声唯一的验收方式。
-
-排查网页文档问题时，**先跟文件文档做同身份对照**再归因新代码——真机冒烟中「网页文档 `tenant_id` 落成 NULL」曾被误判为本特性缺陷，实为平台管理员建档的既有行为（文件上传路径一模一样）。
-
-**站点爬取（第二期）另有十条，每条都是自动化测试覆盖不到的：**
-4. **范围真的收窄**：给一个 `/help/` 入口，确认没有爬到 `/blog/` 或外域。
-5. **选择器真的生效**：配与不配各爬一次，`SELECT content FROM document WHERE id=?` **人工读一遍**有没有导航混进来。这是启发式与选择器唯一的验收方式。
-6. **租户字段非 NULL**：用**租户管理员**登录爬，确认 `tenant_id`/`app_id` 落库正确。⚠️ 与「平台管理员建档 `tenant_id` 落 NULL 是既有行为」区分——第一期真机冒烟已把这条既有行为误判成缺陷一次。
-7. **上下文不泄漏**：连续爬**两个不同租户**的站点，确认第二个的文档租户字段仍正确。这是第 6 条的另一半，**只有真机连做两次才暴露**，单次爬取永远是绿的。
-8. **重爬幂等**：第二次爬同一站点，`document` 行数只增新页、`vector_store` 不因重复建档暴涨。
-9. **robots 真被遵守**：找一个有 `Disallow` 的站点，确认那些路径没进库。
-10. **限速真的生效**：看日志时间戳确认相邻请求间隔 ≥ 1 秒（或站点声明的 `Crawl-delay`）。限速失效不会报错，只会让平台被目标站点封 IP。
-11. **爬取期间改配置不会被静默回滚**：开一次页数较多、耗时够长的爬取，趁它还在跑时把该站点的 `contentSelector` 改掉，等爬完确认新选择器生效、没被 `crawl()` 收尾那次 `save` 覆盖回旧值。这条已用变异测试证实**零自动化守护**（去掉「重新 `findById`」那步改回直接 `save(site)`，全部单测照样绿），只能靠这条手工验证兜底。
-12. **首次「新建并开爬」连点几次不出现幽灵失败**：确认不会出现「进度立刻显示失败：站点不存在，但列表里那条明明在」——`startCrawl` 与 `@Async` 投递之间的事务可见性窗口只在特定线程调度时序下才现形，评审把 `@Transactional` 加回 `startCrawl` 后连跑 4 次 IT 全绿，即**没有任何自动化测试能保护这条**。
-13. **中途故障不留僵尸 RUNNING**：`runCrawl` 的 `catch` 只抓 `Exception`、抓不住 `Error`（如整页 DOM 撑爆堆内存），这条纯 Mockito 测不出真实场景——临时在爬取路径插一行抛 `Error` 冒烟，确认 `finally` 仍把该 Progress 置 `FAILED`、互斥与并发额度都被正确释放，站点能立刻重新爬取；不清理的后果是并发额度永久少一个，只能重启进程恢复。
-
-### 改动聊天附件链路后必须手工验证
-自动化测试覆盖不到的五条，每条都是真机冒烟实际抓到过东西的地方：
-1. **管理端真的能传上去**。前端 `uploadChatFile` **必须显式设 `'Content-Type': 'multipart/form-data'`**（同 `knowledge.ts` 的 `uploadDocument`）——axios 实例在 `create` 时写死了 `application/json`，而 axios 1.x 的 `transformRequest` 遇到 FormData 会看 Content-Type，是 JSON 就调 `formDataToJSON` 把它转成 JSON，`File` 没有可枚举属性于是变成 `{}`，**328KB 的图只发出 62 字节**，后端回 `Current request is not a multipart request`。这条 8 轮代码评审全部漏掉——`chat.ts` 孤立看完全正确，缺陷只存在于「实例级默认头 × axios 版本行为」的交互里。
-2. **SSE 端点的错误响应形态**。用**真实 HTTP 客户端带 `Accept: text/event-stream`** 请求 `/open/v1/chat/stream` 并触发一个业务异常（如带不存在的 attachmentId），确认是 JSON 而非 Tomcat HTML 错误页、且 body 里**没有 Java 堆栈**。⚠️ **MockMvc 与不带 Accept 头的 curl 都复现不出**——异常处理器走内容协商时 JSON 转换器与该 Accept 不匹配，会抛 `HttpMediaTypeNotAcceptableException` 并连锁触发 `/error` 转发（不在 Sa-Token 豁免名单）撞 `NotLoginException`，最终 401 + HTML + 完整堆栈发给公网客户端。
-3. **坐席端实时收图**（不刷新）：坐席接管后让用户发图，坐席台应立刻出现图片而不只是文本。这条守的是 attach 与 notify 的顺序（见上）。
-4. **孤儿清理连 S3 一起删**：上传但不发送，临时把 `qingyu.care.attachment.orphan-retain-hours` 改成 0、间隔改短，确认库行**和 RustFS 里的对象**都没了。⚠️ 改成 0 会把「选了图还没点发送」的附件秒删，验完记得改回来。
-5. **文件名 XSS 三重否定**：上传一个叫 `<img onerror=alert(1) src=x>.png` 的文件，断言**不弹窗、DOM 里没有多出 img 元素、文件名原样作为文本显示**——只看"没弹窗"抓不住 `innerHTML` 写法。
-
-### 改动已读回执链路后必须手工验证
-自动化测试覆盖不到的七条：
-1. **多标签页并发**：坐席开两个标签页同看一个会话，回执不打架、水位线不回退。jsdom 造不出真实并发。
-2. **Page Visibility 真实行为**：切到别的标签页不上报、切回来立即上报。jsdom 里 `visibilityState` 是测试自己 stub 的，等于在测桩。⚠️ **这条别再从头摸索——本节末尾有一套已验证通过的真机配方**（2026-08-20 按它验证通过，全程无桩）。
-3. **访客刷新后已读保持**：真机整页刷新 widget，已读标记仍在（走的是历史响应里的 `agentReadUpToMessageId`）。真实浏览器整页刷新会把整个 JS 运行时重建一遍——模块级状态、DOM、SSE 连接全部归零重来；而 jsdom 里所谓的"刷新"只是重新调用一次 init 函数，`isOpen`/已渲染消息/已读水位线缓存等模块级状态原样残留，两者不等价（Task 10 里 `setPanelOpen` 要写在 `stubVisibility` 之前，否则会读到上一个测试遗留的 visibility 状态，就是这类"jsdom 里状态不会随刷新清零"的直接体现）。只有真机整页刷新才能验证「已读确实是从历史响应重建出来的」而不是模块状态凑巧还在。
-4. **多实例下 `read` 事件到达**：`RealtimeHub` 走 Redis pub/sub 桥接，单实例测不出跨实例路径（同 `WebhookQueueIT` 面对的问题）。
-5. **访客界面无视觉噪音**：坐席反复读，访客侧只出现「已读」二字，不冒任何状态提示条。⚠️ 复用 `session` 事件就会踩这条——widget 对 `session` 事件是无条件当文案展示的。「不产生额外文案节点」这部分已由 widget vitest 断言覆盖（守住"不复用 session 事件"这条边界），真机要验的是自动化断言不到的部分：坐席端与访客端真实串起来之后的整体观感——除了「已读」二字出现，不该有闪烁、不该有布局跳动，其余任何东西都不该跟着动。
-6. **B 的双向真机联调**：坐席发消息 → widget 展开着 → 坐席端出现「已读」；把 widget **收起**再让坐席发一条 → 坐席端**不该**出现已读。收起是 widget 内部状态，jsdom 里测的是我们自己的桩。
-7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着甲，让乙的访客读消息 → 标记必须落在乙上。这是多会话列表引入的新失效模式，只在真机多开时现形。
-
-⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复。
-
-**第 2 条（Page Visibility）的真机配方** —— 2026-08-20 摸索并验证通过，复用这套、别重走弯路：
-
-⚠️ **别用 chrome-devtools MCP 驱动这条，那条路根本走不通**：CDP attach 会抑制页面后台化。已实测——程序化 `select_page(bringToFront)`、**人手点标签栏**、乃至 OS 级 `ShowWindow(SW_MINIMIZE)` 最小化整个窗口，只要页面被 CDP attach 着，`visibilityState` 就恒为 `visible`、零个 `visibilitychange`。用 `Emulation.setPageVisibilityOverride` 能让断言变绿，但那是在测自己造的桩。
-
-1. **访客页跑在不接 CDP 的独立 Chrome 实例**：`chrome.exe --user-data-dir=<临时目录> --no-first-run --no-default-browser-check --new-window <url>`，不带调试端口，MCP 看不到它也就不抑制后台化。
-2. **宿主页自带编排脚本**驱动 widget——`attachShadow({mode:'open'})` 所以外部脚本能操作其 DOM：`.qy-bubble` 展开、`textarea` + `.qy-input button:not(.qy-attach-btn)` 发送、`.qy-handover` 转人工。⚠️ 展开后**不能再点气泡**，否则「不上报」会是因为面板收起而非页面隐藏。
-3. **`ShowWindow(hwnd, 6)` 最小化 / `9` 恢复**，并用 `IsIconic` 自证窗口状态真的变了（否则"没推进"可能只是命令没生效）。
-4. **坐席侧全走 curl、不必开坐席页**：`/api/v1/auth/login` 拿 token（请求头名 `satoken`）→ `/api/v1/chat/session/{uuid}/accept` → `/api/v1/chat/agent/reply`。
-5. **判据取数据库** `message_read_receipt.up_to_message_id`，不看 UI。
-
-⚠️ **最容易得出错误结论的一步：必须能区分「消息压根没送达」与「送达了但没上报」**。若 Chrome 在最小化时挂起了 SSE，widget 根本没收到消息，那"不上报"就与可见性判定毫无关系——而这两种情况在水位线上的观测结果**完全相同**（可见时推进 / 最小化时不推进 / 恢复后推进），只看水位线必然误判。办法是给宿主页装两个探针，结果写进 `document.title`（独立实例没有 CDP，但 PowerShell 读得到 `MainWindowTitle`）：`MutationObserver` 观察 `.qy-msgs` 子节点新增 = 消息**渲染到达**时刻；包装 `window.fetch` 拦截 URL 含 `/read` 的请求 = **上报发出**时刻。最小化期间前者增加、后者不动，才坐实了「收到了但没报」。
-
-⚠️ **探针必须事件驱动，绝不能用 `setInterval`**——后台标签的定时器被 Chrome 节流到 1 次/分钟，title 就不更新了，看起来跟"页面被冻结"一模一样。
-
-⚠️ 也试过「摘掉判定重新 build」的变异法，**那条路不划算**：`visibilitychange` 监听器不一起摘就无法归因恢复后的上报，且要动入库产物 `widget.js`。探针法不改产品代码就能直接观测消息到没到，更直接。
-
-### 改动 MCP 接入链路后必须手工验证
-自动化测试覆盖不到的四条：
-1. **真连一个 MCP server**：走完「登记 → 同步 → 标只读 → 绑进 skill → 对话触发」，确认出站请求带着配置的凭据。⚠️ 凭据若在某个环节被清掉，症状同平台共享工具那条——第三方返 401，模型拿着错误响应继续编答案，**全程无异常无日志**。
-2. **`DEPRECATED` 路径**：远端下线一个工具后再同步，确认是标记而非删行、界面上有提示、且该工具从 skill 的可勾选列表消失。
-3. **SSRF**：URL 指向 `169.254.169.254` 确认被拒；再用一个 TTL=0、解析结果会翻转的域名验证 rebinding 也被挡。
-4. **凭据不被空串清空**：编辑 server 只改名字保存，确认 `authHeader` 仍在（前端不回显凭据）。
-
-### 改动 OpenAPI 工具导入链路后必须手工验证
-自动化测试覆盖不到的四条：
-1. **真实公开 schema 走通全链**：导入 → 勾选 → 绑进 skill → 对话触发 → 确认出站 URL 与参数正确。单测只能证明映射规则对，证明不了「生成出来的工具真的能被 LLM 调用并拿到结果」。
-2. **可选参数不填时端到端正确**：提一个不涉及可选参数的问题，确认出站 URL 里既没有残留 `{占位符}`、也没有半截的 query 段。`UrlTemplateFillerTest` 钉的是纯函数，这条钉的是它真的被接在链路上。
-3. **YAML schema 经 URL 拉取能导入**：`OpenApiSchemaParserTest` 已用 mock 文本覆盖了 JSON/YAML 两条解析分支，这条重复验证没有意义；真正测不到的是**经 URL 拉取**这条路径——`OpenApiSchemaFetcher` 的 Content-Type 白名单（`text/yaml`/`application/yaml`/`application/x-yaml`）要靠一次真实出站请求拿到真实的响应头才能验证，单测里 fetcher 是 mock 的，覆盖不到这层。
-4. **会 302 的 schema URL 给出可读错误**：禁重定向是硬安全取舍（重定向目标不再经 `SsrfGuard` 校验），只能靠错误消息补偿——必须明确说「请填写跳转后的最终地址」，而不是丢一个含糊的失败。
-
-### 改动 widget 协议层或 CLI 后必须手工验证
-自动化测试覆盖不到的两条：
-1. **同一问题用两种身份各问一遍**，确认访客视角命中的文档确实比服务端视角少。这一条同时验证三件事：鉴权抽象接对了、`--as-visitor` 的 Origin 真的走到了浏览器那条鉴权路径、文档可见性分级在开放 API 上确实生效。单测里 fetch 是桩的，验不到真实鉴权。
-2. **widget 真机回归**：嵌一次 widget，确认会话恢复、卡片按钮的三类动作（打开链接/发消息/复制）仍然正常。协议层抽取动了 session 与 actionUri 两条运行时路径，而 `url://` 被 `safeUrl` 拒绝时「点击无反应」是正确行为——这条 fail-closed 语义只有真机点得出来。
-
 ### 前端（frontend/，pnpm）
 ```bash
 pnpm install && pnpm dev   # Vite 开发服务器（:5173，/api 代理到 :8080）
@@ -193,6 +64,18 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 ⚠️ **两种身份看到的知识库不一样**：`--api-secret` 是服务端身份（可见 INTERNAL 文档），`--as-visitor` 是浏览器访客身份（仅见 PUBLIC）。拿错视角排查访客问题会得出「我这儿明明查得到」的误导结论，所以两者互斥且必须显式二选一，CLI 启动时会打印当前身份。
 
 ⚠️ **`widget/src/core/` 的测试必须跑在 node 环境**（每个测试文件首行 `// @vitest-environment node`）。widget 整体跑 jsdom，协议层里若还粘着 `document`/`localStorage` 是看不出来的——切成 node 才炸得出来。这是「协议层抽干净了」唯一一条机器可判定的证据，**别为了让测试过而把某个 core 测试改回 jsdom**。
+
+### 演示数据与截图
+
+`DemoDataSeeder`（`@Profile("demo")` + `ApplicationRunner`）播种「云舟科技」整套演示数据：租户/应用/用户、租户级问答策略、知识库 4 篇文档（走真实 `uploadDocument()`，S3 + Tika + 真实 embedding，向量可检索）、8 条 QA、12 组会话（铺在最近 30 天）、30 天用量、分析日表经 `backfill` 真实聚合。幂等键是租户 code `demo-cloudboat`，反复重启不重播。演示账号 `demo_admin` / `demo123456`（租户管理员）、`demo_agent` / `demo123456`（坐席）。
+
+⚠️ 三个坑已写在类注释里，改动时别退化：
+
+1. **`ApplicationRunner` 没有 `TenantContext`**，不手工搬运则知识库与文档的 `tenant_id` 静默落 NULL——后果不是「对所有租户可见」而是反过来「对任何租户都检索不到」（metadata 写成 `tenantId: ""`，与 `tenantId == '<真实id>'` 永远匹配不上）。`finally` 里必须 `clear()`，启动线程会被后续请求复用。
+2. **`ChatSession`/`ChatMessage` 的 `createdAt` 带 `@CreationTimestamp`**，Hibernate 在 INSERT 时覆盖任何手工赋值，必须落库后用原生 UPDATE 回填，否则 12 条会话全落在今天，而 rollup 按 `cm.created_at` 分日聚合，30 天曲线退化成一根柱子。
+3. **`hit_document_ids` 必须写 JSON 数组字面量**（`"[16]"`）而非裸数字：`AnalyticsRollupDao.insertDocHits` 用 `json_array_elements_text` 展开，标量直接抛，而 `rollupDay` 把三条 insert 包在同一事务里——那一天的质量与热词聚合会被一起回滚。
+
+`docs/images/` 的 15 张截图基于这套数据实拍（1440×900）。改了界面要重拍时：起 `dev,demo` profile，用 `demo_admin` 登录并**在顶部选中「云舟商城客服」应用**（应用级配置页外包 `<RequireApp>`，未选应用截出来是空白），按编号顺序走一遍。⚠️ 每张截图都在 README 或使用手册里有引用，删改文件名要同步改引用。
 
 ## 测试约定（重要）
 
@@ -231,7 +114,7 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 5. **绑定层防护** `BaseTenantEntity.tenantId`/`appId` 加 `@JsonProperty(access = READ_ONLY)`：只写出、不读入，请求体给了也绑不上。⚠️ 少了它，`TenantEntityListener.prePersist` 只在字段为 null 时才回填、非 null 不覆盖——租户 POST `{"tenantId": <他人租户id>}` 就能把行建进别人租户。⚠️ **不能改成「监听器总是用 `TenantContext` 覆盖」**：`QaGenerationService` 在 `@Async` 里用 setter 从源文档向新生成的 QA 传播租户，那样会把它写成 null，重蹈「向量 metadata 落空串、对任何租户都检索不到」的事故（见本文件网站知识库、站点爬取两节）。守护两层：`entity/TenantOwnershipNotBindableTest`（单测，守反序列化方向）+ `it/CreateTenantInjectionIT`（IT，额外守序列化方向——改成 `@JsonIgnore` 会让单测仍绿但 IT 转红）。
 
 6. **按全局唯一键查找必须绕过过滤器**（`username` / `appKey`）。`User` **不继承** `BaseTenantEntity`，但类上直接标了 `@Filter(name = "tenantFilter", ...)`——一样受管，只是不显眼。而 `username` 是 `@Column(unique = true)` 的**全局**唯一键，按它查找天然跨租户，被过滤就是错的。故 `UserRepository` 只提供 native 的 `findByUsernameAcrossTenants` / `existsByUsernameAcrossTenants`，**刻意不提供**派生的 `findByUsername`（留着必被误用）。
-   ⚠️ **`TenantDataAspect` 那条「未登录则不过滤」的豁免不够**：判据 `!isLoggedIn()` 是个**间接代理量**，它假设「登录/注册总发生在未登录态」。上一个账号的 satoken 还在时该假设不成立——浏览器 cookie 残留最常见（Sa-Token 会写 cookie，前端 `localStorage.clear()` 清不掉它），此时 `TenantInterceptor` 已把上一个租户的 tenantId 写进上下文，过滤器照常生效。三种症状各不相同、**都指向错误的排查方向**：登录别租户的账号报「用户名或密码错误」（密码其实是对的，人会一路去查密码）；注册/建用户时重名查不出来 → 放行到 INSERT 撞唯一约束 → HTTP 500 且把原始 SQL 与约束名回给客户端（正确响应是 400「用户名已存在」）。`LoginIT` 的五条测试分两半守这条：前两条守「未登录态」，后三条守「带着别人的登录态」——缺陷正藏在后一半里。2026-09-02 真机验证时发现并修复。
+   ⚠️ **`TenantDataAspect` 那条「未登录则不过滤」的豁免不够**：判据 `!isLoggedIn()` 是个**间接代理量**，它假设「登录/注册总发生在未登录态」。上一个账号的 satoken 还在时该假设不成立——浏览器 cookie 残留最常见（Sa-Token 会写 cookie，前端 `localStorage.clear()` 清不掉它），此时 `TenantInterceptor` 已把上一个租户的 tenantId 写进上下文，过滤器照常生效。两类症状**都指向错误的排查方向**：登录别租户的账号报「用户名或密码错误」（密码其实是对的，人会一路去查密码）；注册或建用户时重名查不出来 → 放行到 INSERT 撞唯一约束 → HTTP 500 且把原始 SQL 回给客户端（正确响应是 400「用户名已存在」）。`LoginIT` 的五条测试分两半守这条：前两条守「未登录态」，后三条守「带着别人的登录态」——缺陷正藏在后一半里。2026-09-02 真机验证时发现并修复。
 
 7. **`TenantOwnershipGuard` 选哪个方法：看「这个实体的 `tenant_id IS NULL` 是不是有意共享」**。判据**不是**「读操作还是写操作」，也**不是**「带不带密钥」——那两个都是代理量，各自脱钩过。
    - **有共享语义 → `belongsToCurrentContext`**：只限配置类（`ChatStrategy`/`PromptTemplate`/`HandoverRule`/`AiModelConfig`）。它们的 NULL 行由 `@PostConstruct` **播种**而来，是「多级配置回退」的承重结构，租户必须读得到。
@@ -304,8 +187,7 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    侧安全（`fillTemplate` 做了 `URLEncoder.encode`、host 由模板钉死），**只影响 POST**。
 5. **改动本链路后必须真机验证一次**：建一个平台共享工具（`authHeader` 设成可识别的值）→
    租户建 skill 绑定它 → 发一句触发工具的对话 → **确认出站请求头里带着那个平台凭据**。理由：
-   脱敏若误伤运行时路径，症状是第三方返 401、模型拿着错误响应继续编答案、**全程无异常无
-   日志**，只有真机能发现。
+   脱敏若误伤运行时路径，症状同第 2 条，只有真机能发现。
 
 ### MCP 接入（`service/mcp/`）
 
@@ -319,9 +201,8 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    MCP 协议往返。连接只在 LLM **真的调用**某个工具那一刻由 `McpConnectionFactory` 建立，
    `McpToolCallback.call()` 用完即关（`McpConnection.close()` 同时关 `McpSyncClient` 与
    `PinnedAddressResolverGroup`，二者缺一都会在长期运行下泄漏——用户自定义的
-   `AddressResolverGroup` 不会被 Reactor Netty 或 SDK 自动关闭）。换来的是省掉一整类连接池
-   生命周期 bug（按租户缓存的失效策略、陈旧连接、跨租户串号），代价是每次调用多一次
-   `initialize` 握手。
+   `AddressResolverGroup` 不会被 Reactor Netty 或 SDK 自动关闭）。换来省掉一整类连接池生命周期 bug（缓存失效
+   策略、陈旧连接、跨租户串号），代价是每次调用多一次 `initialize` 握手。
 2. **只读门槛落在 `resolveMcpCallbacks()` 的查询条件上，不在界面拦**：
    `McpToolRepository.findByIdInAndStatusAndReadOnlyTrue` 同时卡 `readOnly = true` 与
    `status = ACTIVE`。界面把可写工具置灰挡不住接口层直接提交 `mcpToolIds`，门槛必须落在这条
@@ -342,8 +223,8 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    `WebClientStreamableHttpTransport`（Reactor Netty）配合自定义 `PinnedAddressResolverGroup`
    把 `SsrfGuard` 校验期解析出的 IP 钉进连接期，语义同 `RestClientHttpToolExecutor`。**换成
    httpclient 版传输会静默失去这层防护**——它基于 JDK `HttpClient`，不支持自定义 DNS
-   解析，代码照常编译、连接照常建立、功能照常可用，只是钉 IP 那层没了，退回「校验时公网、
-   连接时翻内网」可绕过的状态。同理漏掉 `.followRedirect(false)` 会让 302 把请求带去未经
+   解析，编译/连接/功能全部照常，只是钉 IP 那层没了，退回「校验时公网、连接时翻内网」
+   可绕过的状态。同理漏掉 `.followRedirect(false)` 会让 302 把请求带去未经
    校验的主机。
 7. **删 `McpServer` 必须同时清理 skill 绑定**：`McpServerService.deleteServer` 在删工具行前
    先遍历所有 `AiSkill` 摘掉指向这些工具 id 的绑定。漏了的后果是静默降级——`resolve()` 的
@@ -462,10 +343,9 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
    的应用再导出，就会把该租户私有的工具配置（name / description / urlTemplate）随包发给所有
    租户。判据取 `tenantId == null` 而非应用范围：平台管理员在任何应用下建的行 `tenant_id` 都是
    null，这条精确等于「只导出平台管理员自己建的配置」。
-4. **导出全程只读实体，绝不 setter 置空**。本项目未配 `spring.jpa.open-in-view`（即 Boot 默认
-   `true`），OSIV 让查出来的实体在整个请求期保持受管——为了「不导出明文凭据」而写一句
-   `setAuthHeader(null)` 会被脏检查刷回库，**把平台管理员自己的凭据真的删掉**（同
-   `SharedCredentialMasker` 那次，靠 `em.detach` 才闭合）。⚠️ 直调 service 的单测**能**抓住
+4. **导出全程只读实体，绝不 setter 置空**。OSIV 下实体全程受管（见「平台共享工具」第 3 条），
+   为了「不导出明文凭据」而写一句 `setAuthHeader(null)` 会被脏检查刷回库，**把平台管理员自己
+   的凭据真的删掉**。⚠️ 直调 service 的单测**能**抓住
    朴素的错误（如 `setAuthHeader(null)` 忘记还原——`build()` 的 for-each 绑定的是同一个对象
    引用，没有 copy/clone，断言不会退化成永真）；抓不住的是更窄的一类：真实 OSIV 下「设 null →
    中途被别的查询触发 auto-flush → 之后再还原」的时序问题，这一类由走真实 MockMvc 的
@@ -491,19 +371,16 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
     同步的工具一律 `readOnly=false`（「未知一律当可写、不挂载」），`ChatToolService.
     resolveMcpCallbacks` 又是 `findByIdInAndStatusAndReadOnlyTrue`——只取 `readOnly=true`
     的。三者叠加：**安装报告零 warning、界面显示技能绑着 N 个 MCP 工具，实际挂给 AI 的是 0
-    个**。⚠️ 修法**绝不能是自动帮租户标只读**——CLAUDE.md「MCP 接入」第 3 条明令「同步绝不
-    覆盖 `readOnly`」，它是租户自己的安全判据，代劳就是安全降级且完全静默（一个可写工具会被
-    LLM 调用）。正确做法是 `syncMcpAndBindSkills` 在回填绑定时额外加一条 warning，明确告知
-    「已绑定 N 个 MCP 工具，但默认可写、暂不会挂给 AI，请自己去 MCP 服务页标只读」——多一步
-    人工确认，好过让一个可写工具静默生效。
+    个**。⚠️ 修法**绝不能是自动帮租户标只读**（违反「MCP 接入」第 3 条，等于安全降级且完全
+    静默）。正确做法是 `syncMcpAndBindSkills` 回填绑定时额外加一条 warning，明确告知「已绑定
+    N 个 MCP 工具，但默认可写、暂不会挂给 AI，请自己去 MCP 服务页标只读」。
 12. **导出的勾选列表在前端也要过滤 `tenantId == null`（真机验证挖出，2026-09-02）**：
     `PackageExportDialog` 拉的 `aiToolService.list()` / `mcpApi.listServers()` /
     `aiSkillService.list()` 都是**应用级**接口，而 `TenantDataAspect` 对 PLATFORM_ADMIN 整体不
     启用 `@Filter`——平台管理员选中某个租户的应用时，拿回来的是**那个租户的私有配置**。不
-    过滤的后果有两层：界面把租户的私有工具铺出来任人勾选、勾了才被后端拒绝（用户无从区分
-    哪个能导），且同一判据在前后端各写一次会各自漂移。判据必须与 `PackageManifestBuilder`
-    的导出判据逐字一致，由 `PackageExportDialog.test.tsx` 守护（变异验证过：换回
-    `toolRes.data ?? []` 转红）。⚠️ 空状态文案也要跟着说「没有**你自己建的**工具」——
+    过滤则界面把租户的私有工具铺出来任人勾选、勾了才被后端拒绝，用户无从区分哪个能导。判据
+    必须与 `PackageManifestBuilder` 的导出判据逐字一致（前后端各写一次必然漂移），由
+    `PackageExportDialog.test.tsx` 守护（变异验证过：换回 `toolRes.data ?? []` 转红）。⚠️ 空状态文案也要跟着说「没有**你自己建的**工具」——
     说成「当前应用下没有工具」是错的，那个应用下往往有一堆，只是都不是平台管理员的。
 
 **四道扫描哨兵覆盖本链路**：`PlatformEndpointGuardTest`（`/v1/platform/**` 每个端点必须调
@@ -511,60 +388,6 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 进白名单并挑一个类别）、以及既有的 `UpdateRequestFieldCoverageTest` / `UpdateRequestPropagationTest`
 （`ToolPackageUpdateRequest` 已登记）。⚠️ `UpdateRequestFieldCoverageTest.DTO_TO_ENTITY` 现在用
 `Map.ofEntries` 而非 `Map.of`——后者最多 10 对，已经用满。
-
-### 改动工具商店 / 能力包链路后必须手工验证
-
-自动化测试覆盖不到的四条：
-
-1. **凭据真的是租户填的那个，且出站 URL 形态正确**：装一个含 HTTP 工具 + skill 的包（工具的
-   `urlTemplate` 里要带一个 `${VAR}` 变量）→ 发一句触发工具的对话 → 确认**出站请求头里带的是
-   安装时填的值**、**URL 里既没有残留 `${`、也没有半截的 query 段**。凭据若在某个环节被清掉，
-   症状是第三方返 401、模型拿着错误响应继续编答案，**全程无异常无日志**（同平台共享工具那条）。
-2. **MCP 包的两条路径**：正常 url 装一次，确认 sync 成功后 skill 的 `mcpToolIds` 真绑上了、
-   **且看到那条「已绑定 N 个 MCP 工具，默认可写、暂不会挂给 AI，需自己标只读」的提示**——
-   绑上了不等于能用，见上面「容易写错的地方」第 11 条；再用坏 url 装一次，确认是**部分成功**
-   （工具与 skill 都在、提示明确说了要手动同步），不是整体失败。
-3. **上下文不泄漏**：连续给**两个不同租户**各装同一个包，确认第二个租户的行 `tenant_id` /
-   `app_id` 仍正确。`PackageInstallIT` 已覆盖 MockMvc 层的同款场景，真机这条验的是**真实浏览器
-   会话下连做两次**（切账号、切应用），只有真机连做才暴露会话级的上下文残留（同站点爬取第 7 条）。
-4. **manifest 预览逐字核对**：导出一个 URL 里带 `?apikey=` 的工具，确认界面弹出了密钥告警；再
-   人工通读一遍 manifest，确认没有明文凭据、变量的 label 与 help 是人话。凭据识别与密钥扫描都是
-   启发式，**没法自动化**——同噪声剔除，这是唯一的验收方式。
-
-### 安全基线（2026-09-03 全项目审查后必须保持的几条）
-
-2026-09-03 做过一次全项目安全审查（6 高 9 中 13 低），高危与中危已全部修完。下面这些是修完后立下的不变量，改动相关代码前先读对应条目：
-
-1. **平台管理员口令不写死**：`AuthService.init` 从 `qingyu.care.platform.admin-initial-password`（`QINGYU_ADMIN_INITIAL_PASSWORD`）取，为空则随机生成、只打一次 WARN。dev/test profile 固定 `admin123`（多条 IT 靠它登录）。`AuthServiceInitTest` 守着「不回落 admin123」。
-2. **自助注册只能建新租户**：带 `tenantCode` 一律 403。租户 code 不是秘密，凭它加入曾等于自封任意租户的管理员。
-3. **同租户「改他人」必须是管理员**：`UserController.updateUser` 先判 self / admin，坐席只能改自己。`User.password` 是 `WRITE_ONLY`，实体当响应体也不会带哈希。
-4. **应用管理走 `ApplicationView`，密钥只给管理员**：list/get 全体成员可用（顶部选应用靠它）但坐席拿到的 `appSecret`/`webhookSecret` 为 null；create/update/delete/重置密钥/测试 Webhook 一律 `requireTenantAdmin`。⚠️ 脱敏不能在受管实体上 setter 置空（OSIV 会刷回库），必须走视图对象。
-5. **五条出站路径共用一套防线**：HTTP 工具、网页抓取、Webhook 走 `PinnedHttpClientFactory`（钉 IP + 禁重定向 + 超时），MCP 走 `PinnedAddressResolverGroup`，OpenAPI schema 复用抓取器。⚠️ Webhook 回调地址落库前过 `SsrfGuard.assertAllowedHttpUrl`；`qingyu.care.webhook.allow-private-targets` 只在 test profile 为 true（IT 的接收端起在 127.0.0.1），它只跳过网段校验、不跳过钉 IP。`SsrfGuard.isBlocked` 手工补了 100.64/10（阿里云元数据 100.100.100.200 在这段）、192.0.0/24、198.18/15、240/4、NAT64。
-6. **CORS 两套 + 不用 cookie**：`/open/v1/**` 与 `/widget.js` 任意来源、`allowCredentials(false)`；其余只放行 `qingyu.care.cors.allowed-origins`（默认空 = 拒绝一切跨域，前端与后端同源）。`sa-token.is-read-cookie: false`——SPA 只用 `satoken` 请求头，cookie 一开就是 CSRF 面。`CorsPolicyIT` 守着。
-7. **异常处理器不回显 `e.getMessage()`**：`RuntimeException` 回「服务器内部错误（错误编号 xxx）」，编号进日志；`IllegalArgumentException` 归 400 且同样不回显。要给用户看的原因改抛 `InvalidOperationException` / `BusinessException`。
-8. **前端退出登录走 `lib/session.performLogout`**：先调后端注销再清本地（含 `qingyu-current-app`）。
-9. **`X-App-Id` 必须属于当前租户才进上下文**：`TenantInterceptor` 用 `findTenantIdById` 反查，不属于就忽略并 WARN（平台管理员豁免）；`WebhookDispatcher` 再兜一道「应用租户 == 事件租户」。`TenantInterceptorTest` 守着。
-10. **模型 endpoint 落库前过守卫**：`ModelRouterService.requireValidEndpoint` 只在管理面入口（建 / 改 / 测试连接，含平台共享模型）调用，不进对话热路径；`qingyu.care.model.allow-private-endpoints` 只在 dev profile 打开（本机 Ollama）。单测里 `ModelRouterService` 是 mock，控制器测试不会真的解析 DNS。
-11. **Swagger / metrics / DEBUG 日志基线关闭，只有 dev profile 打开**：三者的路径都在 Sa-Token 豁免名单里，「关掉」是唯一可靠手段。`ManagementEndpointsExposureIT` 守着基线形态（test profile 不含 dev）。
-12. **开放 API 与登录都校验租户状态与 `expireTime`**：冻结或到期的租户，widget / 开放 API / 登录一起停。⚠️ `ApplicationRepository.findByAppKey` 带 `@EntityGraph(tenant)`——鉴权在拦截器阶段执行、没有 OSIV 的 EntityManager，懒加载的 `tenant` 一碰非 id 字段就是 LazyInitializationException，而拦截器的兜底 catch 曾把它静默吞成 500（现在会记日志）。
-13. **开放 API 两层限流**：应用级（`default-rate-limit-per-minute`，应用可覆盖）之下再按「应用 + 客户端 IP」分桶（`per-client-rate-limit-per-minute`，默认 20，0 关闭）。客户端 IP 与审计日志一样取 `X-Forwarded-For` 的**最后一段**（nginx 追加模式，前面的段客户端可自填）。
-14. **知识库上传先校验再传 S3**：`getSize()` 闸门（`qingyu.care.knowledge.max-upload-bytes`，30MB）→ 非空 → 扩展名白名单（`UPLOAD_EXTENSIONS`，与 `detectDocumentType` 一一对应）→ 文件名截到 255；`documentRepository.save` 失败必须 `deleteFile` 回收对象。
-15. **摄取走 `TikaTextExtractor` 流式抽取，两道上限**：`max-extracted-chars`（200 万，超出截断 + WARN）与 `max-chunks-per-document`（2000）。⚠️ `TokenTextSplitter.withMaxNumChunks` 到顶后会把**剩余全部文本追加成最后一块**，所以切完必须再 `subList` 一次，否则封顶形同虚设。不再用 Spring AI 的 `TikaDocumentReader`（要整文件 `byte[]` 且输出无上限）；`ParseContext` 刻意不放 `Parser`，不递归解析嵌入文档。
-16. **附件单会话上限 + 孤儿 2 小时**：`ChatAttachmentService.upload` 先 `countBySessionId` 判 `max-per-session`（20）；`orphan-retain-hours` 从 24 缩到 2，它是无凭据灌存储的唯一落点。租户级存储配额尚未做（要按套餐定数字）。
-17. **Webhook 签名覆盖「时间戳.请求体」**：`WebhookSignature.sign(secret, timestampMillis, body)`，时间戳同时随 `X-Qingyu-Timestamp` 发出；接收方复算 + 5 分钟窗口 + 按载荷 id 去重。改契约在未上线的现在零成本，上线后别再动。
-18. **Prompt 定界**：知识库正文包在 `<knowledge>`（`ChatServiceImpl.buildContext`）、工具返回包在 `<tool_result>`（`ToolResultDelimiter.wrap`，HTTP 工具与 MCP 都走它，截断作用在正文、标签不占额度），系统提示末尾固定追加 `DATA_GUARD_PROMPT` 声明标签内是数据不是指令。放在代码里而不是只改默认模板：模板已播种进库。是缓解不是根治。
-19. **分析 rollup 有日期锁**：`AnalyticsRollupDao.tryLockDay` 用 `pg_try_advisory_xact_lock(classId, day)` 双参数形式，与文档处理互斥的单参数形式键空间互不重叠；抢不到返回 false、`backfill` 不计入成功。其余 7 个 `@Scheduled` 各有自己的互斥（文档咨询锁 / CAS 认领 / 消费组）或重复无害，不需要锁。
-20. **依赖扫描是手动步骤**：`scripts/dep-audit.sh`（`-Pdepcheck` + `pnpm audit`），刻意不绑进 `mvn verify`，见脚本头注释。⚠️ `pnpm audit` 必须显式 `--registry=https://registry.npmjs.org`——npmmirror 之类的镜像没有 audit 端点，会报 `ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS`；后端那半需要免费的 `NVD_API_KEY`，不给会在更新漏洞库时直接失败。
-21. **反代场景必须配 `server.forward-headers-strategy: framework`**：nginx 终结 TLS 后后端收到的是 http，而浏览器 `Origin` 是 https——不读 `X-Forwarded-Proto` 的话 Spring 把**同源**请求判成跨域，撞上管理端默认为空的 CORS 白名单直接 403，**整个后台登录不了**，而浏览器里只显示「网络错误，请稍后再试」。⚠️ 前提是 8080 只经受信任的反代对外，别直接暴露公网。`CorsPolicyIT` 那两条（同源放行 / 反代终结 TLS 后同源放行）守着。
-22. **Vite 代理必须摘掉 `Origin` 头**：`changeOrigin: true` 只改 Host。不摘 Origin 的话后端看到 `Origin=localhost:5175` 而 `Host=localhost:8080`，判成跨域 → 403；而 5173 被占用时 Vite 会自动漂到 5174/5175，白名单永远追不上。走反代时前端与后端本就该视为同源。
-23. **`allow-private-*` 开关的落库校验与出站校验必须看同一个开关**：`ApplicationController.requireValidWebhookUrl` 与 `RestClientWebhookHttpClient` 各有一道，只改一处会让开关半失效（出站放行、落库仍拒），本地联调根本配不上地址。⚠️ 集成测试发现不了——它们直接 `setWebhookUrl` 写库，绕过控制器。
-24. **工具调用失败的日志要能区分「被守卫拦下」与「网络问题」**：`HttpToolCallback.describeForLog` 对守卫抛的 `IllegalArgumentException` 记完整消息（里面只有 host），其余异常只记类名（消息可能带含密钥的 URL）。MCP 侧复用同一方法，两条链路口径必须一致。
-25. **⚠️ 本机若用 fake-IP 模式的代理，所有出站工具调用都会被 SsrfGuard 拒**：Clash 一类代理把域名解析到 `198.18.0.x`，而该段在黑名单里（RFC 2544 基准测试段，生产无正当用途）。症状是工具静默失效，日志现在会明写「已拒绝: <host>」。AI 对话不受影响（走 SDK 直连、不经守卫）。这是环境限制不是缺陷，别为此放宽黑名单。
-26. **三条出站路径的私网开关是一套**：`model.allow-private-endpoints`（本地 Ollama）、`webhook.allow-private-targets`（本地接收器）、`mcp.allow-private-servers`（本地自建 MCP server），都走 `SsrfGuard.assertAllowedHttpUrlAllowingPrivate`，dev profile 全开、生产全关。⚠️ 缺任何一个都会让对应场景在本地根本调不通，而这不是「不可验证」，是开关没配齐——MCP 那个就是 2026-09-04 补的。
-27. **MCP 登记时不校验 URL、只在同步时校验，这与 Webhook「落库就拦」的差异是有意的**：MCP 有 `lastSyncError` + 界面警示条这条设计好的失败反馈通道，错误立即可见；Webhook 配错地址是在事件推送时静默失败，用户不会主动看投递表，所以必须落库就拦。别为了「一致」把 MCP 也改成落库拦。
-28. **租户级存储配额只算对象存储**：`StorageUsageDao` 求 `document.file_size + chat_attachment.file_size`，按套餐配 `billing.quota.<PLAN>.storage-bytes`（FREE 1GB / PRO 20GB / ENTERPRISE 不限，0=不限）。⚠️ 爬取的 URL 类文档 `file_size` 为 null、不占 S3，**刻意不计入**，那条链路由 `max-pages-limit`（500）约束。检查点在知识库上传与附件上传两处、都在传 S3 之前；统计失败 fail-open 放行。⚠️ `KnowledgeServiceImpl` 的 `QuotaService` 是 setter 注入（构造函数被 10 个单测手工调用），没注入会 NPE 而不是静默跳过。
-29. **`sa-token.is-log` 保持开启，但日志实现必须是脱敏版**：内置的 `SaLogForConsole` 会把完整会话凭证打进 INFO 且直接 `System.out`（logback 的 pattern 过滤够不到）。`SaTokenConfig.installMaskingLog` 在 `@PostConstruct` 里换成 `TokenMaskingSaLog`——复用 Sa-Token 自己的 `StrFormatter` 渲染后整体正则脱敏，再转交 SLF4J。⚠️ 正则的 `` 词边界不能去掉，否则配置日志里的 `tokenName=satoken` 会被一起脱掉，而那条正是排查「请求头名字配错」时要看的。别把这段当冗余删掉，删了之后 token 会重新进日志且没有任何报错。
-30. **`allow-private-*` 开关永不放行云元数据**：`model.allow-private-endpoints` 与 `webhook.allow-private-targets` 是给本地 Ollama / IT 的本地接收器用的，两者都走 `SsrfGuard.assertAllowedHttpUrlAllowingPrivate`——放行环回与普通私网，但 169.254.0.0/16、100.64.0.0/10、fe80::/10、fd00:ec2::/64 **任何开关都拦**。⚠️ 这条是**真机冒烟点出来的**：原实现打开开关后只校验 URL 形态，dev 下把模型 endpoint 填成 `http://100.100.100.200/v1`（阿里云元数据）能成功落库，而当时单测是绿的——因为断言把「只校验形态」写成了预期，测试固化了错误行为。改这两个开关时先问一句：放开的是「本地地址」还是「连元数据一起」。
 
 ### 对外开放 API（`/open/v1/**`）
 - `OpenApiAuthInterceptor` + `OpenApiAuthService`：双路径鉴权——服务端用 `X-App-Id` + `X-Api-Key`（校验 `app.appSecret`）；浏览器 Widget 用 `X-App-Id` + Origin 白名单（`app.allowedOrigins`）。鉴权通过后写入 `TenantContext` 并做限流，超限返回 429 + `Retry-After`。
@@ -589,8 +412,8 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - ⚠️ **内存进度表 `jobs` 里的 RUNNING 是全局并发额度的判据**：`runCrawl` 的 `finally` 必须把残留 RUNNING 兜底置终态（`catch` 只抓 `Exception`，抓不住 `Error`）；`launch` 投递 `@Async` 失败（线程池拒绝）必须同时回滚 `crawlingSites` 与 `jobs`——漏一处都会让某条 Progress 永久占额度，只能重启恢复。
 - ⚠️ **`crawl()` 收尾不能用几分钟前查出的、此刻已 detached 的 `site` 去 `save`**：`em.merge()` 会把开爬那一刻的全部陈旧字段（含运营在爬取期间边看边改的 `contentSelector`）覆盖回库，静默抹掉配置修改且无异常无日志。必须收尾时重新 `findById` 再设值——同 `WebPageSyncService` 类注释点名过的「陈旧字段 merge 回库」同一个坑，换了个位置复发。
 - ⚠️ **`startCrawl` 不能带 `@Transactional`**：带上会让 `save()` 只 flush 不 commit，紧接着在同一未提交事务内把 `runCrawl` 投给 `@Async`——异步线程走独立连接，READ COMMITTED 下看不到这次未提交的 INSERT，`findById` 直接 `orElseThrow`，首次开爬非确定性地立刻 FAILED「站点不存在」。`ReembedService.startReembed` 就是不带 `@Transactional` 的同一范式；`updateSite`/`deleteSite` 不投递异步任务，`@Transactional` 保留。
-- ⚠️ **robots.txt 解析两处易错**：连续 `User-agent` 行属同一组（规范上如此，逐行重置状态会丢掉该组的 `Disallow`）；UTF-8 BOM 附着在首行 key 上，`trim()` 不剥 U+FEFF，会让整份文件的 `Disallow` 全部静默失效。两条错误方向都是「放行站点明确禁止的路径」，遵守 robots.txt 是替租户出站的合规承诺，故这两条判定"现在修"不留技术债。
-- ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘以 500 页硬顶就是 40 多小时，全程占着长任务池（`AsyncConfig.LONG_TASK_EXECUTOR`，固定 6 线程）的一个线程。
+- ⚠️ **robots.txt 解析两处易错**：连续 `User-agent` 行属同一组（规范上如此，逐行重置状态会丢掉该组的 `Disallow`）；UTF-8 BOM 附着在首行 key 上，`trim()` 不剥 U+FEFF，会让整份文件的 `Disallow` 全部静默失效。两条的错误方向都是「放行站点明确禁止的路径」——遵守 robots.txt 是替租户出站的合规承诺，故不留技术债。
+- ⚠️ **`Crawl-delay` 是第三方（被爬站点）可控值，必须钳上限**：不设上限时对方声明 `Crawl-delay: 300` 乘 500 页硬顶就是 40 多小时，全程占着长任务池（固定 6 线程）的一个线程。
 - ⚠️ **删站点勾选删文档时必须逐篇走 `knowledgeService.deleteDocument`**，不能 `repository.deleteAll`——只删库行会留下再也没有库行指向、**却仍参与检索**的孤儿向量（继续被命中并拼进 Prompt，而界面上已看不到这些文档）。同附件孤儿清理必须连 S3 一起删。
 - **重爬时已存在的页会被抓两次**（一次为提链接、一次在 `syncDocument` 内部）。这是刻意的取舍：抽取 `syncDocument` 的三分支能省下这些请求，但那段代码的每条注释都是一个真实缺陷的墓碑（`contentHash` 何时落库、失败计数何时清零、`truncate` 的 flush 时机、咨询锁的位置）。**触发重新考虑的条件**：实测重爬耗时不可接受（如 200 页站点重爬超过 15 分钟）时再做这个抽取，并为抽出的方法补齐守护上述四条语义的测试。⚠️ 另注意已存在的页必须**同步**调 `syncDocument` 而非 `syncDocumentAsync`——后者会让 N 篇瞬间涌进 `@Async` 池，robots 的 `Crawl-delay` 与 1 秒限速当场失效，等于对目标站点发起一次并发冲击。
 - ⚠️ **前端轮询两个坑**（`CrawlSiteList.tsx`）：进度/定时器必须按 `jobId` 而非 `siteId` 索引（后端 `maxConcurrentJobs=2` 明确支持双任务并发，按 `siteId` 索引会在旧任务收尾与新任务写入之间的窗口期互相覆盖）；`isMountedRef` **必须在 effect 的 setup 阶段复位为 true**——只在 cleanup 里置 false，会被 `<StrictMode>` 的 `setup→cleanup→setup` 卡死在 false，`pnpm dev` 下轮询一次都跑不起来（进度不更新/不续期/不 toast/不刷新列表），而 `vite build` 不受影响、React 18 起也没有 console 警告，极难发现。
@@ -653,6 +476,180 @@ skill 里勾选使用。**只共享工具、不共享 skill**——skill 的 mar
 - **状态** Zustand + persist：`stores/authStore.ts`（token/user，持久化）、`stores/appStore.ts`（当前应用 `currentApp`，其 `id` 即上面注入的 `X-App-Id`）。
 - **路由/守卫** `App.tsx`：`<ProtectedRoute>` 校验登录；应用级配置页（知识库/Prompt/策略等）额外包 `<RequireApp>`——未选应用时显示空状态。`layouts/MainLayout.tsx` 按 `user.role`（PLATFORM_ADMIN/TENANT_ADMIN/TENANT_MEMBER）过滤侧边导航。
 - **UI** shadcn 风格封装在 `components/ui/`（CVA 变体 + `lib/utils.ts` 的 `cn()`），别名 `@/` → `src/`。
+
+## 安全基线
+
+2026-09-03 全项目安全审查（6 高 9 中 13 低）修完后立下的不变量，改动相关代码前先读对应条目：
+
+1. **平台管理员口令不写死**：`AuthService.init` 从 `qingyu.care.platform.admin-initial-password`（`QINGYU_ADMIN_INITIAL_PASSWORD`）取，为空则随机生成、只打一次 WARN。dev/test profile 固定 `admin123`（多条 IT 靠它登录）。`AuthServiceInitTest` 守着「不回落 admin123」。
+2. **自助注册只能建新租户**：带 `tenantCode` 一律 403。租户 code 不是秘密，凭它加入曾等于自封任意租户的管理员。
+3. **同租户「改他人」必须是管理员**：`UserController.updateUser` 先判 self / admin，坐席只能改自己。`User.password` 是 `WRITE_ONLY`，实体当响应体也不会带哈希。
+4. **应用管理走 `ApplicationView`，密钥只给管理员**：list/get 全体成员可用（顶部选应用靠它）但坐席拿到的 `appSecret`/`webhookSecret` 为 null；create/update/delete/重置密钥/测试 Webhook 一律 `requireTenantAdmin`。⚠️ 脱敏不能在受管实体上 setter 置空（OSIV 会刷回库），必须走视图对象。
+5. **五条出站路径共用一套防线**：HTTP 工具、网页抓取、Webhook 走 `PinnedHttpClientFactory`（钉 IP + 禁重定向 + 超时），MCP 走 `PinnedAddressResolverGroup`，OpenAPI schema 复用抓取器。⚠️ Webhook 回调地址落库前过 `SsrfGuard.assertAllowedHttpUrl`；`qingyu.care.webhook.allow-private-targets` 只在 test profile 为 true（IT 的接收端起在 127.0.0.1），它只跳过网段校验、不跳过钉 IP。`SsrfGuard.isBlocked` 手工补了 100.64/10（阿里云元数据 100.100.100.200 在这段）、192.0.0/24、198.18/15、240/4、NAT64。
+6. **CORS 两套 + 不用 cookie**：`/open/v1/**` 与 `/widget.js` 任意来源、`allowCredentials(false)`；其余只放行 `qingyu.care.cors.allowed-origins`（默认空 = 拒绝一切跨域，前端与后端同源）。`sa-token.is-read-cookie: false`——SPA 只用 `satoken` 请求头，cookie 一开就是 CSRF 面。`CorsPolicyIT` 守着。
+7. **异常处理器不回显 `e.getMessage()`**：`RuntimeException` 回「服务器内部错误（错误编号 xxx）」，编号进日志；`IllegalArgumentException` 归 400 且同样不回显。要给用户看的原因改抛 `InvalidOperationException` / `BusinessException`。
+8. **前端退出登录走 `lib/session.performLogout`**：先调后端注销再清本地（含 `qingyu-current-app`）。
+9. **`X-App-Id` 必须属于当前租户才进上下文**：`TenantInterceptor` 用 `findTenantIdById` 反查，不属于就忽略并 WARN（平台管理员豁免）；`WebhookDispatcher` 再兜一道「应用租户 == 事件租户」。`TenantInterceptorTest` 守着。
+10. **模型 endpoint 落库前过守卫**：`ModelRouterService.requireValidEndpoint` 只在管理面入口（建 / 改 / 测试连接，含平台共享模型）调用，不进对话热路径；`qingyu.care.model.allow-private-endpoints` 只在 dev profile 打开（本机 Ollama）。单测里 `ModelRouterService` 是 mock，控制器测试不会真的解析 DNS。
+11. **Swagger / metrics / DEBUG 日志基线关闭，只有 dev profile 打开**：三者的路径都在 Sa-Token 豁免名单里，「关掉」是唯一可靠手段。`ManagementEndpointsExposureIT` 守着基线形态（test profile 不含 dev）。
+12. **开放 API 与登录都校验租户状态与 `expireTime`**：冻结或到期的租户，widget / 开放 API / 登录一起停。⚠️ `ApplicationRepository.findByAppKey` 带 `@EntityGraph(tenant)`——鉴权在拦截器阶段执行、没有 OSIV 的 EntityManager，懒加载的 `tenant` 一碰非 id 字段就是 LazyInitializationException，而拦截器的兜底 catch 曾把它静默吞成 500（现在会记日志）。
+13. **开放 API 两层限流**：应用级（`default-rate-limit-per-minute`，应用可覆盖）之下再按「应用 + 客户端 IP」分桶（`per-client-rate-limit-per-minute`，默认 20，0 关闭）。客户端 IP 与审计日志一样取 `X-Forwarded-For` 的**最后一段**（nginx 追加模式，前面的段客户端可自填）。
+14. **知识库上传先校验再传 S3**：`getSize()` 闸门（`qingyu.care.knowledge.max-upload-bytes`，30MB）→ 非空 → 扩展名白名单（`UPLOAD_EXTENSIONS`，与 `detectDocumentType` 一一对应）→ 文件名截到 255；`documentRepository.save` 失败必须 `deleteFile` 回收对象。
+15. **摄取走 `TikaTextExtractor` 流式抽取，两道上限**：`max-extracted-chars`（200 万，超出截断 + WARN）与 `max-chunks-per-document`（2000）。⚠️ `TokenTextSplitter.withMaxNumChunks` 到顶后会把**剩余全部文本追加成最后一块**，所以切完必须再 `subList` 一次，否则封顶形同虚设。不再用 Spring AI 的 `TikaDocumentReader`（要整文件 `byte[]` 且输出无上限）；`ParseContext` 刻意不放 `Parser`，不递归解析嵌入文档。
+16. **附件单会话上限 + 孤儿 2 小时**：`ChatAttachmentService.upload` 先 `countBySessionId` 判 `max-per-session`（20）；`orphan-retain-hours` 从 24 缩到 2，它是无凭据灌存储的唯一落点。租户级存储配额尚未做（要按套餐定数字）。
+17. **Webhook 签名覆盖「时间戳.请求体」**：`WebhookSignature.sign(secret, timestampMillis, body)`，时间戳同时随 `X-Qingyu-Timestamp` 发出；接收方复算 + 5 分钟窗口 + 按载荷 id 去重。改契约在未上线的现在零成本，上线后别再动。
+18. **Prompt 定界**：知识库正文包在 `<knowledge>`（`ChatServiceImpl.buildContext`）、工具返回包在 `<tool_result>`（`ToolResultDelimiter.wrap`，HTTP 工具与 MCP 都走它，截断作用在正文、标签不占额度），系统提示末尾固定追加 `DATA_GUARD_PROMPT` 声明标签内是数据不是指令。放在代码里而不是只改默认模板：模板已播种进库。是缓解不是根治。
+19. **分析 rollup 有日期锁**：`AnalyticsRollupDao.tryLockDay` 用 `pg_try_advisory_xact_lock(classId, day)` 双参数形式，与文档处理互斥的单参数形式键空间互不重叠；抢不到返回 false、`backfill` 不计入成功。其余 7 个 `@Scheduled` 各有自己的互斥（文档咨询锁 / CAS 认领 / 消费组）或重复无害，不需要锁。
+20. **依赖扫描是手动步骤**：`scripts/dep-audit.sh`（`-Pdepcheck` + `pnpm audit`），刻意不绑进 `mvn verify`，见脚本头注释。⚠️ `pnpm audit` 必须显式 `--registry=https://registry.npmjs.org`——npmmirror 之类的镜像没有 audit 端点，会报 `ERR_PNPM_AUDIT_ENDPOINT_NOT_EXISTS`；后端那半需要免费的 `NVD_API_KEY`，不给会在更新漏洞库时直接失败。
+21. **反代场景必须配 `server.forward-headers-strategy: framework`**：nginx 终结 TLS 后后端收到的是 http，而浏览器 `Origin` 是 https——不读 `X-Forwarded-Proto` 的话 Spring 把**同源**请求判成跨域，撞上管理端默认为空的 CORS 白名单直接 403，**整个后台登录不了**，而浏览器里只显示「网络错误，请稍后再试」。⚠️ 前提是 8080 只经受信任的反代对外，别直接暴露公网。`CorsPolicyIT` 那两条（同源放行 / 反代终结 TLS 后同源放行）守着。
+22. **Vite 代理必须摘掉 `Origin` 头**：`changeOrigin: true` 只改 Host。不摘 Origin 的话后端看到 `Origin=localhost:5175` 而 `Host=localhost:8080`，判成跨域 → 403；而 5173 被占用时 Vite 会自动漂到 5174/5175，白名单永远追不上。走反代时前端与后端本就该视为同源。
+23. **`allow-private-*` 开关的落库校验与出站校验必须看同一个开关**：`ApplicationController.requireValidWebhookUrl` 与 `RestClientWebhookHttpClient` 各有一道，只改一处会让开关半失效（出站放行、落库仍拒），本地联调根本配不上地址。⚠️ 集成测试发现不了——它们直接 `setWebhookUrl` 写库，绕过控制器。
+24. **工具调用失败的日志要能区分「被守卫拦下」与「网络问题」**：`HttpToolCallback.describeForLog` 对守卫抛的 `IllegalArgumentException` 记完整消息（里面只有 host），其余异常只记类名（消息可能带含密钥的 URL）。MCP 侧复用同一方法，两条链路口径必须一致。
+25. **⚠️ 本机若用 fake-IP 模式的代理，所有出站工具调用都会被 SsrfGuard 拒**：Clash 一类代理把域名解析到 `198.18.0.x`，而该段在黑名单里（RFC 2544 基准测试段，生产无正当用途）。症状是工具静默失效，日志现在会明写「已拒绝: <host>」。AI 对话不受影响（走 SDK 直连、不经守卫）。这是环境限制不是缺陷，别为此放宽黑名单。
+26. **三条出站路径的私网开关是一套，且永不放行云元数据**：`model.allow-private-endpoints`（本地 Ollama）、`webhook.allow-private-targets`（本地接收器）、`mcp.allow-private-servers`（本地自建 MCP server），都走 `SsrfGuard.assertAllowedHttpUrlAllowingPrivate`，dev profile 全开、生产全关。它放行环回与普通私网，但 169.254.0.0/16、100.64.0.0/10、fe80::/10、fd00:ec2::/64 **任何开关都拦**。⚠️ 缺任何一个开关都会让对应场景在本地根本调不通，而这不是「不可验证」，是开关没配齐——MCP 那个就是 2026-09-04 补的。⚠️ 「永不放行云元数据」这半条是**真机冒烟点出来的**：原实现打开开关后只校验 URL 形态，dev 下把模型 endpoint 填成 `http://100.100.100.200/v1`（阿里云元数据）能成功落库，而当时单测是绿的——断言把「只校验形态」写成了预期，测试固化了错误行为。改这几个开关时先问一句：放开的是「本地地址」还是「连元数据一起」。
+27. **MCP 登记时不校验 URL、只在同步时校验，这与 Webhook「落库就拦」的差异是有意的**：MCP 有 `lastSyncError` + 界面警示条这条设计好的失败反馈通道，错误立即可见；Webhook 配错地址是在事件推送时静默失败，用户不会主动看投递表，所以必须落库就拦。别为了「一致」把 MCP 也改成落库拦。
+28. **租户级存储配额只算对象存储**：`StorageUsageDao` 求 `document.file_size + chat_attachment.file_size`，按套餐配 `billing.quota.<PLAN>.storage-bytes`（FREE 1GB / PRO 20GB / ENTERPRISE 不限，0=不限）。⚠️ 爬取的 URL 类文档 `file_size` 为 null、不占 S3，**刻意不计入**，那条链路由 `max-pages-limit`（500）约束。检查点在知识库上传与附件上传两处、都在传 S3 之前；统计失败 fail-open 放行。⚠️ `KnowledgeServiceImpl` 的 `QuotaService` 是 setter 注入（构造函数被 10 个单测手工调用），没注入会 NPE 而不是静默跳过。
+29. **`sa-token.is-log` 保持开启，但日志实现必须是脱敏版**：内置的 `SaLogForConsole` 会把完整会话凭证打进 INFO 且直接 `System.out`（logback 的 pattern 过滤够不到）。`SaTokenConfig.installMaskingLog` 在 `@PostConstruct` 里换成 `TokenMaskingSaLog`——复用 Sa-Token 自己的 `StrFormatter` 渲染后整体正则脱敏，再转交 SLF4J。⚠️ 正则的 `` 词边界不能去掉，否则配置日志里的 `tokenName=satoken` 会被一起脱掉，而那条正是排查「请求头名字配错」时要看的。别把这段当冗余删掉，删了之后 token 会重新进日志且没有任何报错。
+
+## 手工验证清单
+
+下面每一节都对应过一次真实事故，且**自动化测试永远覆盖不到**——IT 里 `ChatClient` 与 `VectorStore` 全被 mock，真实 SSE 时序、embedding 计费、robots 遵守、浏览器后台化都看不见。改到哪读哪节，用下面的脚本点名。
+
+### 不用全背——用脚本按改动点名
+
+```bash
+./scripts/manual-smoke-hints.sh              # 看工作区改动触发了哪几节
+./scripts/manual-smoke-hints.sh master...HEAD  # 看整个分支
+```
+
+按本次改动的文件，只列出下面**对应那几节**的标题，让人展开去读。**它只存「路径 → 章节标题」的映射、不复述任何条目内容**——复述就会产生第二份会漂移的文案，正是卡片协议白名单分裂三处那个病。引用的章节标题在 CLAUDE.md 里找不到时脚本 exit 1（标题被改却忘了同步规则，会让对应提示静默消失，和「本次改动无需验证」长得一模一样）。
+
+刻意**不判红**：判红只会逼人为了绿而空跑流程，「验过了」这句话就此失去含义。
+
+### 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事
+Boot 4.1 + Spring AI 2.0 迁移就是靠这三条真机冒烟才闭合的（`streamUsage` 静默失效不抛异常，出站 URL 更是测试看不到的东西）：
+1. **向量检索活性**：上传文档 → 提问 → 确认命中且 `score > 0`。
+2. **token 计量非零**：打一次流式对话 → 查 `sys_api_usage.token_count` 非零（`streamUsage` 一旦失效是静默的，记 0 不抛）。
+3. **出站 URL 形态**：把 `AI_BASE_URL` 临时指向本地 HTTP 监听器抓包，确认实际请求路径是 `/v1/chat/completions` 与 `/v1/embeddings`。
+
+### 改动流式对话链路后必须手工验证
+IT 里 `ChatClient` 全被 mock，工具调用与真实 SSE 时序都看不见：
+1. **逐字增量**：回复真的逐字出现而非一次性刷出（用 `MutationObserver` 采样最直接，肉眼容易被短回复骗过）。
+2. **流式 token 计量**：走 widget 发一条 → `sys_api_usage.token_count` 非零（管理端不计量，只有开放 API 计量）。
+3. **流式工具调用** ⚠️ **本项目最大的一处上游坑**：挂一个 HTTP 工具并提问**触发它**。Spring AI 2.0 + Qwen 组合下，LLM 实际调用工具时 `OpenAiChatModel$ChunkMerger.chunkToChatCompletion` 会抛 `NoSuchElementException`（Qwen 分帧发 tool_call：首帧带 `function.name`、后续帧只有 `arguments`，Spring AI 未按 index 聚合；上游 [issue #4790](https://github.com/spring-projects/spring-ai/issues/4790) 仍 open、修复 PR #4794 未合并、2.0.0 已是最新稳定版**无版本可升**）。故 `ChatServiceImpl.streamChat` 内置降级：**本轮挂了工具且尚未吐出任何正文时**，失败则用非流式 `chat()` 重跑一次并把结果补发为 delta/card/done。验证点：客户端收到 delta/card + done 而非 error；DB 只落一条 AI 消息；`sessionId` 与 START 事件一致。**上游修复后可整段删除该降级**（`fallbackToNonStreaming`）。
+4. **卡片增量渲染 + 历史一致**：卡片在围栏闭合瞬间整张出现；刷新后历史顺序与流式时一致（验证落库 `ui_spec` 正确）。
+5. **停止生成不落库**：管理端点「停止」后半截回复留在屏上，刷新即消失（`Flux.concat` 的落库 Mono 在 cancel 时不被订阅）。
+
+### 改动卡片 Action URI 协议后必须同步三处
+卡片按钮的动作协议（`url://` 打开链接 / `msg://` 发消息 / `copy://` 复制）白名单分散在三个语言里：
+
+1. `ChatServiceImpl.CARD_PROMPT`（Java 字符串，决定 LLM 会生成什么）
+2. `frontend/src/lib/actionUri.ts` 的 `VALID_PROTOCOLS`
+3. `widget/src/core/actionUri.ts` 的 `VALID_PROTOCOLS`
+
+漏改任一处的后果：LLM 产出客户端不认的协议 → 按钮退化成发一条奇怪的消息，或彻底静默。
+
+**`CardActionProtocolSyncTest`（Surefire 单测）现在守住了「三处白名单集合必须逐字相等」**：反射读 `CARD_PROMPT` 抽 `xxx://`（排掉嵌在示例链接里的 `https` 等通用 scheme），正则抽两份 TS 的 `VALID_PROTOCOLS`，三者两两比对。改一处忘另两处即红。四轮变异验证过：单端加协议 / 两端加而 prompt 不加 / 只 prompt 加 / 抽取正则失配，全部转红——最后一条尤其重要，正则一旦失配集合会静默变空、断言退化成「空==空」永真，故先各自断言非空。
+
+⚠️ **它只比对白名单集合，不验证行为**。「三个协议各自实现得对不对」（fail-closed 语义、`safeUrl` 白名单、剪贴板降级）它一概不管——改协议后仍须真机点一遍三类按钮。
+
+⚠️ **`url://` 是 fail-closed 的**：被 `safeUrl`（http/https 白名单）拒绝时**不回退** `value`，点击无反应是**正确行为**——协议有效、只是内容被安全策略拦下，此时改去发消息属语义错乱。`executeActionUri` 的返回值表示「是否已作为动作处理」而非「是否成功」，回退只在协议本身无效（格式不匹配/不在白名单）时发生。两端各有一份实现，改一处必须同步另一处。
+
+⚠️ **widget 侧解析与执行已拆分**：`widget/src/core/actionUri.ts` 只负责解析（`resolveActionUri`），不碰任何浏览器 API；执行（`window.open`/`navigator.clipboard`）留在 `widget/src/actionUri.ts`。`ResolvedAction` 的 `none`（协议无效，调用方应回退发送原文）与 `blocked`（协议有效但内容被拦下，调用方不得回退）是这条 fail-closed 语义跨模块成立的承载点，二者语义不同，不能合并成一种「失败」。
+
+### 改动网站知识库同步 / 站点爬取链路后必须手工验证
+条（单测里 `WebPageFetcher` 与 `VectorStore` 全被 mock，调度线程的过滤器状态更是单测造不出来）：
+1. **二次同步不重嵌**：**等第一次同步跑完再点第二次**，确认 `chunk_count` 与 `vector_store` 行数**都没变**。退化成每次重嵌不会报错、只会悄悄烧 embedding 的钱。⚠️ **别连点两次**——第二次会被咨询锁挡下（日志 `网页同步跳过：同一文档已有同步在进行`），此时行数不变是「被锁挡住」而非「hash 未变跳过」，会把并发互斥的效果误当成变更检测的效果。
+2. **调度器真能查到文档**：把某文档 `last_synced_at` 改到很久以前，等 `@Scheduled` 触发（临时用 `-Dqingyu.care.web-sync.interval-ms=30000` 缩短间隔），确认日志打出「网页定时同步：N 篇到期」。原生 SQL 一旦被改回 JPQL，这里会**静默地一篇都查不到**。
+3. **人工读一遍入库正文**：`SELECT content FROM document WHERE id=?`，看有没有混进导航栏/Cookie 提示/页脚版权。这是启发式剔噪声唯一的验收方式。
+
+排查网页文档问题时，**先跟文件文档做同身份对照**再归因新代码——真机冒烟中「网页文档 `tenant_id` 落成 NULL」曾被误判为本特性缺陷，实为平台管理员建档的既有行为（文件上传路径一模一样）。
+
+**站点爬取（第二期）另有十条：**
+4. **范围真的收窄**：给一个 `/help/` 入口，确认没有爬到 `/blog/` 或外域。
+5. **选择器真的生效**：配与不配各爬一次，`SELECT content FROM document WHERE id=?` **人工读一遍**有没有导航混进来。这是启发式与选择器唯一的验收方式。
+6. **租户字段非 NULL**：用**租户管理员**登录爬，确认 `tenant_id`/`app_id` 落库正确。⚠️ 与「平台管理员建档 `tenant_id` 落 NULL 是既有行为」区分——第一期真机冒烟已把这条既有行为误判成缺陷一次。
+7. **上下文不泄漏**：连续爬**两个不同租户**的站点，确认第二个的文档租户字段仍正确。这是第 6 条的另一半，**只有真机连做两次才暴露**，单次爬取永远是绿的。
+8. **重爬幂等**：第二次爬同一站点，`document` 行数只增新页、`vector_store` 不因重复建档暴涨。
+9. **robots 真被遵守**：找一个有 `Disallow` 的站点，确认那些路径没进库。
+10. **限速真的生效**：看日志时间戳确认相邻请求间隔 ≥ 1 秒（或站点声明的 `Crawl-delay`）。限速失效不会报错，只会让平台被目标站点封 IP。
+11. **爬取期间改配置不会被静默回滚**：开一次页数较多、耗时够长的爬取，趁它还在跑时把该站点的 `contentSelector` 改掉，等爬完确认新选择器生效、没被 `crawl()` 收尾那次 `save` 覆盖回旧值。这条已用变异测试证实**零自动化守护**（去掉「重新 `findById`」那步改回直接 `save(site)`，全部单测照样绿），只能靠这条手工验证兜底。
+12. **首次「新建并开爬」连点几次不出现幽灵失败**：确认不会出现「进度立刻显示失败：站点不存在，但列表里那条明明在」——`startCrawl` 与 `@Async` 投递之间的事务可见性窗口只在特定线程调度时序下才现形，评审把 `@Transactional` 加回 `startCrawl` 后连跑 4 次 IT 全绿，即**没有任何自动化测试能保护这条**。
+13. **中途故障不留僵尸 RUNNING**：`runCrawl` 的 `catch` 只抓 `Exception`、抓不住 `Error`（如整页 DOM 撑爆堆内存），这条纯 Mockito 测不出真实场景——临时在爬取路径插一行抛 `Error` 冒烟，确认 `finally` 仍把该 Progress 置 `FAILED`、互斥与并发额度都被正确释放，站点能立刻重新爬取；不清理的后果是并发额度永久少一个，只能重启进程恢复。
+
+### 改动聊天附件链路后必须手工验证
+条，每条都是真机冒烟实际抓到过东西的地方：
+1. **管理端真的能传上去**。前端 `uploadChatFile` **必须显式设 `'Content-Type': 'multipart/form-data'`**（同 `knowledge.ts` 的 `uploadDocument`）——axios 实例在 `create` 时写死了 `application/json`，而 axios 1.x 的 `transformRequest` 遇到 FormData 会看 Content-Type，是 JSON 就调 `formDataToJSON` 把它转成 JSON，`File` 没有可枚举属性于是变成 `{}`，**328KB 的图只发出 62 字节**，后端回 `Current request is not a multipart request`。这条 8 轮代码评审全部漏掉——`chat.ts` 孤立看完全正确，缺陷只存在于「实例级默认头 × axios 版本行为」的交互里。
+2. **SSE 端点的错误响应形态**。用**真实 HTTP 客户端带 `Accept: text/event-stream`** 请求 `/open/v1/chat/stream` 并触发一个业务异常（如带不存在的 attachmentId），确认是 JSON 而非 Tomcat HTML 错误页、且 body 里**没有 Java 堆栈**。⚠️ **MockMvc 与不带 Accept 头的 curl 都复现不出**——异常处理器走内容协商时 JSON 转换器与该 Accept 不匹配，会抛 `HttpMediaTypeNotAcceptableException` 并连锁触发 `/error` 转发（不在 Sa-Token 豁免名单）撞 `NotLoginException`，最终 401 + HTML + 完整堆栈发给公网客户端。
+3. **坐席端实时收图**（不刷新）：坐席接管后让用户发图，坐席台应立刻出现图片而不只是文本。这条守的是 attach 与 notify 的顺序（见上）。
+4. **孤儿清理连 S3 一起删**：上传但不发送，临时把 `qingyu.care.attachment.orphan-retain-hours` 改成 0、间隔改短，确认库行**和 RustFS 里的对象**都没了。⚠️ 改成 0 会把「选了图还没点发送」的附件秒删，验完记得改回来。
+5. **文件名 XSS 三重否定**：上传一个叫 `<img onerror=alert(1) src=x>.png` 的文件，断言**不弹窗、DOM 里没有多出 img 元素、文件名原样作为文本显示**——只看"没弹窗"抓不住 `innerHTML` 写法。
+
+### 改动已读回执链路后必须手工验证
+条：
+1. **多标签页并发**：坐席开两个标签页同看一个会话，回执不打架、水位线不回退。jsdom 造不出真实并发。
+2. **Page Visibility 真实行为**：切到别的标签页不上报、切回来立即上报。jsdom 里 `visibilityState` 是测试自己 stub 的，等于在测桩。⚠️ **这条别再从头摸索——本节末尾有一套已验证通过的真机配方**（2026-08-20 按它验证通过，全程无桩）。
+3. **访客刷新后已读保持**：真机整页刷新 widget，已读标记仍在（走的是历史响应里的 `agentReadUpToMessageId`）。真实浏览器整页刷新会把整个 JS 运行时重建一遍——模块级状态、DOM、SSE 连接全部归零重来；而 jsdom 里所谓的"刷新"只是重新调用一次 init 函数，`isOpen`/已渲染消息/已读水位线缓存等模块级状态原样残留，两者不等价（Task 10 里 `setPanelOpen` 要写在 `stubVisibility` 之前，否则会读到上一个测试遗留的 visibility 状态，就是这类"jsdom 里状态不会随刷新清零"的直接体现）。只有真机整页刷新才能验证「已读确实是从历史响应重建出来的」而不是模块状态凑巧还在。
+4. **多实例下 `read` 事件到达**：`RealtimeHub` 走 Redis pub/sub 桥接，单实例测不出跨实例路径（同 `WebhookQueueIT` 面对的问题）。
+5. **访客界面无视觉噪音**：坐席反复读，访客侧只出现「已读」二字，不冒任何状态提示条。⚠️ 复用 `session` 事件就会踩这条——widget 对 `session` 事件是无条件当文案展示的。「不产生额外文案节点」这部分已由 widget vitest 断言覆盖（守住"不复用 session 事件"这条边界），真机要验的是自动化断言不到的部分：坐席端与访客端真实串起来之后的整体观感——除了「已读」二字出现，不该有闪烁、不该有布局跳动，其余任何东西都不该跟着动。
+6. **B 的双向真机联调**：坐席发消息 → widget 展开着 → 坐席端出现「已读」；把 widget **收起**再让坐席发一条 → 坐席端**不该**出现已读。收起是 widget 内部状态，jsdom 里测的是我们自己的桩。
+7. **坐席正看着别的会话时收到 B 回执**：开两个已接管会话，看着甲，让乙的访客读消息 → 标记必须落在乙上。这是多会话列表引入的新失效模式，只在真机多开时现形。
+
+⚠️ **「坐席消息」的判据是 `role === 'AGENT'`，而它在三个地方各写了一次**：`AgentPage.tsx` 的已读判据、`AgentPage.tsx` 里本地乐观插入消息时**硬编码**的 role（它不来自后端响应）、以及 widget 的 `history.ts`。三处必须一致，只改其中之一的症状是「坐席自己刚发的消息标不上已读、刷新一下又对了」。判据曾经是 `ASSISTANT`（那时 `agentReply` 落库就写 `ASSISTANT`、`MessageRole.AGENT` 从未被写入），根因已于 2026-08-20 修复。
+
+**第 2 条（Page Visibility）的真机配方** —— 2026-08-20 摸索并验证通过，复用这套、别重走弯路：
+
+⚠️ **别用 chrome-devtools MCP 驱动这条，那条路根本走不通**：CDP attach 会抑制页面后台化。已实测——程序化 `select_page(bringToFront)`、**人手点标签栏**、乃至 OS 级 `ShowWindow(SW_MINIMIZE)` 最小化整个窗口，只要页面被 CDP attach 着，`visibilityState` 就恒为 `visible`、零个 `visibilitychange`。用 `Emulation.setPageVisibilityOverride` 能让断言变绿，但那是在测自己造的桩。
+
+1. **访客页跑在不接 CDP 的独立 Chrome 实例**：`chrome.exe --user-data-dir=<临时目录> --no-first-run --no-default-browser-check --new-window <url>`，不带调试端口，MCP 看不到它也就不抑制后台化。
+2. **宿主页自带编排脚本**驱动 widget——`attachShadow({mode:'open'})` 所以外部脚本能操作其 DOM：`.qy-bubble` 展开、`textarea` + `.qy-input button:not(.qy-attach-btn)` 发送、`.qy-handover` 转人工。⚠️ 展开后**不能再点气泡**，否则「不上报」会是因为面板收起而非页面隐藏。
+3. **`ShowWindow(hwnd, 6)` 最小化 / `9` 恢复**，并用 `IsIconic` 自证窗口状态真的变了（否则"没推进"可能只是命令没生效）。
+4. **坐席侧全走 curl、不必开坐席页**：`/api/v1/auth/login` 拿 token（请求头名 `satoken`）→ `/api/v1/chat/session/{uuid}/accept` → `/api/v1/chat/agent/reply`。
+5. **判据取数据库** `message_read_receipt.up_to_message_id`，不看 UI。
+
+⚠️ **最容易得出错误结论的一步：必须能区分「消息压根没送达」与「送达了但没上报」**。若 Chrome 在最小化时挂起了 SSE，widget 根本没收到消息，那"不上报"就与可见性判定毫无关系——而这两种情况在水位线上的观测结果**完全相同**（可见时推进 / 最小化时不推进 / 恢复后推进），只看水位线必然误判。办法是给宿主页装两个探针，结果写进 `document.title`（独立实例没有 CDP，但 PowerShell 读得到 `MainWindowTitle`）：`MutationObserver` 观察 `.qy-msgs` 子节点新增 = 消息**渲染到达**时刻；包装 `window.fetch` 拦截 URL 含 `/read` 的请求 = **上报发出**时刻。最小化期间前者增加、后者不动，才坐实了「收到了但没报」。
+
+⚠️ **探针必须事件驱动，绝不能用 `setInterval`**——后台标签的定时器被 Chrome 节流到 1 次/分钟，title 就不更新了，看起来跟"页面被冻结"一模一样。
+
+⚠️ 也试过「摘掉判定重新 build」的变异法，**那条路不划算**：`visibilitychange` 监听器不一起摘就无法归因恢复后的上报，且要动入库产物 `widget.js`。探针法不改产品代码就能直接观测消息到没到，更直接。
+
+### 改动 MCP 接入链路后必须手工验证
+条：
+1. **真连一个 MCP server**：走完「登记 → 同步 → 标只读 → 绑进 skill → 对话触发」，确认出站请求带着配置的凭据。⚠️ 凭据若在某个环节被清掉，症状同平台共享工具那条——第三方返 401，模型拿着错误响应继续编答案，**全程无异常无日志**。
+2. **`DEPRECATED` 路径**：远端下线一个工具后再同步，确认是标记而非删行、界面上有提示、且该工具从 skill 的可勾选列表消失。
+3. **SSRF**：URL 指向 `169.254.169.254` 确认被拒；再用一个 TTL=0、解析结果会翻转的域名验证 rebinding 也被挡。
+4. **凭据不被空串清空**：编辑 server 只改名字保存，确认 `authHeader` 仍在（前端不回显凭据）。
+
+### 改动 OpenAPI 工具导入链路后必须手工验证
+条：
+1. **真实公开 schema 走通全链**：导入 → 勾选 → 绑进 skill → 对话触发 → 确认出站 URL 与参数正确。单测只能证明映射规则对，证明不了「生成出来的工具真的能被 LLM 调用并拿到结果」。
+2. **可选参数不填时端到端正确**：提一个不涉及可选参数的问题，确认出站 URL 里既没有残留 `{占位符}`、也没有半截的 query 段。`UrlTemplateFillerTest` 钉的是纯函数，这条钉的是它真的被接在链路上。
+3. **YAML schema 经 URL 拉取能导入**：`OpenApiSchemaParserTest` 已用 mock 文本覆盖了 JSON/YAML 两条解析分支，这条重复验证没有意义；真正测不到的是**经 URL 拉取**这条路径——`OpenApiSchemaFetcher` 的 Content-Type 白名单（`text/yaml`/`application/yaml`/`application/x-yaml`）要靠一次真实出站请求拿到真实的响应头才能验证，单测里 fetcher 是 mock 的，覆盖不到这层。
+4. **会 302 的 schema URL 给出可读错误**：禁重定向是硬安全取舍（重定向目标不再经 `SsrfGuard` 校验），只能靠错误消息补偿——必须明确说「请填写跳转后的最终地址」，而不是丢一个含糊的失败。
+
+### 改动 widget 协议层或 CLI 后必须手工验证
+条：
+1. **同一问题用两种身份各问一遍**，确认访客视角命中的文档确实比服务端视角少。这一条同时验证三件事：鉴权抽象接对了、`--as-visitor` 的 Origin 真的走到了浏览器那条鉴权路径、文档可见性分级在开放 API 上确实生效。单测里 fetch 是桩的，验不到真实鉴权。
+2. **widget 真机回归**：嵌一次 widget，确认会话恢复、卡片按钮的三类动作（打开链接/发消息/复制）仍然正常。协议层抽取动了 session 与 actionUri 两条运行时路径，而 `url://` 被 `safeUrl` 拒绝时「点击无反应」是正确行为——这条 fail-closed 语义只有真机点得出来。
+
+### 改动工具商店 / 能力包链路后必须手工验证
+
+条：
+
+1. **凭据真的是租户填的那个，且出站 URL 形态正确**：装一个含 HTTP 工具 + skill 的包（工具的
+   `urlTemplate` 里要带一个 `${VAR}` 变量）→ 发一句触发工具的对话 → 确认**出站请求头里带的是
+   安装时填的值**、**URL 里既没有残留 `${`、也没有半截的 query 段**。凭据若在某个环节被清掉，
+   症状是第三方返 401、模型拿着错误响应继续编答案，**全程无异常无日志**（同平台共享工具那条）。
+2. **MCP 包的两条路径**：正常 url 装一次，确认 sync 成功后 skill 的 `mcpToolIds` 真绑上了、
+   **且看到那条「已绑定 N 个 MCP 工具，默认可写、暂不会挂给 AI，需自己标只读」的提示**——
+   绑上了不等于能用，见上面「容易写错的地方」第 11 条；再用坏 url 装一次，确认是**部分成功**
+   （工具与 skill 都在、提示明确说了要手动同步），不是整体失败。
+3. **上下文不泄漏**：连续给**两个不同租户**各装同一个包，确认第二个租户的行 `tenant_id` /
+   `app_id` 仍正确。`PackageInstallIT` 已覆盖 MockMvc 层的同款场景，真机这条验的是**真实浏览器
+   会话下连做两次**（切账号、切应用），只有真机连做才暴露会话级的上下文残留（同站点爬取第 7 条）。
+4. **manifest 预览逐字核对**：导出一个 URL 里带 `?apikey=` 的工具，确认界面弹出了密钥告警；再
+   人工通读一遍 manifest，确认没有明文凭据、变量的 label 与 help 是人话。凭据识别与密钥扫描都是
+   启发式，**没法自动化**——同噪声剔除，这是唯一的验收方式。
 
 ## 语言与提交约定
 - 全部使用简体中文：对话、代码注释、commit 信息。
