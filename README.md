@@ -228,6 +228,8 @@ cd frontend && pnpm install && pnpm dev
 
 嵌入页的域名需要先加进该应用的「Widget 允许来源域名」白名单。
 
+接入细节（白名单匹配规则、反代与 HTTPS、排查清单）见 [Widget 接入指南](docs/Widget接入指南.md)；服务端直接调用开放 API 与接收 Webhook 见 [开放 API 参考](docs/开放API参考.md)。
+
 ## 🐳 生产部署
 
 一条命令拉起全栈（PostgreSQL + Redis + RustFS + 后端 + 前端）：
