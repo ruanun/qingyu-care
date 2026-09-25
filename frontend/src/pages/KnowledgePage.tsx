@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { knowledgeService } from '@/api/knowledge';
 import type { KnowledgeBase, Document } from '@/types';
 import { useToast } from '@/hooks/use-toast';
@@ -312,16 +313,17 @@ const KnowledgePage: React.FC = () => {
                                                 />
                                                 <div className="space-y-1">
                                                     <label className="text-xs text-muted-foreground">自动同步周期</label>
-                                                    <select
-                                                        className="w-full h-9 px-3 rounded-md border bg-background text-sm"
-                                                        value={webPageInterval}
-                                                        onChange={(e) => setWebPageInterval(e.target.value)}
-                                                    >
-                                                        <option value="MANUAL">不自动同步</option>
-                                                        <option value="HOURLY">每小时</option>
-                                                        <option value="DAILY">每天</option>
-                                                        <option value="WEEKLY">每周</option>
-                                                    </select>
+                                                    <Select value={webPageInterval} onValueChange={setWebPageInterval}>
+                                                        <SelectTrigger className="h-9">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="MANUAL">不自动同步</SelectItem>
+                                                            <SelectItem value="HOURLY">每小时</SelectItem>
+                                                            <SelectItem value="DAILY">每天</SelectItem>
+                                                            <SelectItem value="WEEKLY">每周</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
                                                 </div>
                                                 <Button className="w-full" onClick={handleAddWebPage} disabled={!webPageUrl.trim()}>
                                                     添加

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { knowledgeService } from '@/api/knowledge';
 import type { CrawlProgress, CrawlSite, CrawlSiteRequest } from '@/types';
@@ -273,11 +274,10 @@ export function CrawlSiteList({ knowledgeBaseId, onCrawlFinished }: Props) {
                     </DialogHeader>
                     <div className="space-y-4">
                         <label className="flex items-start gap-2 text-sm">
-                            <input
-                                type="checkbox"
+                            <Checkbox
                                 className="mt-0.5"
                                 checked={deleteWithDocs}
-                                onChange={(e) => setDeleteWithDocs(e.target.checked)}
+                                onCheckedChange={(v) => setDeleteWithDocs(v === true)}
                             />
                             <span>
                                 同时删除该站点已抓取的文档与向量（不可恢复）。不勾选时文档保留，

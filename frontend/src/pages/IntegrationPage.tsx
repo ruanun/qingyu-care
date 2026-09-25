@@ -2,11 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { integrationService } from '@/api/integration';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 
 const IntegrationPage: React.FC = () => {
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
     const { currentApp } = useAppStore();
     const [appKey, setAppKey] = useState('');
     const [appSecret, setAppSecret] = useState('');
@@ -50,7 +54,7 @@ const IntegrationPage: React.FC = () => {
 
     const regenerate = async () => {
         if (!currentApp) return;
-        if (!confirm('确认重置密钥？重置后旧密钥立即失效，已接入的服务将中断。')) return;
+        if (!(await confirm({ title: '重置 API 密钥？', description: '重置后旧密钥立即失效，已接入的服务将中断。', confirmText: '重置', destructive: true }))) return;
         try {
             const r = await integrationService.regenerateSecret(currentApp.id);
             if (r.code !== 200) throw new Error(r.message);
@@ -116,7 +120,7 @@ const IntegrationPage: React.FC = () => {
 
     const resetWebhookSecret = async () => {
         if (!currentApp) return;
-        if (!confirm('确认重置 Webhook 密钥？重置后旧密钥立即失效，接收方需更新。')) return;
+        if (!(await confirm({ title: '重置 Webhook 密钥？', description: '重置后旧密钥立即失效，接收方需同步更新。', confirmText: '重置', destructive: true }))) return;
         try {
             const r = await integrationService.regenerateWebhookSecret(currentApp.id);
             if (r.code !== 200) throw new Error(r.message);
@@ -192,8 +196,7 @@ const IntegrationPage: React.FC = () => {
 
             <div className="space-y-2">
                 <label className="text-sm font-medium">Widget 允许来源域名（每行一个，如 https://www.a.com）</label>
-                <textarea
-                    className="w-full min-h-[80px] text-sm rounded-md border p-2 bg-background"
+                <Textarea
                     value={allowedOrigins}
                     onChange={(e) => setAllowedOrigins(e.target.value.split('\n').map((s) => s.trim()).filter(Boolean).join(','))}
                     placeholder={'https://www.a.com\nhttps://a.com'}
@@ -221,10 +224,9 @@ const IntegrationPage: React.FC = () => {
                 <div className="flex flex-col gap-1">
                     {WEBHOOK_EVENTS.map((ev) => (
                         <label key={ev.value} className="flex items-center gap-2 text-sm">
-                            <input
-                                type="checkbox"
+                            <Checkbox
                                 checked={webhookEvents.split(',').map((s) => s.trim()).includes(ev.value)}
-                                onChange={() => toggleWebhookEvent(ev.value)}
+                                onCheckedChange={() => toggleWebhookEvent(ev.value)}
                             />
                             {ev.label}（{ev.value}）
                         </label>
@@ -247,6 +249,7 @@ const IntegrationPage: React.FC = () => {
                     接收方用此密钥校验请求头 <code>X-Qingyu-Signature</code>（<code>sha256=HMAC-SHA256(secret, 请求体)</code>），并按 <code>X-Qingyu-Delivery-Id</code> 幂等去重。
                 </p>
             </div>
+            {confirmDialog}
         </div>
     );
 };

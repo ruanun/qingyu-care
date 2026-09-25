@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import type { ApiResponse } from '@/types';
@@ -73,9 +74,9 @@ const ConfigForm: React.FC<ConfigFormProps> = ({ title, fields, load, save }) =>
               />
             </div>
           ) : f.type === 'textarea' ? (
-            <textarea
+            <Textarea
               id={f.key}
-              className="w-full min-h-[100px] rounded-md border bg-background p-2 text-sm"
+              className="min-h-[100px]"
               value={values[f.key] ?? ''}
               onChange={(e) => setValue(f.key, e.target.value)}
             />

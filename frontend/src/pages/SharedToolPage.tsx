@@ -4,6 +4,7 @@ import { platformService } from '@/api/platform';
 import type { AiTool } from '@/api/chat-tool';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -17,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { getErrorMessage } from '@/lib/apiResult';
 
 const empty: Partial<AiTool> = {
@@ -33,6 +35,7 @@ const empty: Partial<AiTool> = {
 
 const SharedToolPage: React.FC = () => {
   const { toast } = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [list, setList] = useState<AiTool[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -103,7 +106,7 @@ const SharedToolPage: React.FC = () => {
   };
 
   const remove = async (id: number) => {
-    if (!confirm('确定要删除该共享工具吗？')) return;
+    if (!(await confirm({ title: '删除该共享工具？', confirmText: '删除', destructive: true }))) return;
     try {
       const res = await platformService.deleteSharedTool(id);
       if (res.code !== 200) throw new Error(res.message);
@@ -235,8 +238,8 @@ const SharedToolPage: React.FC = () => {
               placeholder="https://api.example.com/orders/{orderId}"
             />
             <label className="text-sm font-medium">参数 JSON Schema</label>
-            <textarea
-              className="w-full min-h-[120px] rounded-md border px-3 py-2 text-sm font-mono"
+            <Textarea
+              className="min-h-[120px] font-mono"
               value={form.inputSchema ?? ''}
               onChange={(e) => setField('inputSchema', e.target.value)}
             />
@@ -272,6 +275,7 @@ const SharedToolPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        {confirmDialog}
     </div>
   );
 };

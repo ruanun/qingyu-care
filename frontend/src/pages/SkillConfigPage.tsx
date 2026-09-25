@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { throwIfFailed } from '@/lib/apiResult';
 import { Sparkles, Plus, Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -14,6 +16,7 @@ import type { AiSkill, AiTool } from '@/api/chat-tool';
 import { mcpApi } from '@/api/mcp';
 import type { McpServer, McpTool } from '@/api/mcp';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { cn } from '@/lib/utils';
 
 const SkillConfigPage: React.FC = () => {
@@ -25,6 +28,7 @@ const SkillConfigPage: React.FC = () => {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editing, setEditing] = useState<Partial<AiSkill> | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchAll = async () => {
         try {
@@ -114,7 +118,7 @@ const SkillConfigPage: React.FC = () => {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('确定要删除该技能吗？')) return;
+        if (!(await confirm({ title: '删除该技能？', confirmText: '删除', destructive: true }))) return;
         try {
             const res = await aiSkillService.remove(id);
             throwIfFailed(res); toast({ title: '技能已删除' }); fetchAll();
@@ -207,14 +211,14 @@ const SkillConfigPage: React.FC = () => {
                         <label className="text-sm font-medium">描述（可选）</label>
                         <Input value={editing?.description || ''} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
                         <label className="text-sm font-medium">正文（Markdown）</label>
-                        <textarea className="w-full min-h-[160px] rounded-md border px-3 py-2 text-sm" value={editing?.content || ''} onChange={(e) => setEditing({ ...editing, content: e.target.value })} placeholder="当用户咨询退货时：\n1. 先用 query_order 查询订单状态\n2. ..." />
+                        <Textarea className="min-h-[160px]" value={editing?.content || ''} onChange={(e) => setEditing({ ...editing, content: e.target.value })} placeholder={'当用户咨询退货时：\n1. 先用 query_order 查询订单状态\n2. ...'} />
                         <label className="text-sm font-medium">HTTP 工具</label>
                         <div className="border rounded-md p-3 space-y-2 max-h-[140px] overflow-y-auto">
                             {tools.length === 0 ? (
                                 <p className="text-xs text-muted-foreground">尚无工具，请先到「工具」页创建</p>
                             ) : tools.map((t) => (
                                 <label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                                    <input type="checkbox" checked={(editing?.toolIds || []).includes(t.id)} onChange={() => toggleTool(t.id)} />
+                                    <Checkbox checked={(editing?.toolIds || []).includes(t.id)} onCheckedChange={() => toggleTool(t.id)} />
                                     <span className="font-mono">{t.name}</span>
                                     {t.scope === 'PLATFORM' && (
                                         <Badge variant="secondary" className="text-[10px] ml-1">平台共享</Badge>
@@ -241,10 +245,9 @@ const SkillConfigPage: React.FC = () => {
                                             const exposedName = `${srv.code}__${mt.name}`;
                                             return (
                                                 <label key={mt.id} className="flex items-center gap-2 text-sm cursor-pointer pl-2">
-                                                    <input
-                                                        type="checkbox"
+                                                    <Checkbox
                                                         checked={(editing?.mcpToolIds || []).includes(mt.id)}
-                                                        onChange={() => toggleMcpTool(mt.id)}
+                                                        onCheckedChange={() => toggleMcpTool(mt.id)}
                                                     />
                                                     <span className="font-mono">{exposedName}</span>
                                                 </label>
@@ -261,6 +264,7 @@ const SkillConfigPage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            {confirmDialog}
         </div>
     );
 };

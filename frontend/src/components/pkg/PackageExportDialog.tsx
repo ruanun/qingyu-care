@@ -5,6 +5,7 @@ import { toolPackageService } from '@/api/toolPackage';
 import type { AiTool, AiSkill } from '@/api/chat-tool';
 import type { McpServer } from '@/api/mcp';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -113,10 +114,9 @@ const PackageExportDialog: React.FC<Props> = ({ open, onOpenChange, onExported }
             : <div className="space-y-1 max-h-40 overflow-y-auto border rounded-md p-2">
                 {items.map((item) => (
                     <label key={item.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                            type="checkbox"
+                        <Checkbox
                             checked={selected.includes(item.id)}
-                            onChange={() => toggle(selected, setSelected, item.id)}
+                            onCheckedChange={() => toggle(selected, setSelected, item.id)}
                         />
                         <span>{label(item)}</span>
                     </label>

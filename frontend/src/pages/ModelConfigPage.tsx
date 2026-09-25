@@ -25,6 +25,7 @@ import type { AiModelConfig, ProviderPreset } from '@/api/ai-model';
 import { ProviderField } from '@/components/model/ProviderField';
 import { ProviderBadge } from '@/components/model/ProviderBadge';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { cn } from '@/lib/utils';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
@@ -37,6 +38,7 @@ const ModelConfigPage: React.FC = () => {
     const [editingModel, setEditingModel] = useState<Partial<AiModelConfig> | null>(null);
     const [isTesting, setIsTesting] = useState<number | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchModels = async () => {
         try {
@@ -121,7 +123,7 @@ const ModelConfigPage: React.FC = () => {
     };
 
     const handleDeleteModel = async (id: number) => {
-        if (!confirm('确定要删除该模型配置吗？')) return;
+        if (!(await confirm({ title: '删除该模型配置？', confirmText: '删除', destructive: true }))) return;
         try {
             const response = await aiModelService.deleteModel(id);
             throwIfFailed(response);
@@ -349,6 +351,7 @@ const ModelConfigPage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            {confirmDialog}
         </div>
     );
 };

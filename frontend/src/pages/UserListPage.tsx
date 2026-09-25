@@ -31,6 +31,7 @@ import { userService } from '@/api/user';
 import { tenantService } from '@/api/tenant';
 import type { User, UserRole, Tenant } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
@@ -53,6 +54,7 @@ const UserListPage: React.FC = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
     const { user: currentUser } = useAuthStore();
     // 平台管理员无自身租户，创建租户成员时需显式指定所属租户
     const isPlatformAdmin = currentUser?.role === 'PLATFORM_ADMIN';
@@ -165,7 +167,7 @@ const UserListPage: React.FC = () => {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('确定要删除此用户吗？此操作不可撤销。')) return;
+        if (!(await confirm({ title: '删除该用户？', description: '此操作不可撤销。', confirmText: '删除', destructive: true }))) return;
         try {
             const response = await userService.delete(id);
             throwIfFailed(response);
@@ -414,6 +416,7 @@ const UserListPage: React.FC = () => {
                     </form>
                 </DialogContent>
             </Dialog>
+            {confirmDialog}
         </div>
     );
 };

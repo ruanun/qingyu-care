@@ -118,3 +118,41 @@ describe('ToolConfigPage 写操作的业务错误不静默', () => {
         expect(aiToolService.list).toHaveBeenCalledTimes(2); // 挂载 + 成功后重查
     });
 });
+
+/**
+ * 删除从 `window.confirm()` 换成了 useConfirm 弹窗。原生 confirm 是同步阻塞的，
+ * 换成 Promise 之后最容易出的错是忘了 await——`if (!confirm(...))` 对一个 Promise 取反恒为 false，
+ * 于是弹窗照弹、删除却已经在后台直接执行了。第一条守的就是这个。
+ */
+describe('ToolConfigPage 删除需要二次确认', () => {
+    const openDelete = async () => {
+        await renderPage();
+        fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    };
+
+    it('弹出确认框后点取消 → 不调用删除接口', async () => {
+        await openDelete();
+        expect(screen.getByRole('alertdialog')).toHaveTextContent('删除该工具？');
+        expect(aiToolService.remove).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: '取消' }));
+        await flush();
+
+        expect(aiToolService.remove).not.toHaveBeenCalled();
+    });
+
+    it('点确认 → 删除并刷新列表；业务错误时弹 destructive toast', async () => {
+        vi.mocked(aiToolService.remove).mockResolvedValue(fail('该工具正被 Skill 引用'));
+        await openDelete();
+
+        fireEvent.click(screen.getByRole('button', { name: '删除' }));
+        await flush();
+
+        expect(aiToolService.remove).toHaveBeenCalledWith(1);
+        expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({
+            variant: 'destructive',
+            description: '该工具正被 Skill 引用',
+        }));
+        expect(aiToolService.list).toHaveBeenCalledTimes(1);
+    });
+});

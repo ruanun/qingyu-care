@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Layers, Key, Copy, Eye, EyeOff, MoreHorizontal, Edit2, Trash2, Loader2, Palette, MessageSquare, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -285,8 +286,7 @@ const ApplicationListPage: React.FC = () => {
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-primary" /> 欢迎语</label>
-                            <textarea
-                                className="w-full flex min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            <Textarea
                                 value={formData.welcomeMessage}
                                 onChange={(e) => setFormData({ ...formData, welcomeMessage: e.target.value })}
                                 placeholder="用户进入对话时首先看到的消息"

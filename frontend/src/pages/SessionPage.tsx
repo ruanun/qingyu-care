@@ -17,6 +17,7 @@ import {
     UserPen
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Pagination } from '@/components/ui/pagination';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -335,29 +336,7 @@ const SessionPage: React.FC = () => {
                 </ScrollArea>
             </div>
 
-            <div className="shrink-0 flex items-center justify-between pt-4">
-                <p className="text-xs text-muted-foreground">
-                    共 {totalPages} 页
-                </p>
-                <div className="flex gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={page === 0}
-                        onClick={() => setPage(p => p - 1)}
-                    >
-                        上一页
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={page >= totalPages - 1}
-                        onClick={() => setPage(p => p + 1)}
-                    >
-                        下一页
-                    </Button>
-                </div>
-            </div>
+            <Pagination className="shrink-0 pt-4" page={page} totalPages={totalPages} onPageChange={setPage} />
         </div>
     );
 };
