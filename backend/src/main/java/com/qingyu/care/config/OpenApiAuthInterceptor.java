@@ -62,7 +62,8 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
             String appId = request.getHeader("X-App-Id");
             String apiKey = request.getHeader("X-Api-Key");
             Application app;
-            if (apiKey != null && !apiKey.isBlank()) {
+            boolean visitor = apiKey == null || apiKey.isBlank();
+            if (!visitor) {
                 // 服务端到服务端：appKey + secret（持密钥即受信，可见 INTERNAL 文档）
                 app = openApiAuthService.authenticate(appId, apiKey);
                 TenantContext.setAccessLevel(DocumentVisibility.INTERNAL);
@@ -83,8 +84,10 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
                 writeError(response, 429, "请求过于频繁");
                 return false;
             }
-            // 应用级之下再按客户端 IP 分桶，单个来源占不满整个应用的额度
-            if (perClientRateLimit > 0) {
+            // 应用级之下再按客户端 IP 分桶，单个来源占不满整个应用的额度。
+            // 只对访客路径：它防的是「appKey 公开 + Origin 可伪造」下的匿名滥用；服务端路径持密钥才进得来，
+            // 而接入方后端往往只有一个出口 IP，按 IP 分桶等于把整个集成压到 20 次/分钟。
+            if (visitor && perClientRateLimit > 0) {
                 String clientIp = resolveClientIp(request);
                 if (clientIp != null && !clientIp.isBlank()
                         && !rateLimitService.tryConsume("client:" + app.getAppKey() + ":" + clientIp, perClientRateLimit)) {

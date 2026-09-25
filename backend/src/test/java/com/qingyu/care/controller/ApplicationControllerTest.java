@@ -125,6 +125,26 @@ class ApplicationControllerTest {
     }
 
     /**
+     * 此前新建应用的 webhookSecret 为空，WebhookSender 在无密钥时不带签名头照发，
+     * 接收方拿不到签名也无从校验来源——除非用户记得去点一次「重置 Webhook 密钥」。
+     * 同时钉住「请求体里给的密钥不被采用」，与 appSecret 的处理一致。
+     */
+    @Test
+    void 新建应用自动生成Webhook签名密钥_且不采用请求体里的值() {
+        TenantContext.setTenantId(TENANT_ID);
+        when(tenantRepository.findById(TENANT_ID)).thenReturn(Optional.of(Tenant.builder().id(TENANT_ID).build()));
+        when(applicationRepository.save(any(Application.class))).thenAnswer(inv -> inv.getArgument(0));
+        Application body = Application.builder().name("新应用").webhookSecret("client-chosen").build();
+
+        try (MockedStatic<StpUtil> ignored = stubRole(UserRole.TENANT_ADMIN)) {
+            ApplicationView created = controller.create(body).getData();
+
+            assertThat(created.webhookSecret()).isNotBlank().isNotEqualTo("client-chosen");
+            assertThat(created.webhookSecret()).isNotEqualTo(created.appSecret());
+        }
+    }
+
+    /**
      * 变异实验：把任一写端点上的 {@code SecurityUtil.requireTenantAdmin()} 删掉，
      * 对应那一段断言转红。
      */

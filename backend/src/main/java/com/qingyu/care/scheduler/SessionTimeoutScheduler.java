@@ -4,11 +4,13 @@ import com.qingyu.care.entity.ChatSession;
 import com.qingyu.care.entity.SysConfig;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.event.WebhookDomainEvent;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.SysConfigRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +37,7 @@ public class SessionTimeoutScheduler {
 
     private final ChatSessionRepository sessionRepository;
     private final SysConfigRepository sysConfigRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${qingyu.care.session.timeout-minutes:30}")
     private int timeoutMinutes;
@@ -86,6 +89,15 @@ public class SessionTimeoutScheduler {
         );
 
         log.info("Closed {} timeout sessions", updated);
+
+        // 超时同样是会话结束，与坐席手动结束发同一个事件、用 trigger 区分——接收方订阅一个事件就能
+        // 覆盖所有「会话结束」。此前只有手动结束会发，超时的会话在接收方那边永远停在进行中。
+        // 本方法带 @Transactional，WebhookDispatcher 的 AFTER_COMMIT 监听在批量更新提交后才落投递行。
+        LocalDateTime endedAt = LocalDateTime.now();
+        for (ChatSession s : timeoutSessions) {
+            eventPublisher.publishEvent(new WebhookDomainEvent(
+                    "session.ended", s.getAppId(), s.getTenantId(), s.getSessionId(), "timeout", endedAt));
+        }
     }
 
     /** 租户级超时覆盖表：tenantId → 分钟数。留空/非正数/非法值一律忽略（回落全局默认）。 */

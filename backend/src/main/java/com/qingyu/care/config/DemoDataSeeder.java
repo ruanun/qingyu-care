@@ -436,6 +436,8 @@ public class DemoDataSeeder implements ApplicationRunner {
                 .name(name)
                 .appKey(appKey)
                 .appSecret(appSecret)
+                // 与 ApplicationController.create 一致：建应用即带签名密钥（随机即可，演示流程不依赖它的具体值）
+                .webhookSecret(UUID.randomUUID().toString().replace("-", ""))
                 .description(name + "（演示应用，appKey/appSecret 为固定演示值，生产必须重新生成）")
                 .welcomeMessage(welcomeMessage)
                 .themeColor("#0d9488")

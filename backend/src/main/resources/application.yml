@@ -234,7 +234,7 @@ qingyu:
 
     # 结构化卡片配置
     cards:
-      # 是否向系统 Prompt 注入卡片能力片段（仅非流式 chat() 生效，streamChat 恒不注入）
+      # 是否向系统 Prompt 注入卡片能力片段（chat() 与 streamChat() 同语义，流式由 StreamingSpecSplitter 增量下发）
       enabled: ${CARDS_ENABLED:true}
 
     # 真人坐席实时推送（RealtimeHub）跨实例配置

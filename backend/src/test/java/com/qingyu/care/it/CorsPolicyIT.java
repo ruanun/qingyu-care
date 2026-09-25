@@ -7,6 +7,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -58,6 +59,21 @@ class CorsPolicyIT extends AbstractPostgresIT {
                 .andExpect(status().is2xxSuccessful())
                 .andExpect(header().exists("Access-Control-Allow-Origin"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+    }
+
+    /**
+     * 浏览器跨域 fetch 默认只能读到几个「安全」响应头，限流的 {@code Retry-After} 与额度软提示
+     * {@code X-Quota-Usage} 都不在其中，必须显式暴露。故意用一个会被鉴权拒绝的请求：
+     * CORS 处理排在鉴权拦截器前面，错误响应上也得带着这个头，否则 429 时 widget 照样读不到。
+     */
+    @Test
+    void 开放API跨域响应暴露限流与额度头() throws Exception {
+        mockMvc.perform(get("/open/v1/widget/config")
+                        .header("Origin", "http://any-host.example.org"))
+                .andExpect(header().string("Access-Control-Expose-Headers",
+                        org.hamcrest.Matchers.allOf(
+                                org.hamcrest.Matchers.containsString("Retry-After"),
+                                org.hamcrest.Matchers.containsString("X-Quota-Usage"))));
     }
     /**
      * 浏览器对<b>同源 POST</b> 也会带 {@code Origin} 头。Spring 判「是不是跨域」靠 Origin 与请求

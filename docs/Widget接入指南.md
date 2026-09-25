@@ -16,9 +16,9 @@
 
 | 项 | 说明 |
 |---|---|
-| `appKey`（查询参数） | **唯一的配置项**，必填。缺了控制台警告 `[Qingyu Widget] 缺少 appKey，无法初始化`，不渲染 |
+| `appKey`（查询参数） | 必填。缺了控制台警告 `[Qingyu Widget] 缺少 appKey，无法初始化`，不渲染 |
 | `v`（查询参数，可选） | 接入配置页生成的代码带 `&v=1`，纯粹用于绕过缓存，Widget 不读它。`widget.js` 响应带 `Cache-Control: max-age=300`，升级后最多 5 分钟生效；想立刻生效就改 `v` 的值 |
-| 开放 API 地址 | **不可配置**，固定为「`widget.js` 所在的 origin」+ `/api`。见 §7.2 |
+| `apiBase`（查询参数，可选） | 开放 API 基地址，只在 `widget.js` 与后端不同源（如放在 CDN）时需要，须 URL 编码。不填时取脚本地址去掉末尾的 `/widget.js`，见 §7.2 |
 
 Widget 不向宿主页面暴露任何全局变量或 JS API，也不读 `data-*` 属性——没有「打开面板」「设置用户信息」之类的编程接口。
 
@@ -133,7 +133,7 @@ AI 回复里可能夹带卡片（流式 `card` 事件，或历史消息的 `uiPa
 
 ## 6. 调用量与限流
 
-Widget 的每一个请求都计入应用的开放 API 限流（默认每应用 60 次/分钟，**所有访客共享**；另有每 IP 20 次/分钟）：启动拉配置、每次发消息、inbox 每次（重）连、typing、已读上报都算。访客量一上来，默认值很容易打满，表现为回复提示「请求过于频繁」、甚至新访客的气泡直接不出现（配置拉取被 429）。
+Widget 的每一个请求都计入应用的开放 API 限流（默认每应用 60 次/分钟，**所有访客共享**；另外每个访客 IP 20 次/分钟）：启动拉配置、每次发消息、inbox 每次（重）连、typing、已读上报都算。访客量一上来，默认值很容易打满，表现为回复提示「请求过于频繁」、甚至新访客的气泡直接不出现（配置拉取被 429）。
 
 在接入配置页把该应用的「每分钟请求上限」调到与流量匹配的值。细则见[开放 API 参考 §3](./开放API参考.md#3-限流与额度)。租户月度额度用尽时，Widget 同样整体不渲染（配置拉取 403）。
 
@@ -162,11 +162,19 @@ Widget 的每一个请求都计入应用的开放 API 限流（默认每应用 6
 
 ### 7.2 反向代理与子路径
 
-Widget 的开放 API 地址 = `new URL(script.src).origin + "/api"`，**写死了 `/api` 前缀**。因此：
+Widget 按以下顺序确定开放 API 地址：
 
-- 后端必须在**加载 `widget.js` 的同一个 origin** 下以 `/api/` 对外提供（`/api/widget.js`、`/api/open/v1/**`）。
-- ⚠️ 挂在子路径下（如 `https://x.com/qingyu/api/widget.js`）**不能用**：Widget 会去请求 `https://x.com/api/open/v1/...`，路径全错。
-- 用 CDN 或另一个域名托管 `widget.js` 同理不行——Widget 会把那个域名当成 API 地址。
+1. 嵌入代码里显式给了 `apiBase` 参数，就用它；
+2. 否则取脚本地址去掉末尾的 `/widget.js`——后端本来就在 `{API 基地址}/widget.js` 提供脚本，所以反代挂在子路径下（如 `https://x.com/qingyu/api/widget.js` → `https://x.com/qingyu/api`）不用做任何额外配置；
+3. 都不满足时（脚本被改了名）回落到「脚本所在 origin + `/api`」。
+
+用 CDN 或另一个域名托管 `widget.js` 时，必须显式给 `apiBase`，否则 Widget 会把 CDN 当成 API 地址：
+
+```html
+<script src="https://cdn.example.com/widget.js?appKey=<App Key>&apiBase=https%3A%2F%2Fcs.example.com%2Fapi" defer></script>
+```
+
+⚠️ 自托管的 `widget.js` 需要随后端升级同步更新，否则跑的是旧版本。
 
 `/api/widget.js` 与 `/api/open/v1/**` 的 CORS 对任意来源开放且不带凭据（不用 cookie），反代不需要、也不应该再额外加 CORS 头，否则可能出现重复的 `Access-Control-Allow-Origin` 导致浏览器拒绝。
 

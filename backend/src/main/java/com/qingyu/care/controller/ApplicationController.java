@@ -113,6 +113,9 @@ public class ApplicationController {
         application.setTenant(tenant);
         application.setAppKey("app_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
         application.setAppSecret(generateSecret());
+        // 建应用即生成签名密钥：此前默认为空，而 WebhookSender 在无密钥时不带签名头照发——
+        // 用户不点一次「重置 Webhook 密钥」，接收方就收不到签名、也无从校验来源。请求体里给的值一律不采用。
+        application.setWebhookSecret(generateSecret());
         // 建应用时给的回调地址同样要过形态与 SSRF 校验（update 路径见下）
         requireValidWebhookUrl(application.getWebhookUrl());
 

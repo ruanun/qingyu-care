@@ -43,18 +43,18 @@
 
 ## 3. 限流与额度
 
-### 3.1 两层限流（每个 `/open/v1/**` 请求都计数）
+### 3.1 两层限流
 
 | 层 | 默认值 | 配置项 | 说明 |
 |---|---|---|---|
 | 应用级 | 60 次/分钟 | `qingyu.care.openapi.default-rate-limit-per-minute`；单个应用可在接入配置页覆盖 | 该应用**所有调用方共享**一个桶 |
-| 应用 + 客户端 IP | 20 次/分钟 | `qingyu.care.openapi.per-client-rate-limit-per-minute`（0 = 关闭） | IP 取 `X-Forwarded-For` 的**最后一段**，没有就用直连地址 |
+| 应用 + 客户端 IP | 20 次/分钟 | `qingyu.care.openapi.per-client-rate-limit-per-minute`（0 = 关闭） | **只作用于浏览器访客路径**（不带 `X-Api-Key`）。IP 取 `X-Forwarded-For` 的**最后一段**，没有就用直连地址 |
 
 超限返回 **429** + `Retry-After: 60`（固定 60 秒）。Redis 不可用时限流放行（fail-open）。
 
-- ⚠️ **服务端集成同样受「每 IP 20 次/分钟」约束**：你的后端所有请求都来自同一个出口 IP，第二层对它照样生效，并且与鉴权方式无关。服务端并发量大时，要么让平台运维调高 / 关闭 `per-client-rate-limit-per-minute`，要么在你这侧排队。
+- 第二层防的是访客路径下的匿名滥用（App Key 写在网页源码里，`Origin` 头非浏览器客户端可以随便填）。服务端路径要持 App Secret 才进得来，而你的后端通常只有一个出口 IP，按 IP 分桶只会误伤，所以服务端调用只受应用级这一层约束。
 - ⚠️ 两层都按**请求数**算，不只是对话：Widget 的配置拉取、inbox 长连接的每次（重）连、typing、已读上报都会消耗额度。
-- ⚠️ 开放 API 的 CORS 配置没有暴露任何响应头，**浏览器 JS 读不到 `Retry-After` / `X-Quota-Usage`**；服务端调用不受影响。
+- `Retry-After` 与 `X-Quota-Usage` 已在 CORS 中暴露（`Access-Control-Expose-Headers`），浏览器里的 `fetch` 也读得到。
 
 ### 3.2 月度额度（租户级，按套餐）
 
@@ -341,11 +341,11 @@ data:{"messageId":1025,"userMessageId":1024}
 | `session.accepted` | 坐席接管会话 | — |
 | `agent.replied` | 坐席每发一条消息 | — |
 | `session.returned_to_ai` | 坐席把会话交还 AI | — |
-| `session.ended` | 坐席 / 管理员在管理端结束会话 | — |
+| `session.ended` | 坐席 / 管理员在管理端结束会话；或会话无活动超时被自动关闭 | `trigger`：`agent` / `timeout` |
 | `webhook.test` | 接入配置页点「发送测试事件」 | `message: "测试事件"`（无 `sessionId`） |
 
-- ⚠️ **接入配置页目前只能勾选 `session.handover_requested` 与 `session.ended`**。其余三个事件后端会发，但只有订阅列表里写了才投递；要订阅它们，需通过管理端 API `PUT /api/v1/applications/{id}` 把 `webhookEvents` 写成逗号分隔的完整列表（租户管理员身份）。
-- ⚠️ **会话自动超时（`TIMEOUT`）不触发 `session.ended`**，开放 API 也没有「结束会话」端点。
+- 订阅在接入配置页勾选；只有勾选了的事件才会投递。
+- 超时关闭的会话同样发 `session.ended`，按 `trigger` 区分；超时扫描默认每 5 分钟一次，所以事件最多晚几分钟到达。开放 API 没有「结束会话」端点。
 - 低置信度 / 连续未命中只让 `handoverSuggested` 为 true，**不触发** `session.handover_requested`，只有用户真的请求或命中关键词才会。
 
 ### 8.2 请求格式
@@ -378,7 +378,7 @@ data:{"messageId":1025,"userMessageId":1024}
 | `createdAt` | 事件发生时间，ISO-8601 本地时间、无时区 |
 | `data.sessionId` | 会话 id，可用来调 `GET /open/v1/sessions/{id}` 取详情 |
 | `data.appId` | 应用的**内部数字 id**（不是 App Key） |
-| `data.trigger` | 仅 `session.handover_requested` 有 |
+| `data.trigger` | 仅 `session.handover_requested` 与 `session.ended` 有，取值见 8.1 |
 
 载荷只是通知，不含消息正文、访客信息等内容，需要的话用 `sessionId` 回查。
 
@@ -394,7 +394,7 @@ X-Qingyu-Signature = "sha256=" + hex( HMAC-SHA256( webhookSecret, X-Qingyu-Times
 2. **拒绝时间戳偏差超过 5 分钟的请求**（防重放）。
 3. **按载荷 `id` 去重**（见 8.4）。
 
-⚠️ **新建应用默认没有 Webhook 签名密钥**，此时请求不带 `X-Qingyu-Signature`。启用 Webhook 后请先在接入配置页点一次「重置密钥」生成密钥，并让接收端对缺签名的请求一律拒绝。
+新建应用时会自动生成 Webhook 签名密钥，在接入配置页查看。接收端应对缺签名的请求一律拒绝。⚠️ 2026-09-25 之前创建的应用可能没有密钥（此时请求不带 `X-Qingyu-Signature`），在接入配置页点一次「重置密钥」即可生成。
 
 **Node.js**（仅用内置 `node:crypto`）：
 

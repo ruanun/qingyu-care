@@ -56,16 +56,22 @@ class OpenApiAuthInterceptorClientLimitTest {
         TenantContext.clear();
     }
 
+    /** 访客路径：不带 X-Api-Key，凭 Origin 白名单进来——按 IP 分桶只作用于这条路径。 */
     private void stubAuthenticated() throws Exception {
+        Application app = stubCommon();
+        when(request.getHeader("Origin")).thenReturn("https://shop.example.com");
+        when(openApiAuthService.authenticateByOrigin("app-key-1", "https://shop.example.com")).thenReturn(app);
+    }
+
+    private Application stubCommon() throws Exception {
         Application app = Application.builder().id(10L).tenant(Tenant.builder().id(1L).build())
                 .appKey("app-key-1").appSecret("s").enabled(true).build();
         when(request.getHeader("X-App-Id")).thenReturn("app-key-1");
-        when(request.getHeader("X-Api-Key")).thenReturn("s");
-        when(openApiAuthService.authenticate("app-key-1", "s")).thenReturn(app);
         when(quotaService.check(anyLong())).thenReturn(new QuotaCheckResult(false, false, 0, 0, 0, 0));
         when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
         ReflectionTestUtils.setField(interceptor, "perClientRateLimit", 20);
+        return app;
     }
 
     @Test
@@ -93,6 +99,25 @@ class OpenApiAuthInterceptorClientLimitTest {
 
         assertThat(result).isTrue();
         verify(rateLimitService).tryConsume("client:app-key-1:198.51.100.7", 20);
+    }
+
+    /**
+     * 服务端路径持密钥才进得来，不在「appKey 公开 + Origin 可伪造」的威胁模型里；
+     * 而接入方后端通常只有一个出口 IP，按 IP 分桶会把整个集成压到 20 次/分钟（2026-09-25 修正）。
+     */
+    @Test
+    void 服务端路径不按客户端IP分桶() throws Exception {
+        Application app = stubCommon();
+        when(request.getHeader("X-Api-Key")).thenReturn("s");
+        when(openApiAuthService.authenticate("app-key-1", "s")).thenReturn(app);
+        // 必须给出客户端 IP：否则代码会因「IP 为空」而非「服务端路径」跳过分桶，本条变异验证过是永真的
+        when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.9");
+        when(rateLimitService.tryConsume(anyString(), anyInt())).thenReturn(true);
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+
+        assertThat(result).isTrue();
+        verify(rateLimitService, org.mockito.Mockito.never()).tryConsume(org.mockito.ArgumentMatchers.startsWith("client:"), anyInt());
     }
 
     @Test

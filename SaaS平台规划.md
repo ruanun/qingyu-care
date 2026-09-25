@@ -85,6 +85,7 @@
 
 ### 2.3 Webhook 事件推送 ✅
 - [x] 事件类型：`session.handover_requested`、`session.ended`（点号命名，可扩展）
+  - 后续已扩展为 5 个：另有 `session.accepted`、`agent.replied`、`session.returned_to_ai`；`session.ended` 也覆盖超时关闭（`trigger: timeout`）。以 [开放 API 参考 §8.1](docs/开放API参考.md) 为准
 - [x] Webhook 配置管理（接入页配置 URL / 订阅事件 / 密钥 / 测试事件端点）
 - [x] 事务后落库 + `@Async` 投递 + HMAC-SHA256 签名（头 `X-Qingyu-Signature`）+ 退避重试与定时重投
 
