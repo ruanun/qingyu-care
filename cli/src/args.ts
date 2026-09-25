@@ -42,7 +42,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     throw new Error('--as-visitor 与 --api-secret 不能同时使用：访客路径不校验密钥，同时给出会让你分不清实际用的是哪种身份');
   }
   if (asVisitor) {
-    if (!origin) throw new Error('--as-visitor 需要 --origin（且必须是该应用 allowedOrigins 白名单里的域名，否则后端 401）');
+    if (!origin) throw new Error('--as-visitor 需要 --origin（且必须是该应用 allowedOrigins 白名单里的域名，否则后端 403「来源域名未授权」）');
     return { apiBase, appKey, origin };
   }
   if (!apiSecret) {
