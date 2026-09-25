@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.ChatStrategyUpdateRequest;
 import com.qingyu.care.entity.ChatStrategy;
@@ -13,6 +14,7 @@ import java.util.List;
  * 问答策略管理 API
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/strategies")
 @RequiredArgsConstructor
 public class ChatStrategyController {

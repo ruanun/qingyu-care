@@ -6,6 +6,7 @@ import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
+import com.qingyu.care.exception.BadCredentialsException;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
@@ -70,6 +71,27 @@ class AuthServiceLoginTest {
         when(userRepository.findByUsernameAcrossTenants("u")).thenReturn(Optional.of(userOf(frozen)));
 
         assertThatThrownBy(() -> authService.login(request()))
-                .isInstanceOf(InvalidOperationException.class);
+                .isInstanceOf(InvalidOperationException.class)
+                // 密码是对的：不能是 BadCredentialsException，否则会被计入失败次数、把人锁在本就进不去的门外
+                .isNotInstanceOf(BadCredentialsException.class);
+    }
+
+    /**
+     * 登录防爆破（2026-09-25 安全扫描 H1）靠这个异常类型区分「凭据错」。改回普通的 InvalidOperationException
+     * 时对外响应一字不差，但控制器从此不再计数、锁定整个失效——没有任何现象，所以钉成测试。
+     */
+    @Test
+    void 密码错与用户不存在都抛BadCredentialsException() {
+        when(userRepository.findByUsernameAcrossTenants("u")).thenReturn(Optional.of(userOf(null)));
+        LoginRequest wrong = request();
+        wrong.setPassword("wrong-password");
+        assertThatThrownBy(() -> authService.login(wrong))
+                .isInstanceOf(BadCredentialsException.class).hasMessage("用户名或密码错误");
+
+        when(userRepository.findByUsernameAcrossTenants("nobody")).thenReturn(Optional.empty());
+        LoginRequest nobody = request();
+        nobody.setUsername("nobody");
+        assertThatThrownBy(() -> authService.login(nobody))
+                .isInstanceOf(BadCredentialsException.class).hasMessage("用户名或密码错误");
     }
 }

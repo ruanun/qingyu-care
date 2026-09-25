@@ -11,6 +11,7 @@ import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
+import com.qingyu.care.service.SessionRevocationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -55,6 +56,7 @@ public class UserController {
 
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
+    private final SessionRevocationService sessionRevocationService;
 
     /**
      * 获取当前租户下的所有用户
@@ -182,6 +184,9 @@ public class UserController {
                     if (!self && !isPlatformAdmin() && !isTenantAdmin()) {
                         return ApiResponse.<User>error(403, "无权修改其他用户");
                     }
+                    UserRole oldRole = user.getRole();
+                    boolean wasEnabled = Boolean.TRUE.equals(user.getEnabled());
+                    boolean passwordChanged = false;
                     if (request.getNickname() != null) {
                         user.setNickname(request.getNickname());
                     }
@@ -218,8 +223,20 @@ public class UserController {
                     // 尾随空格，比空串更容易无意间触发。
                     if (request.getPassword() != null && !request.getPassword().isBlank()) {
                         user.setPassword(BCrypt.hashpw(request.getPassword()));
+                        passwordChanged = true;
                     }
                     User savedUser = userRepository.save(user);
+                    // 已签发的登录态随状态变化失效（2026-09-25 安全扫描 M1）：角色存在会话里，不踢的话降级要等
+                    // 对方自己重登才生效；停用、改密后旧 token 也照用不误
+                    boolean roleChanged = savedUser.getRole() != oldRole;
+                    boolean disabled = wasEnabled && !Boolean.TRUE.equals(savedUser.getEnabled());
+                    if (roleChanged || disabled || (passwordChanged && !self)) {
+                        sessionRevocationService.revokeUser(savedUser.getId(),
+                                roleChanged ? "角色变更" : disabled ? "账号停用" : "管理员重置密码");
+                    } else if (passwordChanged) {
+                        // 自己改密码：别的设备上的会话失效，但不把正在操作的自己踢回登录页
+                        sessionRevocationService.revokeOtherSessions(savedUser.getId(), "本人修改密码");
+                    }
                     return ApiResponse.success("用户更新成功", savedUser);
                 })
                 .orElse(ApiResponse.error(404, "用户不存在或无权限访问"));
@@ -243,6 +260,7 @@ public class UserController {
                         return ApiResponse.<Void>error(403, "只有管理员可以删除用户");
                     }
                     userRepository.delete(user);
+                    sessionRevocationService.revokeUser(id, "账号删除");
                     log.info("用户删除成功: id={}", id);
                     return ApiResponse.<Void>success("用户删除成功", null);
                 })

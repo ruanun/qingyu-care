@@ -117,6 +117,118 @@ class MemberPrivilegeIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.data[*].password").doesNotExist());
     }
 
+    /**
+     * 2026-09-25 安全扫描 H2：10 个应用级配置控制器对坐席完全放开。单测里切面是手工织入的，
+     * 这里证明真实 Spring 容器里 {@code @AdminOnlyWrites} 确实作用在控制器上。
+     * 每一类都用「同一请求换管理员就成功」作对照——否则 403 可能只是请求本身不合法。
+     */
+    @Test
+    void 成员改不动应用级配置_同一请求管理员可以() throws Exception {
+        String memberToken = login(MEMBER);
+        String adminToken = login(ADMIN);
+        String tool = "{\"name\":\"priv_tool_" + SUF + "\",\"description\":\"d\",\"httpMethod\":\"GET\","
+                + "\"urlTemplate\":\"https://8.8.8.8/x\",\"authHeader\":\"Authorization: Bearer TOOL_SECRET\"}";
+        String[][] writes = {
+                {"/v1/ai-tools", tool},
+                {"/v1/prompts", "{\"name\":\"priv_prompt_" + SUF + "\",\"content\":\"你是客服 {context}\"}"},
+                {"/v1/knowledge", "{\"name\":\"priv_kb_" + SUF + "\"}"},
+        };
+        for (String[] w : writes) {
+            mockMvc.perform(post(w[0]).header("satoken", memberToken).header("X-App-Id", appId)
+                            .contentType(MediaType.APPLICATION_JSON).content(w[1]))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+            mockMvc.perform(post(w[0]).header("satoken", adminToken).header("X-App-Id", appId)
+                            .contentType(MediaType.APPLICATION_JSON).content(w[1]))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+        }
+        mockMvc.perform(post("/v1/mcp/servers").header("satoken", memberToken).header("X-App-Id", appId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"m\",\"code\":\"m" + SUF + "\",\"url\":\"https://8.8.8.8/mcp\"}"))
+                .andExpect(jsonPath("$.code").value(403));
+        mockMvc.perform(post("/v1/ai-models").header("satoken", memberToken).header("X-App-Id", appId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"m\",\"provider\":\"openai\",\"modelName\":\"x\",\"apiKey\":\"sk-x\"}"))
+                .andExpect(jsonPath("$.code").value(403));
+    }
+
+    @Test
+    void 成员仍能读配置但拿不到凭据_只读POST不被拦() throws Exception {
+        String adminToken = login(ADMIN);
+        mockMvc.perform(post("/v1/ai-tools").header("satoken", adminToken).header("X-App-Id", appId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"priv_read_" + SUF + "\",\"description\":\"d\",\"httpMethod\":\"GET\","
+                                + "\"urlTemplate\":\"https://8.8.8.8/x\",\"authHeader\":\"Authorization: Bearer READ_SECRET\"}"))
+                .andExpect(jsonPath("$.code").value(200))
+                // 创建者自己拿到的响应里也不回显凭据
+                .andExpect(jsonPath("$.data.authHeader").doesNotExist());
+
+        String memberToken = login(MEMBER);
+        String list = mockMvc.perform(get("/v1/ai-tools").header("satoken", memberToken).header("X-App-Id", appId))
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[*].name").value(hasItem("priv_read_" + SUF)))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(list).doesNotContain("READ_SECRET").doesNotContain("authHeader");
+
+        mockMvc.perform(post("/v1/knowledge/documents/status/batch").header("satoken", memberToken).header("X-App-Id", appId)
+                        .contentType(MediaType.APPLICATION_JSON).content("[]"))
+                .andExpect(jsonPath("$.code").value(200));
+    }
+
+    /**
+     * 2026-09-25 安全扫描 M1：停用 / 降级后旧 token 此前照用不误（角色存在会话里，降级要等对方自己重登）。
+     * 单测里吊销服务是 mock，这里证明 Sa-Token 的注销真的让那个 token 失效。
+     * 用独立的临时账号：MEMBER 被其他用例共用，停用它会连坐。
+     */
+    @Test
+    void 停用或降级后旧token立即失效() throws Exception {
+        Tenant tenant = tenantRepository.findByCode(TENANT_CODE).orElseThrow();
+        String adminToken = login(ADMIN);
+        for (String action : new String[]{"disable", "demote"}) {
+            String name = "priv_victim_" + action + "_" + SUF;
+            UserRole role = action.equals("demote") ? UserRole.TENANT_ADMIN : UserRole.TENANT_MEMBER;
+            Long id = userRepository.save(user(tenant, name, role)).getId();
+            String victimToken = login(name);
+            mockMvc.perform(get("/v1/auth/me").header("satoken", victimToken))
+                    .andExpect(jsonPath("$.code").value(200));
+
+            String body = action.equals("disable") ? "{\"enabled\":false}" : "{\"role\":\"TENANT_MEMBER\"}";
+            mockMvc.perform(put("/v1/users/" + id).header("satoken", adminToken)
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(jsonPath("$.code").value(200));
+
+            mockMvc.perform(get("/v1/auth/me").header("satoken", victimToken))
+                    .andExpect(status().isUnauthorized());
+        }
+    }
+
+    @Test
+    void 冻结租户后该租户用户的旧token立即失效() throws Exception {
+        Tenant t = tenantRepository.save(Tenant.builder().name("IT租户-freeze").code("IT_freeze_" + SUF)
+                .status(TenantStatus.ACTIVE).plan(TenantPlan.FREE).build());
+        String name = "priv_frozen_" + SUF;
+        userRepository.save(user(t, name, UserRole.TENANT_MEMBER));
+        String token = login(name);
+
+        String platformToken = login("admin", "admin123");
+        mockMvc.perform(post("/v1/tenants/" + t.getId() + "/toggle-status").header("satoken", platformToken))
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.status").value("FROZEN"));
+
+        mockMvc.perform(get("/v1/auth/me").header("satoken", token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** 登录页未登录就要读它；漏进 Sa-Token 免登录名单的话登录页一加载就被 401 踢走 */
+    @Test
+    void 登录页公开配置免登录可读() throws Exception {
+        mockMvc.perform(get("/v1/auth/config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.selfRegisterEnabled").value(true)); // test profile 打开
+    }
+
     @Test
     void 凭租户编码自助注册被拒绝() throws Exception {
         mockMvc.perform(post("/v1/auth/register")
@@ -128,8 +240,12 @@ class MemberPrivilegeIT extends AbstractPostgresIT {
     }
 
     private String login(String username) throws Exception {
+        return login(username, "pwd123456");
+    }
+
+    private String login(String username, String password) throws Exception {
         String body = mockMvc.perform(post("/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"" + username + "\",\"password\":\"pwd123456\"}"))
+                        .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andReturn().getResponse().getContentAsString();

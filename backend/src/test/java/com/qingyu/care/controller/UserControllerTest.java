@@ -50,6 +50,8 @@ class UserControllerTest {
     UserRepository userRepository;
     @Mock
     TenantRepository tenantRepository;
+    @Mock
+    com.qingyu.care.service.SessionRevocationService sessionRevocationService;
     @InjectMocks
     UserController controller;
 
@@ -263,5 +265,75 @@ class UserControllerTest {
             assertThat(resp.getMessage()).doesNotContain("com.qingyu");
         }
         verify(userRepository, never()).save(any(User.class));
+    }
+    // ===== 2026-09-25 安全扫描 M1：状态变化时吊销已签发的登录态 =====
+
+    private ApiResponse<User> adminUpdates(UserUpdateRequest req) {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existingUser(2L)));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(99L); // 管理员改别人
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_ADMIN")) {
+            return controller.updateUser(1L, req);
+        }
+    }
+
+    @Test
+    void 改角色_停用_管理员重置密码都吊销该用户全部登录态() {
+        UserUpdateRequest role = new UserUpdateRequest();
+        role.setRole(UserRole.TENANT_ADMIN);
+        adminUpdates(role);
+        org.mockito.Mockito.verify(sessionRevocationService).revokeUser(1L, "角色变更");
+
+        org.mockito.Mockito.reset(sessionRevocationService, userRepository);
+        UserUpdateRequest disable = new UserUpdateRequest();
+        disable.setEnabled(false);
+        adminUpdates(disable);
+        org.mockito.Mockito.verify(sessionRevocationService).revokeUser(1L, "账号停用");
+
+        org.mockito.Mockito.reset(sessionRevocationService, userRepository);
+        UserUpdateRequest pwd = new UserUpdateRequest();
+        pwd.setPassword("NewPass123");
+        adminUpdates(pwd);
+        org.mockito.Mockito.verify(sessionRevocationService).revokeUser(1L, "管理员重置密码");
+    }
+
+    /** 只改资料不该把人踢下线；角色「改成原值」也不算变更 */
+    @Test
+    void 只改昵称或角色不变时不吊销() {
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setNickname("新昵称");
+        req.setRole(UserRole.TENANT_MEMBER); // 与原角色相同
+        req.setEnabled(true);
+        adminUpdates(req);
+        org.mockito.Mockito.verifyNoInteractions(sessionRevocationService);
+    }
+
+    @Test
+    void 本人改密码只吊销其他设备上的登录态() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existingUser(2L)));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(1L);
+        UserUpdateRequest req = new UserUpdateRequest();
+        req.setPassword("MyNewPass123");
+
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
+            controller.updateUser(1L, req);
+        }
+
+        org.mockito.Mockito.verify(sessionRevocationService).revokeOtherSessions(1L, "本人修改密码");
+        org.mockito.Mockito.verify(sessionRevocationService, org.mockito.Mockito.never()).revokeUser(any(), any());
+    }
+
+    @Test
+    void 删除用户吊销其登录态() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(existingUser(2L)));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(99L);
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_ADMIN")) {
+            controller.deleteUser(1L);
+        }
+        org.mockito.Mockito.verify(sessionRevocationService).revokeUser(1L, "账号删除");
     }
 }

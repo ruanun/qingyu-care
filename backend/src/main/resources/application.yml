@@ -29,6 +29,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # 生产通过 REDIS_PASSWORD 设置（docker-compose.prod.yml 会同时给 Redis 容器配 requirepass）；
+      # 留空即不认证，本地 docker-compose.yml 的 Redis 不设密码
+      password: ${REDIS_PASSWORD:}
       # 短超时：Redis 为可选依赖（限流/Webhook 队列均 fail-open），
       # 故障时快速失败进入降级路径，不拖慢业务线程
       connect-timeout: 1000
@@ -135,6 +138,17 @@ qingyu:
       # 平台管理员 admin 的初始口令。留空则首启生成随机口令、只打一次 WARN 日志；
       # 生产务必通过环境变量指定或首启后立即修改（安全审查 H1）。
       admin-initial-password: ${QINGYU_ADMIN_INITIAL_PASSWORD:}
+    auth:
+      # 自助注册（注册即新建一个租户并成为其管理员）的默认值。平台管理员在「平台配置 → 开放注册」里设置过的话，
+      # 以那里为准；没设置过才用这里。系统没有邮件/短信验证通道，开着等于任何人都能无限开租户、各领一份
+      # 免费额度与存储配额，故基线关闭，租户由平台管理员在后台创建。dev profile 打开（2026-09-25 安全扫描 M2）。
+      self-register-enabled: ${SELF_REGISTER_ENABLED:false}
+      # 登录防爆破（安全扫描 H1）。按 IP 限流挡单一来源高频尝试；按用户名锁定挡「换 IP 猜同一账号」。
+      # 0 表示关闭该项。Redis 不可用时 fail-open。
+      login-ip-limit-per-minute: 20
+      register-ip-limit-per-minute: 5
+      login-max-failures: 5
+      login-lock-minutes: 15
     mcp:
       # 是否允许 MCP server 指向内网/环回（本地自建 server 时打开；生产保持 false）。
       # 与 model / webhook 的同名开关语义一致：放行私网，但云元数据段永不放行。

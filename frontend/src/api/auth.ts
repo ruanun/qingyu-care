@@ -32,6 +32,10 @@ export const authService = {
     login: (data: LoginRequest): Promise<ApiResponse<LoginResponse>> =>
         api.post('/auth/login', data),
 
+    // 登录页公开配置（免登录）：是否开放自助注册
+    getPublicConfig: (): Promise<ApiResponse<{ selfRegisterEnabled: boolean }>> =>
+        api.get('/auth/config'),
+
     // 注册
     register: (data: RegisterRequest): Promise<ApiResponse<LoginResponse>> =>
         api.post('/auth/register', data),

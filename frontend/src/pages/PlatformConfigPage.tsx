@@ -4,7 +4,7 @@ import type { ConfigField } from '@/components/ConfigForm';
 import { platformService } from '@/api/platform';
 
 const FIELDS: ConfigField[] = [
-  { key: 'platform.registration.enabled', label: '开放注册', type: 'switch', default: 'true', help: '关闭后新用户无法自助注册（已生效）' },
+  { key: 'platform.registration.enabled', label: '开放注册', type: 'switch', default: 'false', help: '开启后任何人都能在登录页注册并自动获得一个新租户（系统无邮件/短信验证）。未设置时按部署配置，生产默认关闭' },
   { key: 'platform.default.plan', label: '新租户默认套餐', type: 'text', default: 'FREE', help: '取值：FREE / PRO / ENTERPRISE，新注册租户将使用此套餐（已生效）' },
   { key: 'platform.announcement', label: '系统公告', type: 'textarea', default: '', help: '展示在管理后台顶部横幅的公告文本，留空则不展示（已生效）' },
   { key: 'billing.cost.price-per-1k-tokens', label: 'Token 费率（元 / 1K token）', type: 'text', default: '', help: '用量看板据此估算成本（总 token ÷ 1000 × 费率），留空或 0 表示不启用成本估算（已生效）' },

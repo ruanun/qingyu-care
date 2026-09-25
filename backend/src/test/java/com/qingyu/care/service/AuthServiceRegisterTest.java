@@ -15,11 +15,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * {@link AuthService#register} 的「加入已有租户」路径。
@@ -50,7 +52,7 @@ class AuthServiceRegisterTest {
      */
     @Test
     void 带租户编码的自助注册被拒绝且不触碰租户与用户表() {
-        lenient().when(configService.getBoolean(eq(OwnerScope.PLATFORM), any(), eq("platform.registration.enabled"), eq(true)))
+        lenient().when(configService.getBoolean(eq(OwnerScope.PLATFORM), any(), eq("platform.registration.enabled"), anyBoolean()))
                 .thenReturn(true);
         lenient().when(userRepository.existsByUsernameAcrossTenants(anyString())).thenReturn(false);
 
@@ -65,5 +67,28 @@ class AuthServiceRegisterTest {
 
         verify(tenantRepository, never()).findByCode(anyString());
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    /**
+     * 2026-09-25 安全扫描 M2：平台配置里没设过「开放注册」时，此前默认开启——任何人都能无限开租户。
+     * 现在取部署配置的默认值（基线 false）。configService 桩成「原样返回调用方给的默认值」，模拟库里没配。
+     */
+    @Test
+    void 平台未配置开放注册时取部署默认值_基线关闭即拒绝() {
+        when(configService.getBoolean(eq(OwnerScope.PLATFORM), any(), eq("platform.registration.enabled"), anyBoolean()))
+                .thenAnswer(inv -> inv.getArgument(3));
+        org.springframework.test.util.ReflectionTestUtils.setField(authService, "selfRegisterDefault", false);
+
+        assertThat(authService.isSelfRegisterEnabled()).isFalse();
+        RegisterRequest req = new RegisterRequest();
+        req.setUsername("newcomer");
+        req.setPassword("pwd123456");
+        assertThatThrownBy(() -> authService.register(req))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(403));
+        verify(userRepository, never()).save(any(User.class));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(authService, "selfRegisterDefault", true);
+        assertThat(authService.isSelfRegisterEnabled()).as("dev/test profile 打开时放行").isTrue();
     }
 }

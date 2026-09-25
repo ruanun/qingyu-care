@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.PromptTemplate;
 import com.qingyu.care.service.PromptTemplateService;
@@ -12,6 +13,7 @@ import java.util.List;
  * Prompt 模板管理 API
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/prompts")
 @RequiredArgsConstructor
 public class PromptController {

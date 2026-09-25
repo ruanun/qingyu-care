@@ -10,6 +10,7 @@ import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.service.AuthService;
+import com.qingyu.care.service.SessionRevocationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,6 +26,7 @@ public class TenantController {
 
     private final TenantRepository tenantRepository;
     private final AuthService authService;
+    private final SessionRevocationService sessionRevocationService;
 
     /**
      * 获取所有租户
@@ -77,8 +79,15 @@ public class TenantController {
         if (tenant.getStatus() != null) existing.setStatus(tenant.getStatus());
         if (tenant.getPlan() != null) existing.setPlan(tenant.getPlan());
         if (tenant.getExpireTime() != null) existing.setExpireTime(tenant.getExpireTime());
-        
-        return ApiResponse.success("租户已更新", tenantRepository.save(existing));
+
+        Tenant saved = tenantRepository.save(existing);
+        // 冻结或改成已过期：该租户已登录的用户立即下线，而不是等 token 自然过期（2026-09-25 安全扫描 M1）
+        boolean inactive = saved.getStatus() != TenantStatus.ACTIVE;
+        boolean expired = saved.getExpireTime() != null && saved.getExpireTime().isBefore(java.time.LocalDateTime.now());
+        if (inactive || expired) {
+            sessionRevocationService.revokeTenant(saved.getId(), inactive ? "租户停用" : "租户已到期");
+        }
+        return ApiResponse.success("租户已更新", saved);
     }
 
     /**
@@ -88,6 +97,7 @@ public class TenantController {
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         checkPlatformAdmin();
+        sessionRevocationService.revokeTenant(id, "租户删除"); // 先踢：删完就查不到该租户有哪些用户了
         tenantRepository.deleteById(id);
         return ApiResponse.success("租户已删除", null);
     }
@@ -103,7 +113,11 @@ public class TenantController {
                 .orElseThrow(() -> new ResourceNotFoundException("租户", id.toString()));
         
         tenant.setStatus(tenant.getStatus() == TenantStatus.ACTIVE ? TenantStatus.FROZEN : TenantStatus.ACTIVE);
-        return ApiResponse.success("状态已更新", tenantRepository.save(tenant));
+        Tenant saved = tenantRepository.save(tenant);
+        if (saved.getStatus() != TenantStatus.ACTIVE) {
+            sessionRevocationService.revokeTenant(saved.getId(), "租户冻结");
+        }
+        return ApiResponse.success("状态已更新", saved);
     }
 
     private void checkPlatformAdmin() {

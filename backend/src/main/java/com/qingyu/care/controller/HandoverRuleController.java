@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.HandoverRule;
 import com.qingyu.care.service.HandoverRuleService;
@@ -12,6 +13,7 @@ import java.util.List;
  * 转人工规则管理 API
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/handover-rules")
 @RequiredArgsConstructor
 public class HandoverRuleController {

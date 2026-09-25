@@ -158,7 +158,7 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
      * （{@code $proxy_add_x_forwarded_for}），最后一段才是 nginx 自己看到的直连地址，
      * 前面的段都是客户端可自填的；没有转发头就用直连地址。
      */
-    static String resolveClientIp(HttpServletRequest request) {
+    public static String resolveClientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
             String[] parts = xff.split(",");

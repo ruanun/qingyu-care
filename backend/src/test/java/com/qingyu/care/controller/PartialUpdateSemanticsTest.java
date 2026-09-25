@@ -87,6 +87,8 @@ import static org.mockito.Mockito.when;
 class PartialUpdateSemanticsTest {
 
     @Mock
+    com.qingyu.care.service.SessionRevocationService sessionRevocationService;
+    @Mock
     ChatToolService chatToolService;
     @InjectMocks
     AiSkillController aiSkillController;

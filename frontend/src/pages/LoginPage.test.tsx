@@ -12,7 +12,7 @@ import LoginPage from './LoginPage';
 
 const { toastSpy } = vi.hoisted(() => ({ toastSpy: vi.fn() }));
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastSpy }) }));
-vi.mock('@/api/auth', () => ({ authService: { login: vi.fn(), register: vi.fn() } }));
+vi.mock('@/api/auth', () => ({ authService: { login: vi.fn(), register: vi.fn(), getPublicConfig: vi.fn() } }));
 
 const loginOk = {
     code: 200, message: 'ok', timestamp: '',
@@ -44,6 +44,43 @@ beforeEach(() => {
     sessionStorage.clear();
     toastSpy.mockReset();
     vi.mocked(authService.login).mockReset().mockResolvedValue(loginOk as never);
+    vi.mocked(authService.getPublicConfig).mockReset()
+        .mockResolvedValue({ code: 200, message: 'ok', timestamp: '', data: { selfRegisterEnabled: false } } as never);
+});
+
+/**
+ * 2026-09-25 安全扫描 M2：自助注册生产默认关闭。入口按后端配置显隐，
+ * 拿不到配置（接口出错）时也按关闭处理——不能因为一次请求失败就把关闭的注册露出来。
+ */
+describe('LoginPage 注册入口', () => {
+    it('后端关闭自助注册时不显示注册入口', async () => {
+        render(<MemoryRouter><LoginPage /></MemoryRouter>);
+        await flush();
+        expect(screen.queryByRole('tab', { name: '免费注册' })).toBeNull();
+        expect(screen.getByRole('button', { name: /立即登录/ })).toBeInTheDocument();
+    });
+
+    it('后端开放时显示注册入口', async () => {
+        vi.mocked(authService.getPublicConfig).mockResolvedValue({ code: 200, message: 'ok', timestamp: '', data: { selfRegisterEnabled: true } } as never);
+        render(<MemoryRouter><LoginPage /></MemoryRouter>);
+        await flush();
+        expect(screen.getByRole('tab', { name: '免费注册' })).toBeInTheDocument();
+    });
+
+    // 初始值只在「请求还没回来」这段时间起作用：前几条都等请求落地才断言，改初始值它们照样绿（变异验证过）
+    it('配置还没返回时不显示注册入口', async () => {
+        vi.mocked(authService.getPublicConfig).mockReturnValue(new Promise(() => {}) as never);
+        render(<MemoryRouter><LoginPage /></MemoryRouter>);
+        await flush();
+        expect(screen.queryByRole('tab', { name: '免费注册' })).toBeNull();
+    });
+
+    it('拿不到配置时按关闭处理', async () => {
+        vi.mocked(authService.getPublicConfig).mockRejectedValue(new Error('网络错误'));
+        render(<MemoryRouter><LoginPage /></MemoryRouter>);
+        await flush();
+        expect(screen.queryByRole('tab', { name: '免费注册' })).toBeNull();
+    });
 });
 
 describe('LoginPage 记住我', () => {

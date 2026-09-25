@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn, User, Lock, Building2, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,13 @@ const LoginPage: React.FC = () => {
     const { toast } = useToast();
 
     const [isLoading, setIsLoading] = useState(false);
+    // 是否开放自助注册由后端决定（生产默认关闭）。未拿到结果前按关闭处理：接口出错时也不能把注册入口露出来
+    const [selfRegister, setSelfRegister] = useState(false);
+    useEffect(() => {
+        authService.getPublicConfig()
+            .then((res) => setSelfRegister(res.code === 200 && res.data?.selfRegisterEnabled === true))
+            .catch(() => setSelfRegister(false));
+    }, []);
     // 回显上次的选择；不勾则登录态只存 sessionStorage，关掉标签页即需重新登录
     const [remember, setRemember] = useState(isRememberMe);
 
@@ -137,6 +144,7 @@ const LoginPage: React.FC = () => {
                     </div>
 
                     <Tabs defaultValue="login" className="w-full">
+                        {selfRegister && (
                         <TabsList className="grid w-full grid-cols-2 h-12 p-1 bg-slate-100 rounded-xl mb-8">
                             <TabsTrigger value="login" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-xs text-slate-600">
                                 账号登录
@@ -145,6 +153,7 @@ const LoginPage: React.FC = () => {
                                 免费注册
                             </TabsTrigger>
                         </TabsList>
+                        )}
 
                         <TabsContent value="login">
                             <form onSubmit={handleLogin} className="space-y-5">
@@ -204,6 +213,7 @@ const LoginPage: React.FC = () => {
                             </form>
                         </TabsContent>
 
+                        {selfRegister && (
                         <TabsContent value="register">
                             <form onSubmit={handleRegister} className="space-y-4">
                                 <div className="grid grid-cols-1 gap-4">
@@ -255,6 +265,7 @@ const LoginPage: React.FC = () => {
                                 </Button>
                             </form>
                         </TabsContent>
+                        )}
                     </Tabs>
                 </div>
             </div>

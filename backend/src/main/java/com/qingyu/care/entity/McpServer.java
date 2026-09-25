@@ -1,6 +1,7 @@
 package com.qingyu.care.entity;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.qingyu.care.enums.McpTransport;
 import com.qingyu.care.enums.OwnerScope;
 import jakarta.persistence.*;
@@ -56,7 +57,9 @@ public class McpServer extends BaseTenantEntity {
     @Column(nullable = false, length = 1000)
     private String url;
 
-    /** 静态鉴权头（如 "Authorization: Bearer xxx"），明文存储（技术债，同 AiTool.authHeader） */
+    /** 静态鉴权头（如 "Authorization: Bearer xxx"），明文存储（技术债，同 AiTool.authHeader）。
+     * {@code WRITE_ONLY}：只读入、不写出，理由同 {@code AiModelConfig.apiKey}（2026-09-25 安全扫描 H2） */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(length = 1000)
     private String authHeader;
 

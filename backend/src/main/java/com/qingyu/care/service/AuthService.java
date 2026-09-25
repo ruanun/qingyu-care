@@ -14,6 +14,7 @@ import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.entity.SysAuditLog;
 import com.qingyu.care.exception.BusinessException;
+import com.qingyu.care.exception.BadCredentialsException;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.TenantRepository;
@@ -47,6 +48,9 @@ public class AuthService {
      * 平台管理员初始口令（{@code QINGYU_ADMIN_INITIAL_PASSWORD}）。为空则首启时生成随机口令、
      * 只打一次 WARN——绝不能回落到写死的 admin123（安全审查 H1，2026-09-03）。
      */
+    @Value("${qingyu.care.auth.self-register-enabled:false}")
+    private boolean selfRegisterDefault;
+
     @Value("${qingyu.care.platform.admin-initial-password:}")
     private String adminInitialPassword;
 
@@ -97,10 +101,10 @@ public class AuthService {
         // 跨租户查：username 是全局唯一键，且带着上一个账号 satoken 的请求会让租户过滤器
         // 在这里生效，把别租户的账号挡成「用户名或密码错误」（详见 UserRepository 上的说明）。
         User user = userRepository.findByUsernameAcrossTenants(request.getUsername())
-                .orElseThrow(() -> new InvalidOperationException("用户名或密码错误"));
+                .orElseThrow(BadCredentialsException::new);
         
         if (!BCrypt.checkpw(request.getPassword(), user.getPassword())) {
-            throw new InvalidOperationException("用户名或密码错误");
+            throw new BadCredentialsException();
         }
         
         if (!user.getEnabled()) {
@@ -165,10 +169,17 @@ public class AuthService {
      * 管理员在「成员管理」里创建账号。
      */
     @Transactional
+    /**
+     * 自助注册是否开放：平台配置中心的 {@code platform.registration.enabled} 优先（平台管理员在后台可切换），
+     * 库里没配时取部署配置 {@code qingyu.care.auth.self-register-enabled}——基线 false，dev/test 为 true。
+     * 此前库里没配时默认开启：任何人都能无限开租户（2026-09-25 安全扫描 M2）。
+     */
+    public boolean isSelfRegisterEnabled() {
+        return configService.getBoolean(OwnerScope.PLATFORM, null, "platform.registration.enabled", selfRegisterDefault);
+    }
+
     public LoginResponse register(RegisterRequest request) {
-        // 平台级"开放注册"开关：默认开启
-        if (!configService.getBoolean(OwnerScope.PLATFORM, null,
-                "platform.registration.enabled", true)) {
+        if (!isSelfRegisterEnabled()) {
             throw new BusinessException(403, "平台已关闭自助注册，请联系管理员");
         }
         if (request.getTenantCode() != null && !request.getTenantCode().isBlank()) {
