@@ -1,6 +1,6 @@
 import { buildStyles } from './styles';
 import { BUBBLE_LOGO_SVG } from './logo';
-import { renderNode } from './render';
+import { renderNode, safeUrl } from './render';
 import type { WidgetBrand, UiPart, UiNode } from './api';
 import { renderAttachments, type WidgetAttachment, type ResolveAttachmentUrl } from './attachments';
 
@@ -77,6 +77,24 @@ export interface WidgetUi {
 }
 
 /**
+ * 标题栏头像。URL 来自租户配置，按 XSS 三防的规矩走：DOM API 建节点、src 过 safeUrl（仅 http/https），
+ * 绝不拼进 innerHTML。只放标题栏、不放每条消息前：真人坐席接入后坐席消息也在同一面板里，
+ * 给它们配上应用头像会让访客误以为仍在和机器人对话。
+ */
+function mountAvatar(title: HTMLElement, avatar: unknown): void {
+  const src = safeUrl(avatar);
+  if (!src) return;
+  const img = document.createElement('img');
+  img.className = 'qy-avatar';
+  img.alt = ''; // 装饰性，旁边就是应用名
+  img.referrerPolicy = 'no-referrer'; // 别把宿主页地址泄露给图片所在的第三方站点
+  img.src = src;
+  // 地址失效时整个去掉，而不是留一个裂图占位
+  img.addEventListener('error', () => img.remove());
+  title.prepend(img);
+}
+
+/**
  * 在 Shadow DOM 内构建挂件 UI，返回操作句柄。
  * 所有样式与节点都在 shadow root 内，不污染宿主页面、也不受其影响。
  */
@@ -98,7 +116,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   panel.className = 'qy-panel';
   panel.innerHTML = `
     <div class="qy-header">
-      <span>${escapeHtml(brand.appName || '在线客服')}</span>
+      <span class="qy-title"><span class="qy-name">${escapeHtml(brand.appName || '在线客服')}</span></span>
       <button class="qy-handover" type="button">转人工</button>
     </div>
     <div class="qy-msgs"></div>
@@ -113,6 +131,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
 
   root.appendChild(bubble);
   root.appendChild(panel);
+  mountAvatar(panel.querySelector<HTMLSpanElement>('.qy-title')!, brand.avatar);
 
   const msgs = panel.querySelector<HTMLDivElement>('.qy-msgs')!;
   const textarea = panel.querySelector<HTMLTextAreaElement>('textarea')!;

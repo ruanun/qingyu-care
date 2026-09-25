@@ -125,6 +125,36 @@ class ApplicationControllerTest {
     }
 
     /**
+     * 头像会被每个访客的浏览器加载：只收 http(s)，空串表示清除。配错的地址要在保存时报出来，
+     * 而不是在访客那边静默不显示。
+     */
+    @Test
+    void 头像地址只收httpHttps_空串表示清除() {
+        TenantContext.setTenantId(TENANT_ID);
+        Application existing = app();
+        existing.setAvatar("https://old.example.com/a.png");
+        when(applicationRepository.findById(1L)).thenReturn(Optional.of(existing));
+        lenient().when(applicationRepository.save(any(Application.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        try (MockedStatic<StpUtil> ignored = stubRole(UserRole.TENANT_ADMIN)) {
+            for (String bad : List.of("javascript:alert(1)", "data:image/png;base64,AAAA", "ftp://x.com/a.png", "not a url", "https://x.com/" + "a".repeat(260))) {
+                ApplicationUpdateRequest req = new ApplicationUpdateRequest();
+                req.setAvatar(bad);
+                assertThatThrownBy(() -> controller.update(1L, req)).as(bad).isInstanceOf(InvalidOperationException.class);
+            }
+            assertThat(existing.getAvatar()).as("非法值不得落库").isEqualTo("https://old.example.com/a.png");
+
+            ApplicationUpdateRequest ok = new ApplicationUpdateRequest();
+            ok.setAvatar("  https://cdn.example.com/logo.png  ");
+            assertThat(controller.update(1L, ok).getData().avatar()).isEqualTo("https://cdn.example.com/logo.png");
+
+            ApplicationUpdateRequest clear = new ApplicationUpdateRequest();
+            clear.setAvatar("");
+            assertThat(controller.update(1L, clear).getData().avatar()).isEmpty();
+        }
+    }
+
+    /**
      * 此前新建应用的 webhookSecret 为空，WebhookSender 在无密钥时不带签名头照发，
      * 接收方拿不到签名也无从校验来源——除非用户记得去点一次「重置 Webhook 密钥」。
      * 同时钉住「请求体里给的密钥不被采用」，与 appSecret 的处理一致。

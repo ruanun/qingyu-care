@@ -37,6 +37,7 @@ const ApplicationListPage: React.FC = () => {
     const [formData, setFormData] = useState({
         name: '',
         description: '',
+        avatar: '',
         welcomeMessage: '',
         themeColor: '#0d9488',
     });
@@ -67,6 +68,7 @@ const ApplicationListPage: React.FC = () => {
             setFormData({
                 name: app.name,
                 description: app.description || '',
+                avatar: app.avatar || '',
                 welcomeMessage: app.welcomeMessage || '',
                 themeColor: app.themeColor || '#0d9488',
             });
@@ -75,6 +77,7 @@ const ApplicationListPage: React.FC = () => {
             setFormData({
                 name: '',
                 description: '',
+                avatar: '',
                 welcomeMessage: '您好！我是您的智能助理，很高兴为您服务。',
                 themeColor: '#0d9488',
             });
@@ -283,6 +286,24 @@ const ApplicationListPage: React.FC = () => {
                                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                                 placeholder="简要描述此应用的服务目标"
                             />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">头像地址（可选）</label>
+                            <div className="flex items-center gap-3">
+                                <Avatar className="w-10 h-10 shrink-0">
+                                    <AvatarImage src={formData.avatar.trim() || undefined} alt="头像预览" />
+                                    <AvatarFallback style={{ backgroundColor: formData.themeColor + '20', color: formData.themeColor }}>
+                                        {formData.name.slice(0, 1) || '客'}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <Input
+                                    type="url"
+                                    value={formData.avatar}
+                                    onChange={(e) => setFormData({ ...formData, avatar: e.target.value })}
+                                    placeholder="https://example.com/logo.png"
+                                />
+                            </div>
+                            <p className="text-xs text-muted-foreground">显示在网页客服挂件的标题栏。填 http(s) 图片链接；网站是 HTTPS 时请用 https 链接，否则会被浏览器拦截。留空不显示。</p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-primary" /> 欢迎语</label>

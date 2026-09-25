@@ -23,6 +23,45 @@ function shadowText(): string {
   return host?.shadowRoot?.querySelector('.qy-msgs')?.textContent ?? '';
 }
 
+/**
+ * 头像此前后端一直返回、widget 从不渲染（规划文档却写着「支持头像」）。URL 来自租户配置，
+ * 必须过 safeUrl——javascript:/data: 之类一律不渲染，而不是原样塞进 src。
+ */
+describe('标题栏头像', () => {
+  const avatarOf = () => lastHost()?.shadowRoot?.querySelector<HTMLImageElement>('.qy-header .qy-avatar') ?? null;
+
+  it('配置了 https 头像时渲染在标题栏，且不带 Referer', () => {
+    mountUi({ ...brand, avatar: 'https://cdn.example.com/a.png' }, { onSend: vi.fn(), onHandover: vi.fn() });
+    const img = avatarOf();
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('https://cdn.example.com/a.png');
+    expect(img!.referrerPolicy).toBe('no-referrer');
+  });
+
+  it.each([
+    ['空串', ''],
+    ['null', null],
+    ['javascript: 协议', 'javascript:alert(1)'],
+    ['data: 协议', 'data:image/svg+xml;base64,PHN2Zz4='],
+  ])('%s 不渲染头像', (_label, avatar) => {
+    mountUi({ ...brand, avatar: avatar as string }, { onSend: vi.fn(), onHandover: vi.fn() });
+    expect(avatarOf()).toBeNull();
+  });
+
+  it('图片加载失败时移除，不留裂图', () => {
+    mountUi({ ...brand, avatar: 'https://cdn.example.com/gone.png' }, { onSend: vi.fn(), onHandover: vi.fn() });
+    avatarOf()!.dispatchEvent(new Event('error'));
+    expect(avatarOf()).toBeNull();
+  });
+
+  it('应用名仍按文本渲染（防 XSS）', () => {
+    mountUi({ ...brand, appName: '<img src=x onerror=alert(1)>' }, { onSend: vi.fn(), onHandover: vi.fn() });
+    const name = lastHost()!.shadowRoot!.querySelector('.qy-name')!;
+    expect(name.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(name.querySelector('img')).toBeNull();
+  });
+});
+
 describe('addBotMessage uiParts 渲染', () => {
   it('有 ui 片段按序渲染卡片，text 片段渲染文本', () => {
     const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });

@@ -20,6 +20,12 @@ export function buildStyles(themeColor: string): string {
       background: ${themeColor}; color: #fff; padding: 12px 16px;
       display: flex; align-items: center; justify-content: space-between; font-weight: 600;
     }
+    .qy-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .qy-title .qy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .qy-avatar {
+      width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+      background: rgba(255,255,255,.2);
+    }
     .qy-header .qy-handover {
       background: rgba(255,255,255,.2); color: #fff; border: none; border-radius: 6px;
       padding: 4px 10px; cursor: pointer; font-size: 12px;

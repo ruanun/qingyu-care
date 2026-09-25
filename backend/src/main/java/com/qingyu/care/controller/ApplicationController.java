@@ -118,6 +118,7 @@ public class ApplicationController {
         application.setWebhookSecret(generateSecret());
         // 建应用时给的回调地址同样要过形态与 SSRF 校验（update 路径见下）
         requireValidWebhookUrl(application.getWebhookUrl());
+        requireValidAvatarUrl(application.getAvatar());
 
         return ApiResponse.success("应用已创建", ApplicationView.of(applicationRepository.save(application), true));
     }
@@ -135,7 +136,10 @@ public class ApplicationController {
 
         if (application.getName() != null) existing.setName(application.getName());
         if (application.getDescription() != null) existing.setDescription(application.getDescription());
-        if (application.getAvatar() != null) existing.setAvatar(application.getAvatar());
+        if (application.getAvatar() != null) {
+            requireValidAvatarUrl(application.getAvatar());
+            existing.setAvatar(application.getAvatar().trim());
+        }
         if (application.getWelcomeMessage() != null) existing.setWelcomeMessage(application.getWelcomeMessage());
         if (application.getThemeColor() != null) existing.setThemeColor(application.getThemeColor());
         if (application.getEnabled() != null) existing.setEnabled(application.getEnabled());
@@ -246,6 +250,30 @@ public class ApplicationController {
      * 出站放行了、落库仍拒绝，本地联调根本配不上地址，开关等于半失效。集成测试发现不了——
      * 它们直接 {@code setWebhookUrl} 写库，绕过了控制器。云元数据段两种模式下都拦。
      */
+    /**
+     * 头像会被每个访客的浏览器加载，只收 http(s)；空串表示清除。widget 渲染时还会再过一道 safeUrl，
+     * 这里拦是为了让配错的地址在保存时就报出来，而不是在访客那边静默不显示。
+     * 不做 SSRF 校验：服务端从不请求这个地址，加载它的是访客浏览器。
+     */
+    private static void requireValidAvatarUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        String u = url.trim();
+        if (u.length() > 255) {
+            throw new InvalidOperationException("头像地址过长（最多 255 个字符）");
+        }
+        try {
+            java.net.URI uri = new java.net.URI(u);
+            String scheme = uri.getScheme();
+            if (uri.getHost() == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+                throw new InvalidOperationException("头像地址必须是 http:// 或 https:// 开头的图片链接");
+            }
+        } catch (java.net.URISyntaxException e) {
+            throw new InvalidOperationException("头像地址格式不正确");
+        }
+    }
+
     private void requireValidWebhookUrl(String url) {
         if (url == null || url.isBlank()) {
             return;
