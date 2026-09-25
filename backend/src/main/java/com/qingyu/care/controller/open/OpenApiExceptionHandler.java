@@ -12,9 +12,17 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.beans.TypeMismatchException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.io.IOException;
 
@@ -66,9 +74,33 @@ public class OpenApiExceptionHandler {
         writeError(response, e.getCode(), e.getMessage());
     }
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, IllegalArgumentException.class})
+    @ExceptionHandler({MethodArgumentNotValidException.class, IllegalArgumentException.class,
+            HandlerMethodValidationException.class})
     public void handleBadRequest(Exception e, HttpServletResponse response) throws IOException {
         writeError(response, HttpStatus.BAD_REQUEST.value(), "请求参数错误");
+    }
+
+    /**
+     * 框架层的客户端错误（请求体不是合法 JSON、缺 query 参数或 multipart 文件、参数类型不符）。
+     * 漏了它们会落进下方 {@link Exception} 兜底被判成 500——接入方会把自己的请求错误当成服务端故障
+     * 去重试，而日志里多一条毫无价值的 ERROR 堆栈。文案固定，不回显异常消息（见安全基线第 7 条）。
+     *
+     * <p>⚠️ 405 / 415 / 上传超限这几类**不会**到这里：它们在匹配到控制器之前就抛出，而本 advice 用
+     * {@code basePackages} 限定作用范围，handler 为空时根本不参与解析，改这里对它们无效。
+     */
+    @ExceptionHandler({HttpMessageNotReadableException.class, ServletRequestBindingException.class,
+            MissingServletRequestPartException.class, TypeMismatchException.class, MultipartException.class})
+    public void handleMalformedRequest(Exception e, HttpServletResponse response) throws IOException {
+        String message = switch (e) {
+            case HttpMessageNotReadableException ignored -> "请求体格式错误";
+            case MissingServletRequestParameterException m -> "缺少必需参数: " + m.getParameterName();
+            case MissingServletRequestPartException m -> "缺少必需参数: " + m.getRequestPartName();
+            case MethodArgumentTypeMismatchException m -> "参数类型错误: " + m.getName();
+            case MultipartException ignored -> "请求须为 multipart/form-data";
+            default -> "请求参数错误";
+        };
+        log.warn("[OpenAPI] 请求格式错误: {}", e.getClass().getSimpleName());
+        writeError(response, HttpStatus.BAD_REQUEST.value(), message);
     }
 
     @ExceptionHandler(Exception.class)
