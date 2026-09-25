@@ -38,6 +38,8 @@ class MemberPrivilegeIT extends AbstractPostgresIT {
     private MockMvc mockMvc;
     @Autowired
     private UserRepository userRepository;
+    @Autowired
+    private com.qingyu.care.scheduler.TenantExpiryScheduler tenantExpiryScheduler;
 
     /** 同一 JVM 内固定后缀：@BeforeEach 每条用例都会进来，播种必须幂等（用户名是全局唯一键）。 */
     private static final String SUF = Long.toString(System.nanoTime(), 36);
@@ -221,6 +223,28 @@ class MemberPrivilegeIT extends AbstractPostgresIT {
     }
 
     /** 登录页未登录就要读它；漏进 Sa-Token 免登录名单的话登录页一加载就被 401 踢走 */
+    /**
+     * 套餐自然到期没有任何操作触发，此前已登录用户能一直用到 token 过期。到期任务把它补上。
+     * 单测里仓储是 mock，这里验证真实的 JPQL 条件更新与仓储方法上的事务确实落库，且旧 token 真的失效。
+     */
+    @Test
+    void 套餐到期后定时任务停用租户并让旧token失效() throws Exception {
+        Tenant t = tenantRepository.save(Tenant.builder().name("IT租户-expiry").code("IT_expiry_" + SUF)
+                .status(TenantStatus.ACTIVE).plan(TenantPlan.FREE).build());
+        String name = "priv_expiry_" + SUF;
+        userRepository.save(user(t, name, UserRole.TENANT_MEMBER));
+        String token = login(name); // 先登录，再让套餐「自然」到期——登录时的到期检查拦不到这个 token
+        t.setExpireTime(java.time.LocalDateTime.now().minusMinutes(1));
+        tenantRepository.save(t);
+
+        tenantExpiryScheduler.expireOverdueTenants();
+
+        org.assertj.core.api.Assertions.assertThat(tenantRepository.findById(t.getId()).orElseThrow().getStatus())
+                .isEqualTo(TenantStatus.EXPIRED);
+        mockMvc.perform(get("/v1/auth/me").header("satoken", token))
+                .andExpect(status().isUnauthorized());
+    }
+
     @Test
     void 登录页公开配置免登录可读() throws Exception {
         mockMvc.perform(get("/v1/auth/config"))

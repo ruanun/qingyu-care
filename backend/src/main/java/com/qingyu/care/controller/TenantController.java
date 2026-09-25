@@ -79,6 +79,12 @@ public class TenantController {
         if (tenant.getStatus() != null) existing.setStatus(tenant.getStatus());
         if (tenant.getPlan() != null) existing.setPlan(tenant.getPlan());
         if (tenant.getExpireTime() != null) existing.setExpireTime(tenant.getExpireTime());
+        // 续费：已被到期任务停用的租户，延长到期时间后自动恢复——否则管理员改完日期还得再去点一次「恢复激活」，
+        // 而列表上仍显示「已过期」，看起来像续费没生效。请求里显式给了 status 时以请求为准。
+        if (tenant.getStatus() == null && existing.getStatus() == TenantStatus.EXPIRED
+                && existing.getExpireTime() != null && existing.getExpireTime().isAfter(java.time.LocalDateTime.now())) {
+            existing.setStatus(TenantStatus.ACTIVE);
+        }
 
         Tenant saved = tenantRepository.save(existing);
         // 冻结或改成已过期：该租户已登录的用户立即下线，而不是等 token 自然过期（2026-09-25 安全扫描 M1）
@@ -112,6 +118,11 @@ public class TenantController {
         Tenant tenant = tenantRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("租户", id.toString()));
         
+        if (tenant.getStatus() != TenantStatus.ACTIVE && tenant.getExpireTime() != null
+                && tenant.getExpireTime().isBefore(java.time.LocalDateTime.now())) {
+            // 不拦的话恢复后最多 10 分钟就被到期任务停回去，管理员会以为按钮没生效
+            throw new InvalidOperationException("该租户套餐已到期，请先在编辑里延长到期时间");
+        }
         tenant.setStatus(tenant.getStatus() == TenantStatus.ACTIVE ? TenantStatus.FROZEN : TenantStatus.ACTIVE);
         Tenant saved = tenantRepository.save(tenant);
         if (saved.getStatus() != TenantStatus.ACTIVE) {
