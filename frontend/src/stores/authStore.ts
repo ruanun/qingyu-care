@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import type { LoginResponse } from '../api/auth';
+import { AUTH_KEY, authStateStorage } from '@/lib/authStorage';
 
 interface AuthState {
     // 状态
@@ -44,7 +45,9 @@ export const useAuthStore = create<AuthState>()(
             },
         }),
         {
-            name: 'qingyu-auth', // localStorage key
+            name: AUTH_KEY,
+            // 按「记住我」落到 localStorage 或 sessionStorage，见 lib/authStorage
+            storage: createJSONStorage(() => authStateStorage),
         }
     )
 );

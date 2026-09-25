@@ -95,9 +95,14 @@ const IntegrationPage: React.FC = () => {
         }
     };
 
+    // 与后端 ChatServiceImpl / SessionTimeoutScheduler 实际发布的事件一一对应（webhook.test 只供「测试」按钮用，不可订阅）。
+    // 此前只列了前两个，另外三个后端一直在发，却只能绕过界面调接口才订阅得到。
     const WEBHOOK_EVENTS = [
         { value: 'session.handover_requested', label: '转人工请求' },
-        { value: 'session.ended', label: '会话结束' },
+        { value: 'session.accepted', label: '坐席接入' },
+        { value: 'agent.replied', label: '坐席回复' },
+        { value: 'session.returned_to_ai', label: '切回智能助手' },
+        { value: 'session.ended', label: '会话结束（含超时）' },
     ];
 
     const toggleWebhookEvent = (value: string) => {
