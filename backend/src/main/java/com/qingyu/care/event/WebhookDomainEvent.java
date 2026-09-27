@@ -20,7 +20,7 @@ public class WebhookDomainEvent {
     private final Long appId;
     private final Long tenantId;
     private final String sessionId;
-    /** 触发来源（keyword / user_request），无则 null。 */
+    /** 触发来源：转人工为 keyword / user_request，会话结束为 agent / timeout；无则 null。 */
     private final String trigger;
     private final LocalDateTime occurredAt;
 }

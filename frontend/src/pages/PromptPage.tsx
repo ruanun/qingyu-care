@@ -4,6 +4,7 @@ import { FileText, Plus, Check, Trash2, Clock, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { promptService } from '@/api/prompt';
 import type { PromptTemplate, CreatePromptRequest } from '@/api/prompt';
@@ -149,11 +150,11 @@ const PromptPage: React.FC = () => {
                                     <p className="text-xs text-muted-foreground mt-1 mb-2">
                                         使用 {'{context}'} 作为知识库检索结果的占位符
                                     </p>
-                                    <textarea
+                                    <Textarea
                                         value={newPrompt.content}
                                         onChange={(e) => setNewPrompt({ ...newPrompt, content: e.target.value })}
                                         placeholder="你是轻语，一个专业、友好的AI智能客服助手..."
-                                        className="w-full h-64 p-3 text-sm border rounded-lg resize-none focus:outline-hidden focus:ring-2 focus:ring-primary"
+                                        className="h-64 p-3 resize-none"
                                     />
                                 </div>
                             </div>

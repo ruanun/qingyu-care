@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.McpServerUpdateRequest;
@@ -23,6 +24,7 @@ import java.util.Map;
  * @author ruan
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/mcp")
 @RequiredArgsConstructor
 @Tag(name = "MCP 服务", description = "远端 MCP server 与其工具清单")

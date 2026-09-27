@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.QaPairRequest;
@@ -14,6 +15,7 @@ import java.util.List;
 
 /** QA 问答对管理 API */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1")
 @RequiredArgsConstructor
 public class QaPairController {

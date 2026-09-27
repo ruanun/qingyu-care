@@ -35,6 +35,7 @@ import {
 import { chatStrategyService, type ChatStrategy } from '@/api/strategy';
 import { promptService, type PromptTemplate } from '@/api/prompt';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { cn } from '@/lib/utils';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
@@ -45,6 +46,7 @@ const StrategyConfigPage: React.FC = () => {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingStrategy, setEditingStrategy] = useState<Partial<ChatStrategy> | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchData = async () => {
         try {
@@ -89,7 +91,7 @@ const StrategyConfigPage: React.FC = () => {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('确定删除该策略吗？')) return;
+        if (!(await confirm({ title: '删除该策略？', confirmText: '删除', destructive: true }))) return;
         try {
             await chatStrategyService.delete(id);
             toast({ title: "策略已删除" });
@@ -380,6 +382,7 @@ const StrategyConfigPage: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            {confirmDialog}
         </div>
     );
 };

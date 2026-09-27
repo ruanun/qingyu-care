@@ -3,6 +3,7 @@ import { auditService } from '@/api/audit';
 import type { AuditLog } from '@/api/audit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Pagination } from '@/components/ui/pagination';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage } from '@/lib/apiResult';
 
@@ -90,27 +91,7 @@ const AuditLogPage: React.FC = () => {
         </tbody>
       </table>
 
-      <div className="flex items-center gap-2 justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={page <= 0}
-          onClick={() => load(page - 1)}
-        >
-          上一页
-        </Button>
-        <span className="text-sm text-muted-foreground">
-          {page + 1} / {Math.max(totalPages, 1)}
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={page >= totalPages - 1}
-          onClick={() => load(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
+      <Pagination page={page} totalPages={totalPages} onPageChange={load} />
     </div>
   );
 };

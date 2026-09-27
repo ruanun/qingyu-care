@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiToolUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
@@ -21,6 +22,7 @@ import java.util.List;
  * @author ruan
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/ai-tools")
 @RequiredArgsConstructor
 public class AiToolController {

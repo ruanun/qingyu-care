@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { CrawlSite, CrawlSiteRequest } from '@/types';
 
 /**
@@ -166,16 +167,17 @@ export function CrawlSiteDialog({ open, onOpenChange, initial, onSubmit }: Props
 
                     <div className="space-y-1">
                         <label className="text-xs text-muted-foreground">每篇文档的自动同步周期</label>
-                        <select
-                            className="w-full h-9 px-3 rounded-md border bg-background text-sm"
-                            value={syncInterval}
-                            onChange={(e) => setSyncInterval(e.target.value)}
-                        >
-                            <option value="MANUAL">不自动同步</option>
-                            <option value="HOURLY">每小时</option>
-                            <option value="DAILY">每天</option>
-                            <option value="WEEKLY">每周</option>
-                        </select>
+                        <Select value={syncInterval} onValueChange={setSyncInterval}>
+                            <SelectTrigger className="h-9">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="MANUAL">不自动同步</SelectItem>
+                                <SelectItem value="HOURLY">每小时</SelectItem>
+                                <SelectItem value="DAILY">每天</SelectItem>
+                                <SelectItem value="WEEKLY">每周</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
                     <Button

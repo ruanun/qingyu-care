@@ -2,6 +2,8 @@
 // 用 fetch + ReadableStream 消费 SSE：原生 EventSource 不能带鉴权 header，故手写。
 // 鉴权头与 api/client.ts 同源（satoken + X-App-Id），自动重连（指数退避，上限 15s）。
 
+import { readAuthToken } from '@/lib/authStorage';
+
 export interface SseHandlers {
   onEvent: (event: string, data: string) => void;
   onOpen?: () => void;
@@ -12,12 +14,11 @@ export interface SseConnection {
   close: () => void;
 }
 
-/** 从 localStorage 读鉴权头（与 api/client.ts 请求拦截器同源）。chatStream.ts 复用。 */
+/** 读鉴权头（与 api/client.ts 请求拦截器同源，登录态经 authStorage 读）。chatStream.ts 复用。 */
 export function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'text/event-stream' };
   try {
-    const auth = localStorage.getItem('qingyu-auth');
-    const token = auth ? JSON.parse(auth)?.state?.token : null;
+    const token = readAuthToken();
     if (token) headers['satoken'] = token;
     const app = localStorage.getItem('qingyu-current-app');
     const id = app ? JSON.parse(app)?.state?.currentApp?.id : null;

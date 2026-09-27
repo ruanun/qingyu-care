@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Layers, Key, Copy, Eye, EyeOff, MoreHorizontal, Edit2, Trash2, Loader2, Palette, MessageSquare, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -36,6 +37,7 @@ const ApplicationListPage: React.FC = () => {
     const [formData, setFormData] = useState({
         name: '',
         description: '',
+        avatar: '',
         welcomeMessage: '',
         themeColor: '#0d9488',
     });
@@ -66,6 +68,7 @@ const ApplicationListPage: React.FC = () => {
             setFormData({
                 name: app.name,
                 description: app.description || '',
+                avatar: app.avatar || '',
                 welcomeMessage: app.welcomeMessage || '',
                 themeColor: app.themeColor || '#0d9488',
             });
@@ -74,6 +77,7 @@ const ApplicationListPage: React.FC = () => {
             setFormData({
                 name: '',
                 description: '',
+                avatar: '',
                 welcomeMessage: '您好！我是您的智能助理，很高兴为您服务。',
                 themeColor: '#0d9488',
             });
@@ -284,9 +288,26 @@ const ApplicationListPage: React.FC = () => {
                             />
                         </div>
                         <div className="space-y-2">
+                            <label className="text-sm font-medium">头像地址（可选）</label>
+                            <div className="flex items-center gap-3">
+                                <Avatar className="w-10 h-10 shrink-0">
+                                    <AvatarImage src={formData.avatar.trim() || undefined} alt="头像预览" />
+                                    <AvatarFallback style={{ backgroundColor: formData.themeColor + '20', color: formData.themeColor }}>
+                                        {formData.name.slice(0, 1) || '客'}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <Input
+                                    type="url"
+                                    value={formData.avatar}
+                                    onChange={(e) => setFormData({ ...formData, avatar: e.target.value })}
+                                    placeholder="https://example.com/logo.png"
+                                />
+                            </div>
+                            <p className="text-xs text-muted-foreground">显示在网页客服挂件的标题栏。填 http(s) 图片链接；网站是 HTTPS 时请用 https 链接，否则会被浏览器拦截。留空不显示。</p>
+                        </div>
+                        <div className="space-y-2">
                             <label className="text-sm font-medium flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-primary" /> 欢迎语</label>
-                            <textarea
-                                className="w-full flex min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            <Textarea
                                 value={formData.welcomeMessage}
                                 onChange={(e) => setFormData({ ...formData, welcomeMessage: e.target.value })}
                                 placeholder="用户进入对话时首先看到的消息"

@@ -4,6 +4,7 @@ import io.github.bucket4j.distributed.proxy.ProxyManager;
 import io.github.bucket4j.redis.lettuce.Bucket4jLettuce;
 import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.codec.RedisCodec;
@@ -35,8 +36,24 @@ public class RateLimitConfig {
     @Bean(destroyMethod = "shutdown")
     public RedisClient rateLimitRedisClient(
             @Value("${spring.data.redis.host:localhost}") String host,
-            @Value("${spring.data.redis.port:6379}") int port) {
-        return RedisClient.create("redis://" + host + ":" + port);
+            @Value("${spring.data.redis.port:6379}") int port,
+            @Value("${spring.data.redis.password:}") String password) {
+        return RedisClient.create(redisUri(host, port, password));
+    }
+
+    /**
+     * ⚠️ 必须带上密码。这里是独立于 Spring Data Redis 自建的连接，不会自动继承 {@code spring.data.redis.password}。
+     * 此前只拼了 host:port：生产给 Redis 加上 requirepass（安全扫描 M4）后，每次限流都 NOAUTH，
+     * 而 RateLimitService 按设计 fail-open——开放 API 与登录的全部限流静默失效，只留一条 WARN。
+     * 自动化测试连的都是无密码 Redis，2026-09-27 真机冒烟连带密码的 Redis 才暴露；
+     * {@code RateLimitRedisPasswordIT} 现在用带密码的容器守着。
+     */
+    static RedisURI redisUri(String host, int port, String password) {
+        RedisURI.Builder b = RedisURI.builder().withHost(host).withPort(port);
+        if (password != null && !password.isBlank()) {
+            b.withPassword(password.toCharArray());
+        }
+        return b.build();
     }
 
     /**

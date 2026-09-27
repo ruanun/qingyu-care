@@ -48,6 +48,8 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
+                // 不暴露的话浏览器里的 fetch 读不到这两个头：429 时不知道该等多久，额度将尽的软提示也看不见
+                .exposedHeaders("Retry-After", "X-Quota-Usage")
                 .allowCredentials(false)
                 .maxAge(3600);
         registry.addMapping("/widget.js")

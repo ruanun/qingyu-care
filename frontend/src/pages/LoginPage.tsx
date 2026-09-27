@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn, User, Lock, Building2, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Logo from '@/components/Logo';
@@ -9,6 +10,7 @@ import { authService } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage } from '@/lib/apiResult';
+import { isRememberMe, setRememberMe } from '@/lib/authStorage';
 
 const LoginPage: React.FC = () => {
     const navigate = useNavigate();
@@ -16,6 +18,15 @@ const LoginPage: React.FC = () => {
     const { toast } = useToast();
 
     const [isLoading, setIsLoading] = useState(false);
+    // 是否开放自助注册由后端决定（生产默认关闭）。未拿到结果前按关闭处理：接口出错时也不能把注册入口露出来
+    const [selfRegister, setSelfRegister] = useState(false);
+    useEffect(() => {
+        authService.getPublicConfig()
+            .then((res) => setSelfRegister(res.code === 200 && res.data?.selfRegisterEnabled === true))
+            .catch(() => setSelfRegister(false));
+    }, []);
+    // 回显上次的选择；不勾则登录态只存 sessionStorage，关掉标签页即需重新登录
+    const [remember, setRemember] = useState(isRememberMe);
 
     // 登录表单
     const [loginForm, setLoginForm] = useState({
@@ -42,6 +53,8 @@ const LoginPage: React.FC = () => {
         try {
             const res = await authService.login(loginForm);
             if (res.code === 200 && res.data) {
+                // 必须在 setAuth 之前：persist 在 setAuth 时写入，写到哪个 storage 由这个选择决定
+                setRememberMe(remember);
                 setAuth(res.data);
                 toast({ title: '登录成功', description: `欢迎回来，${res.data.nickname || res.data.username}` });
                 navigate('/');
@@ -131,6 +144,7 @@ const LoginPage: React.FC = () => {
                     </div>
 
                     <Tabs defaultValue="login" className="w-full">
+                        {selfRegister && (
                         <TabsList className="grid w-full grid-cols-2 h-12 p-1 bg-slate-100 rounded-xl mb-8">
                             <TabsTrigger value="login" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-xs text-slate-600">
                                 账号登录
@@ -139,6 +153,7 @@ const LoginPage: React.FC = () => {
                                 免费注册
                             </TabsTrigger>
                         </TabsList>
+                        )}
 
                         <TabsContent value="login">
                             <form onSubmit={handleLogin} className="space-y-5">
@@ -170,10 +185,17 @@ const LoginPage: React.FC = () => {
 
                                 <div className="flex items-center justify-between text-sm py-1">
                                     <label className="flex items-center gap-2 cursor-pointer text-slate-500">
-                                        <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary/20" />
+                                        <Checkbox checked={remember} onCheckedChange={(v) => setRemember(v === true)} />
                                         <span>记住我</span>
                                     </label>
-                                    <span className="text-primary font-semibold hover:underline cursor-pointer transition-all">忘记密码？</span>
+                                    {/* 没有邮件/短信通道，做不了自助找回；租户管理员可在「成员管理」编辑成员时重置密码 */}
+                                    <button
+                                        type="button"
+                                        className="text-primary font-semibold hover:underline transition-all"
+                                        onClick={() => toast({ title: '忘记密码', description: '请联系所在企业的管理员，在「成员管理」中为你重置密码。' })}
+                                    >
+                                        忘记密码？
+                                    </button>
                                 </div>
 
                                 <Button type="submit" className="w-full h-14 rounded-xl text-lg font-bold shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all" disabled={isLoading}>
@@ -191,6 +213,7 @@ const LoginPage: React.FC = () => {
                             </form>
                         </TabsContent>
 
+                        {selfRegister && (
                         <TabsContent value="register">
                             <form onSubmit={handleRegister} className="space-y-4">
                                 <div className="grid grid-cols-1 gap-4">
@@ -242,6 +265,7 @@ const LoginPage: React.FC = () => {
                                 </Button>
                             </form>
                         </TabsContent>
+                        )}
                     </Tabs>
                 </div>
             </div>

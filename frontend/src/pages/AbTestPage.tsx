@@ -37,6 +37,7 @@ import {
 import { abTestService, type AbExperiment, type AbVariant, type ExperimentStatus } from '@/api/abtest';
 import { chatStrategyService, type ChatStrategy } from '@/api/strategy';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import ReportDialog from '@/pages/abtest/ReportDialog';
 
 interface ExperimentForm {
@@ -72,6 +73,7 @@ const AbTestPage: React.FC = () => {
     const [form, setForm] = useState<ExperimentForm>(buildEmptyForm());
     const [reportId, setReportId] = useState<number | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -231,8 +233,8 @@ const AbTestPage: React.FC = () => {
 
     const handleEnd = (id: number) => runAction(() => abTestService.end(id), '实验已结束', '结束失败');
 
-    const handleDelete = (id: number) => {
-        if (!confirm('确定删除该实验吗？')) return;
+    const handleDelete = async (id: number) => {
+        if (!(await confirm({ title: '删除该实验？', confirmText: '删除', destructive: true }))) return;
         runAction(() => abTestService.delete(id), '实验已删除', '删除失败');
     };
 
@@ -449,6 +451,7 @@ const AbTestPage: React.FC = () => {
             </Dialog>
 
             <ReportDialog experimentId={reportId} onClose={() => setReportId(null)} />
+            {confirmDialog}
         </div>
     );
 };

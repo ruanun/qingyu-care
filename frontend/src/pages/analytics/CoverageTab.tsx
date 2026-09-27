@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { Loader2, Target, FileSearch, FileX } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Pagination } from '@/components/ui/pagination';
 import { analyticsService } from '@/api/analytics';
 import type { CoverageAnalytics, MissedQuestion } from '@/api/analytics';
 import type { PageResponse } from '@/types';
@@ -152,13 +152,7 @@ const CoverageTab: React.FC<Props> = ({ days, appId }) => {
                         </table>
                     )}
                     {(misses?.totalPages ?? 0) > 1 && (
-                        <div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm" disabled={missPage === 0}
-                                onClick={() => setMissPage((p) => p - 1)}>上一页</Button>
-                            <Button variant="outline" size="sm"
-                                disabled={missPage >= (misses?.totalPages ?? 1) - 1}
-                                onClick={() => setMissPage((p) => p + 1)}>下一页</Button>
-                        </div>
+                        <Pagination page={missPage} totalPages={misses?.totalPages ?? 0} onPageChange={setMissPage} />
                     )}
                 </CardContent>
             </Card>

@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { getErrorMessage } from '@/lib/apiResult';
 
 const empty: Partial<AiModelConfig> = {
@@ -32,6 +33,7 @@ const empty: Partial<AiModelConfig> = {
 
 const SharedModelPage: React.FC = () => {
   const { toast } = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [list, setList] = useState<AiModelConfig[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -131,7 +133,7 @@ const SharedModelPage: React.FC = () => {
   };
 
   const remove = async (id: number) => {
-    if (!confirm('确定要删除该共享模型吗？')) return;
+    if (!(await confirm({ title: '删除该共享模型？', confirmText: '删除', destructive: true }))) return;
     try {
       const res = await platformService.deleteSharedModel(id);
       if (res.code !== 200) throw new Error(res.message);
@@ -284,6 +286,7 @@ const SharedModelPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        {confirmDialog}
     </div>
   );
 };

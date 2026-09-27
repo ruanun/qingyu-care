@@ -13,6 +13,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import com.qingyu.care.event.WebhookDomainEvent;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
@@ -39,6 +41,7 @@ class SessionTimeoutSchedulerTest {
 
     @Mock ChatSessionRepository sessionRepository;
     @Mock SysConfigRepository sysConfigRepository;
+    @Mock ApplicationEventPublisher eventPublisher;
     @InjectMocks SessionTimeoutScheduler scheduler;
 
     @BeforeEach
@@ -53,6 +56,35 @@ class SessionTimeoutSchedulerTest {
                 .configKey(SessionTimeoutScheduler.TENANT_TIMEOUT_KEY)
                 .configValue(value)
                 .build();
+    }
+
+    /**
+     * 此前超时只改库不发事件，订阅了 session.ended 的接收方那边，超时的会话永远停在「进行中」。
+     * 超时与坐席手动结束发同一个事件，用 trigger=timeout 区分。
+     */
+    @Test
+    void 超时会话逐个发布session_ended事件_trigger为timeout() {
+        when(sysConfigRepository.findByScopeAndConfigKey(OwnerScope.TENANT, SessionTimeoutScheduler.TENANT_TIMEOUT_KEY))
+                .thenReturn(List.of());
+        ChatSession s1 = ChatSession.builder().id(1L).sessionId("sid-1").build();
+        s1.setTenantId(7L);
+        s1.setAppId(70L);
+        ChatSession s2 = ChatSession.builder().id(2L).sessionId("sid-2").build();
+        s2.setTenantId(8L);
+        s2.setAppId(80L);
+        when(sessionRepository.findTimeoutSessions(anyList(), any())).thenReturn(List.of(s1, s2));
+
+        scheduler.checkTimeoutSessions();
+
+        ArgumentCaptor<WebhookDomainEvent> captor = ArgumentCaptor.forClass(WebhookDomainEvent.class);
+        verify(eventPublisher, org.mockito.Mockito.times(2)).publishEvent(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(e -> {
+            assertThat(e.getEventType()).isEqualTo("session.ended");
+            assertThat(e.getTrigger()).isEqualTo("timeout");
+        });
+        // 事件必须带会话自己的租户与应用：调度线程没有 TenantContext，分发器全靠事件上的归属过滤订阅
+        assertThat(captor.getAllValues()).extracting(WebhookDomainEvent::getSessionId, WebhookDomainEvent::getAppId, WebhookDomainEvent::getTenantId)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("sid-1", 70L, 7L), org.assertj.core.groups.Tuple.tuple("sid-2", 80L, 8L));
     }
 
     @Test

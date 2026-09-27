@@ -786,7 +786,7 @@ public class ChatServiceImpl implements ChatService {
 
         eventPublisher.publishEvent(new WebhookDomainEvent(
                 "session.ended", session.getAppId(), session.getTenantId(),
-                session.getSessionId(), null, LocalDateTime.now()));
+                session.getSessionId(), "agent", LocalDateTime.now()));
 
         // 异步生成摘要
         generateSummaryAsync(session);

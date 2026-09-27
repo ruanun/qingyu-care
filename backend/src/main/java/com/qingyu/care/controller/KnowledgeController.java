@@ -1,5 +1,7 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
+import com.qingyu.care.annotation.ReadOnlyEndpoint;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AddWebPageRequest;
 import com.qingyu.care.dto.ApiResponse;
@@ -31,6 +33,7 @@ import java.util.Map;
  * 知识库控制器
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/knowledge")
 @RequiredArgsConstructor
 @Tag(name = "Knowledge", description = "知识库管理接口")
@@ -215,6 +218,7 @@ public class KnowledgeController {
     }
     
     @PostMapping("/documents/status/batch")
+    @ReadOnlyEndpoint // id 列表放请求体的查询；知识库页会轮询它，坐席只读浏览时不能被 @AdminOnlyWrites 拦掉
     @Operation(summary = "批量获取文档处理状态", description = "一次查询多个文档的处理状态")
     public ApiResponse<List<DocumentStatusDTO>> getDocumentsStatus(@RequestBody List<Long> documentIds) {
         List<DocumentStatusDTO> statusList = knowledgeService.getDocumentsStatus(documentIds);

@@ -96,6 +96,8 @@ const sections: NavSection[] = [
                 ],
             },
             {
+                // 必须带 title：同一 section 里有 title 的子组条目会 ml-2 缩进，没 title 的这一组曾因此比兄弟菜单靠左
+                title: '对外接入',
                 items: [
                     // 页面展示 appSecret / webhookSecret，后端也只对管理员返回密钥（安全审查 H4）
                     { label: '接入配置', path: '/integration', icon: Plug, roles: ['TENANT_ADMIN', 'PLATFORM_ADMIN'] },

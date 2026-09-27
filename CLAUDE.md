@@ -42,7 +42,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev,demo   # 带演示数据启�
 mvn clean install                                    # 全量构建 + 单测（不含 IT）
 mvn test                                              # 跑单元测试（Surefire，免 Docker）
 mvn test -Dtest=ConfigServiceTest                     # 单个测试类
-mvn test -Dtest=WebhookSignatureTest#signs_body_with_hmac_sha256   # 单个方法
+mvn test -Dtest=OpenApiExceptionHandlerTest#mapsGenericTo500   # 单个方法
 mvn verify                                            # 单测 + 集成测试（Failsafe，需 Docker Desktop）
 mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe 用 it.test 而非 test）
 ```

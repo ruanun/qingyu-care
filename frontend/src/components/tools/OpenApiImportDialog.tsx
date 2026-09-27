@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { throwIfFailed } from '@/lib/apiResult';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -129,8 +131,8 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
 
                 <div className="space-y-3 max-h-[60vh] overflow-y-auto">
                     <label className="text-sm font-medium">粘贴 schema 内容</label>
-                    <textarea
-                        className="w-full h-32 rounded-md border p-2 text-sm font-mono"
+                    <Textarea
+                        className="h-32 font-mono"
                         value={schemaText}
                         onChange={(e) => setSchemaText(e.target.value)}
                         placeholder='{"openapi":"3.0.0", ...}'
@@ -165,8 +167,8 @@ const OpenApiImportDialog: React.FC<Props> = ({ open, onOpenChange, onImported }
                                 {candidates.map((c, i) => (
                                     <div key={i} className="rounded-md border p-2 space-y-1">
                                         <div className="flex items-center gap-2">
-                                            <input type="checkbox" checked={selected.has(i)}
-                                                onChange={() => toggle(i)} aria-label={`选择 ${c.name}`} />
+                                            <Checkbox checked={selected.has(i)}
+                                                onCheckedChange={() => toggle(i)} aria-label={`选择 ${c.name}`} />
                                             <Badge>{c.httpMethod}</Badge>
                                             {/* maxLength 64 与后端校验同源：64 是 AI 模型对函数名长度的
                                                 硬限制，超了照样能存进库、界面也正常显示，但挂给 LLM 时

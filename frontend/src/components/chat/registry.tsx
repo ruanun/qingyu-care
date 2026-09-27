@@ -3,6 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { UiNode } from '@/types';
 import { safeUrl } from '@/lib/safeUrl';
 import { executeActionUri } from '@/lib/actionUri';
@@ -88,17 +91,24 @@ function FormNode({ node, onAction }: { node: UiNode; onAction: (v: string) => v
             ) : null}
             {f.type === 'checkbox' ? (
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={!!values[i]} onChange={(e) => set(i, e.target.checked)} />
+                <Checkbox checked={!!values[i]} onCheckedChange={(v) => set(i, v === true)} />
                 <span>{f.label ?? f.name}{f.required ? ' *' : ''}</span>
               </label>
             ) : f.type === 'select' ? (
-              <select className={`border rounded px-2 py-1 text-sm ${invalid ? 'border-red-500' : ''}`}
-                      value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)}>
-                <option value=""></option>
-                {(f.options ?? []).map((o, j) => <option key={j} value={o}>{o}</option>)}
-              </select>
+              // Radix 的 SelectItem 遇到空串 value 会直接抛异常，而选项来自模型输出、不可控，
+              // 必须先滤掉空串与重复项——否则一条畸形卡片会让整个气泡渲染失败。
+              <Select value={str(values[i] ?? '')} onValueChange={(v) => set(i, v)}>
+                <SelectTrigger className={`h-8 ${invalid ? 'border-red-500' : ''}`}>
+                  <SelectValue placeholder={f.placeholder ?? '请选择'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {[...new Set((f.options ?? []).map(str).filter((o) => o !== ''))].map((o) => (
+                    <SelectItem key={o} value={o}>{o}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
-              <input type={f.type === 'datetime' ? 'date' : 'text'} className={`border rounded px-2 py-1 text-sm ${invalid ? 'border-red-500' : ''}`}
+              <Input type={f.type === 'datetime' ? 'date' : 'text'} className={`h-8 ${invalid ? 'border-red-500' : ''}`}
                      placeholder={f.placeholder} value={str(values[i] ?? '')} onChange={(e) => set(i, e.target.value)} />
             )}
             {invalid ? <span className="text-xs text-red-500">必填</span> : null}

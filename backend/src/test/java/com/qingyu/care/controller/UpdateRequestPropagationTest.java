@@ -169,6 +169,7 @@ class UpdateRequestPropagationTest {
     @Mock McpToolRepository mcpToolRepository;
     @Mock PackageManifestBuilder packageManifestBuilder;
     @Mock PackageManifestParser packageManifestParser;
+    @Mock com.qingyu.care.service.SessionRevocationService sessionRevocationService;
 
     // 一律用 @InjectMocks 而非手工 new：本类登记了 11 条路径、涉及 9 个被测类，
     // 手工 new 会把每个构造器的参数个数与顺序都耦合进来，加一个依赖就得改一片。
@@ -270,8 +271,9 @@ class UpdateRequestPropagationTest {
                     }
                 },
                 // webhookUrl 落库前要过 http(s) + SSRF 校验（安全审查 H5），通用哨兵串过不了；
-                // 用 IP 字面量避免单测碰 DNS
-                Map.of("webhookUrl", "https://8.8.8.8/sentinel-hook")));
+                // 用 IP 字面量避免单测碰 DNS。avatar 同理要是 http(s) 地址（2026-09-25 加的校验）
+                Map.of("webhookUrl", "https://8.8.8.8/sentinel-hook",
+                        "avatar", "https://cdn.example.com/sentinel-avatar.png")));
 
         cases.add(new UpdateCase(TenantUpdateRequest.class, "TenantController.update",
                 () -> Tenant.builder().id(ID).name("旧租户").build(),

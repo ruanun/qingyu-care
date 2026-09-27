@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { clearAuth, readAuthToken } from '@/lib/authStorage';
 
 const api = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
@@ -10,17 +11,10 @@ const api = axios.create({
 // Request interceptor for adding token + current app
 api.interceptors.request.use(
     (config) => {
-        // 从 localStorage 读取持久化的 auth state
-        const authState = localStorage.getItem('qingyu-auth');
-        if (authState) {
-            try {
-                const { state } = JSON.parse(authState);
-                if (state?.token) {
-                    config.headers['satoken'] = state.token;
-                }
-            } catch (e) {
-                console.error('Failed to parse auth state:', e);
-            }
+        // 登录态可能在 localStorage 或 sessionStorage（取决于「记住我」），必须经 authStorage 读
+        const token = readAuthToken();
+        if (token) {
+            config.headers['satoken'] = token;
         }
 
         // 从 localStorage 读取当前应用，注入 X-App-Id（后端据此按应用隔离）
@@ -49,7 +43,7 @@ api.interceptors.response.use(
 
         // 如果是 401 未认证，清除 token 并跳转登录页
         if (error.response?.status === 401) {
-            localStorage.removeItem('qingyu-auth');
+            clearAuth();
             // 当前应用一并清：残留会让下一个登录者带着上一个租户的 X-App-Id 发请求
             localStorage.removeItem('qingyu-current-app');
             window.location.href = '/login';

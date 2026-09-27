@@ -4,6 +4,7 @@ import { Wrench, Plus, Edit2, Trash2, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -15,6 +16,7 @@ import {
 import { aiToolService } from '@/api/chat-tool';
 import type { AiTool } from '@/api/chat-tool';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { cn } from '@/lib/utils';
 import OpenApiImportDialog from '@/components/tools/OpenApiImportDialog';
 
@@ -25,6 +27,7 @@ const ToolConfigPage: React.FC = () => {
     const [isImportOpen, setIsImportOpen] = useState(false);
     const [editing, setEditing] = useState<Partial<AiTool> | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchTools = async () => {
         try {
@@ -74,7 +77,7 @@ const ToolConfigPage: React.FC = () => {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('确定要删除该工具吗？绑定它的技能将失去该工具。')) return;
+        if (!(await confirm({ title: '删除该工具？', description: '绑定它的技能将失去该工具。', confirmText: '删除', destructive: true }))) return;
         try {
             const res = await aiToolService.remove(id);
             throwIfFailed(res); toast({ title: '工具已删除' }); fetchTools();
@@ -150,7 +153,7 @@ const ToolConfigPage: React.FC = () => {
                                     {t.scope !== 'PLATFORM' && (
                                         <>
                                             <Button variant="outline" size="sm" onClick={() => openEdit(t)}><Edit2 className="w-3 h-3" /></Button>
-                                            <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50" onClick={() => handleDelete(t.id)}><Trash2 className="w-3 h-3" /></Button>
+                                            <Button variant="outline" size="sm" className="text-red-500 hover:bg-red-50" aria-label="删除" onClick={() => handleDelete(t.id)}><Trash2 className="w-3 h-3" /></Button>
                                         </>
                                     )}
                                 </CardFooter>
@@ -187,7 +190,7 @@ const ToolConfigPage: React.FC = () => {
                         <label className="text-sm font-medium">URL 模板</label>
                         <Input value={editing?.urlTemplate || ''} onChange={(e) => setEditing({ ...editing, urlTemplate: e.target.value })} placeholder="https://api.example.com/orders/{orderId}" />
                         <label className="text-sm font-medium">参数 JSON Schema</label>
-                        <textarea className="w-full min-h-[120px] rounded-md border px-3 py-2 text-sm font-mono" value={editing?.inputSchema || ''} onChange={(e) => setEditing({ ...editing, inputSchema: e.target.value })} />
+                        <Textarea className="min-h-[120px] font-mono" value={editing?.inputSchema || ''} onChange={(e) => setEditing({ ...editing, inputSchema: e.target.value })} />
                         <label className="text-sm font-medium">鉴权头（可选，如 Authorization: Bearer xxx）</label>
                         <Input type="password" value={editing?.authHeader || ''} onChange={(e) => setEditing({ ...editing, authHeader: e.target.value })} placeholder={editing?.id ? '留空表示不修改' : 'Authorization: Bearer ...'} />
                         <label className="text-sm font-medium">响应截断长度</label>
@@ -205,6 +208,7 @@ const ToolConfigPage: React.FC = () => {
                 onOpenChange={setIsImportOpen}
                 onImported={fetchTools}
             />
+            {confirmDialog}
         </div>
     );
 };

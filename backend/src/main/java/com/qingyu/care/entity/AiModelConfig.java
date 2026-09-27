@@ -1,6 +1,7 @@
 package com.qingyu.care.entity;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.qingyu.care.enums.OwnerScope;
 import jakarta.persistence.*;
 import lombok.*;
@@ -54,7 +55,11 @@ public class AiModelConfig extends BaseTenantEntity {
 
     /**
      * API Key（生产环境应加密存储）
+     *
+     * <p>{@code WRITE_ONLY}：只读入、不写出（同 {@code User.password}）。实体直接当响应体，此前明文随列表发给
+     * 全体登录用户——坐席也能读到（2026-09-25 安全扫描 H2）。前端编辑弹窗本就不回显凭据，不依赖它。
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(length = 500)
     private String apiKey;
 

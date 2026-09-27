@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
@@ -16,6 +17,7 @@ import java.util.List;
  * AI 模型配置管理 API
  */
 @RestController
+@AdminOnlyWrites
 @RequestMapping("/v1/ai-models")
 @RequiredArgsConstructor
 public class AiModelController {

@@ -26,6 +26,12 @@ qingyu:
   care:
     platform:
       admin-initial-password: admin123   # 多条 IT 以 admin/admin123 登录平台管理员
+    auth:
+      self-register-enabled: true        # LoginIT / MemberPrivilegeIT 等走注册接口
+      # MockMvc 的请求全部来自 127.0.0.1，整套 IT 登录上百次，按 IP 限流会让不相干的 IT 随机 429；
+      # 按用户名锁定保持开启（各 IT 用户名互不相同），IP 限流由 LoginThrottleServiceTest 单测覆盖
+      login-ip-limit-per-minute: 0
+      register-ip-limit-per-minute: 0
     webhook:
       # IT 的 Webhook 接收端起在 127.0.0.1，放开私网目标（钉 IP 与禁重定向不受影响）
       allow-private-targets: true

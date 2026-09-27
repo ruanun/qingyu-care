@@ -78,8 +78,8 @@ async function init(): Promise<void> {
       } catch {
         return; // 非法负载忽略，不影响对话
       }
-      // 坐席消息目前后端标 role=ASSISTANT，但 MessageRole 枚举本有 AGENT；
-      // 两者都当坐席消息渲染，防止后端未来切换标注值时客户端静默丢消息。
+      // 坐席消息后端标 role=AGENT（2026-08-20 起；此前误标为 ASSISTANT）。
+      // 两者都当坐席消息渲染：库里的历史消息仍可能是旧标注，只认 AGENT 会让它们静默丢失。
       //
       // attachments 必须原样透传：后端 RealtimeNotifier#messageJson 是在推送那一刻现查附件
       // 塞进 payload 的（ChatServiceImpl#agentReply 特意把 attachToMessage 排在 toUserMessage

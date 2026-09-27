@@ -2,10 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Check, Loader2, Sparkles, MessageCircleQuestion } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { qaService } from '@/api/qa';
 import type { QaPair } from '@/api/qa';
 import type { Document } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 interface Props {
@@ -20,6 +23,7 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
     const [answer, setAnswer] = useState('');
     const [genDocId, setGenDocId] = useState<string>('');
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const fetchPairs = useCallback(async () => {
         setLoading(true);
@@ -62,7 +66,7 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('确定删除该问答对吗？相关向量也会清除。')) return;
+        if (!(await confirm({ title: '删除该问答对？', description: '相关向量也会一并清除。', confirmText: '删除', destructive: true }))) return;
         try { const res = await qaService.remove(id); throwIfFailed(res); toast({ title: '已删除' }); fetchPairs(); }
         catch (e) { toast({ variant: 'destructive', title: '删除失败', description: getErrorMessage(e) }); }
     };
@@ -93,17 +97,21 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
             {/* 从文档生成 */}
             <div className="flex items-center gap-2 rounded-xl border bg-muted/20 p-3">
                 <Sparkles className="w-4 h-4 text-primary shrink-0" />
-                <select className="flex-1 rounded-md border bg-background px-2 py-1.5 text-sm" value={genDocId} onChange={(e) => setGenDocId(e.target.value)}>
-                    <option value="">从文档生成问答对（选一个已完成文档）…</option>
-                    {completedDocs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
+                <Select value={genDocId} onValueChange={setGenDocId}>
+                    <SelectTrigger className="flex-1 h-9">
+                        <SelectValue placeholder="从文档生成问答对（选一个已完成文档）…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {completedDocs.map((d) => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
+                    </SelectContent>
+                </Select>
                 <Button size="sm" variant="outline" onClick={handleGenerate}>生成草稿</Button>
             </div>
 
             {/* 手动新增 */}
             <div className="rounded-xl border p-4 space-y-2">
                 <Input placeholder="问题，如：如何退货？" value={question} onChange={(e) => setQuestion(e.target.value)} />
-                <textarea className="w-full min-h-[70px] rounded-md border px-3 py-2 text-sm" placeholder="答案" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+                <Textarea className="min-h-[70px]" placeholder="答案" value={answer} onChange={(e) => setAnswer(e.target.value)} />
                 <div className="flex justify-end">
                     <Button size="sm" onClick={handleCreate}><Plus className="w-4 h-4 mr-1" />添加问答对</Button>
                 </div>
@@ -143,6 +151,7 @@ const QaPairPanel: React.FC<Props> = ({ kbId, documents }) => {
                     </div>
                 ))}
             </div>
+            {confirmDialog}
         </div>
     );
 };

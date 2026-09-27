@@ -5,6 +5,7 @@ import type { ToolPackage } from '@/api/toolPackage';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -237,8 +238,8 @@ const PlatformPackagePage: React.FC = () => {
                             <p className="text-sm font-medium mb-1">
                                 manifest（发布前请逐字核对：不该有明文密钥，变量的标签与说明要是人话）
                             </p>
-                            <textarea
-                                className="w-full h-80 font-mono text-xs border rounded-md p-2 bg-background"
+                            <Textarea
+                                className="h-80 font-mono text-xs md:text-xs"
                                 value={draftManifest}
                                 onChange={(e) => setDraftManifest(e.target.value)}
                             />
