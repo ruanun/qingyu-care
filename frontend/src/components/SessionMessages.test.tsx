@@ -28,7 +28,9 @@ vi.mock('@/api/chat', () => ({
 describe('SessionMessages Markdown', () => {
     it('AI 回复渲染 Markdown，访客与坐席消息保持原文', async () => {
         render(<SessionMessages sessionId="s1" />);
-        await waitFor(() => expect(screen.getByText('申请')).toBeInTheDocument());
+        // Markdown 渲染器是懒加载的：首次加载要现场转换 react-markdown 及其语法解析依赖，
+        // 整套测试并行时会超过默认 1 秒，单独跑则很快——放宽等待，否则这条随机器负载时红时绿
+        await waitFor(() => expect(screen.getByText('申请')).toBeInTheDocument(), { timeout: 10000 });
 
         expect(screen.getByText('申请').tagName).toBe('STRONG');
         expect(document.querySelectorAll('ol > li')).toHaveLength(2);

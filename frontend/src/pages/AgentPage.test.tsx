@@ -441,7 +441,8 @@ describe('坐席台消息 Markdown', () => {
         render(<AgentPage />);
         fireEvent.click(await screen.findByTestId('my-session-s1'));
 
-        expect((await screen.findByText('先申请')).tagName).toBe('STRONG');
+        // Markdown 渲染器是懒加载的，整套并行时首次加载会超过默认 1 秒，放宽等待（同 SessionMessages.test.tsx）
+        expect((await screen.findByText('先申请', {}, { timeout: 10000 })).tagName).toBe('STRONG');
         expect(screen.getByText('单价 3*4 元，**请确认**')).toBeInTheDocument();
         expect(screen.getByText('我要**退货**')).toBeInTheDocument();
     });
