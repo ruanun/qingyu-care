@@ -5,6 +5,7 @@ import { chatService } from '@/api/chat';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage } from '@/lib/apiResult';
+import { Markdown } from '@/components/chat/Markdown';
 
 interface Message {
     id: number;
@@ -112,7 +113,10 @@ const SessionMessages: React.FC<SessionMessagesProps> = ({ sessionId }) => {
                                 ? "bg-muted rounded-tl-none"
                                 : "bg-primary text-primary-foreground rounded-tr-none"
                         )}>
-                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                            {/* 只有 AI 回复渲染 Markdown；坐席消息同在这一侧，保持纯文本 */}
+                            {msg.role === 'ASSISTANT'
+                                ? <Markdown text={msg.content} />
+                                : <p className="whitespace-pre-wrap">{msg.content}</p>}
                             <p className={cn(
                                 "text-[10px] mt-1 opacity-60",
                                 msg.role === 'USER' ? "text-left" : "text-right"

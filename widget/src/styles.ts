@@ -63,6 +63,25 @@ export function buildStyles(themeColor: string): string {
     .qy-card-title { font-weight:600; margin-bottom:6px; }
     .qy-card-body { display:flex; flex-direction:column; gap:4px; }
     .qy-node-text { font-size:14px; }
+    /* AI 回复的 Markdown（markdown.ts）：气泡很窄，标题不放大字号，只加粗；代码块与表格横向滚动而不是撑破气泡 */
+    .qy-md { white-space: normal; }
+    .qy-md p { margin: 0 0 6px; }
+    .qy-md > :last-child, .qy-md li > :last-child { margin-bottom: 0; }
+    .qy-md .qy-md-h { font-weight: 600; margin: 8px 0 4px; }
+    .qy-md > .qy-md-h:first-child { margin-top: 0; }
+    .qy-md ul, .qy-md ol { margin: 4px 0 6px; padding-left: 20px; }
+    .qy-md li { margin: 2px 0; }
+    .qy-md li > ul, .qy-md li > ol { margin: 2px 0; }
+    .qy-md code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+    .qy-md pre { background: #f6f8fa; padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; white-space: pre; }
+    .qy-md pre code { background: none; padding: 0; }
+    .qy-md blockquote { border-left: 3px solid #e5e7eb; margin: 6px 0; padding: 2px 10px; color: #666; }
+    .qy-md hr { border: none; border-top: 1px solid #eee; margin: 8px 0; }
+    .qy-md a { color: ${themeColor}; text-decoration: underline; word-break: break-all; }
+    .qy-md .qy-md-table { overflow-x: auto; margin: 6px 0; }
+    .qy-md table { border-collapse: collapse; font-size: 13px; }
+    .qy-md th, .qy-md td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; white-space: nowrap; }
+    .qy-md th { background: #f9fafb; font-weight: 600; }
     .qy-emph { font-weight:600; }
     .qy-kv { display:flex; justify-content:space-between; font-size:13px; gap:8px; }
     .qy-kv-label { color:#6b7280; }

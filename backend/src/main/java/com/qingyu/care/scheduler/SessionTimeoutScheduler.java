@@ -5,6 +5,8 @@ import com.qingyu.care.entity.SysConfig;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.enums.SessionStatus;
 import com.qingyu.care.event.WebhookDomainEvent;
+import com.qingyu.care.service.realtime.RealtimeNotifier;
+import com.qingyu.care.util.AfterCommit;
 import com.qingyu.care.repository.ChatSessionRepository;
 import com.qingyu.care.repository.SysConfigRepository;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class SessionTimeoutScheduler {
     private final ChatSessionRepository sessionRepository;
     private final SysConfigRepository sysConfigRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final RealtimeNotifier realtimeNotifier;
 
     @Value("${qingyu.care.session.timeout-minutes:30}")
     private int timeoutMinutes;
@@ -97,6 +100,9 @@ public class SessionTimeoutScheduler {
         for (ChatSession s : timeoutSessions) {
             eventPublisher.publishEvent(new WebhookDomainEvent(
                     "session.ended", s.getAppId(), s.getTenantId(), s.getSessionId(), "timeout", endedAt));
+            // 访客若还开着页面，当场提示并让 widget 丢掉本地会话；没人订阅时只是一次空发布
+            String sid = s.getSessionId();
+            AfterCommit.run(() -> realtimeNotifier.toUserSessionEvent(sid, "ended", "会话因长时间无操作已结束，如需继续咨询请直接发送消息"));
         }
     }
 

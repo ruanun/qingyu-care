@@ -15,6 +15,7 @@ import { CardErrorBoundary } from '@/components/chat/CardErrorBoundary';
 import { Attachments } from '@/components/chat/Attachments';
 import { parseUiSpec } from '@/lib/uiSpec';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
+import { Markdown } from '@/components/chat/Markdown';
 
 const AgentPage: React.FC = () => {
     const [waitingSessions, setWaitingSessions] = useState<ChatSession[]>([]);
@@ -564,6 +565,9 @@ const AgentPage: React.FC = () => {
                                                     <CardErrorBoundary fallback={msg.content}>
                                                         <JsonRender parts={msg.uiParts} onAction={handleAction} />
                                                     </CardErrorBoundary>
+                                                ) : msg.role === 'ASSISTANT' ? (
+                                                    // 只有 AI 回复渲染 Markdown；坐席自己发的消息同在这一侧，保持纯文本
+                                                    <Markdown text={msg.content} />
                                                 ) : (
                                                     <span>{msg.content}</span>
                                                 )}

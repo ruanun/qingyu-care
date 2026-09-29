@@ -18,6 +18,7 @@ import { loadChatSession, saveChatSession, clearChatSession } from '@/lib/chatSe
 import { streamChat } from '@/lib/chatStream';
 import { parseUiSpec } from '@/lib/uiSpec';
 import { getErrorMessage } from '@/lib/apiResult';
+import { Markdown } from '@/components/chat/Markdown';
 
 const ChatPage: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -261,7 +262,7 @@ const ChatPage: React.FC = () => {
                                                     <JsonRender parts={msg.uiParts} onAction={handleAction} />
                                                 </CardErrorBoundary>
                                             )
-                                            : msg.content}
+                                            : msg.role === 'ASSISTANT' ? <Markdown text={msg.content} /> : msg.content}
                                     </div>
                                     <Attachments items={msg.attachments} />
                                     <span className="text-[10px] text-muted-foreground px-1">

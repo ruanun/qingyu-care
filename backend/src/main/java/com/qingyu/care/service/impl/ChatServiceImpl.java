@@ -12,6 +12,7 @@ import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.enums.MessageRole;
 import com.qingyu.care.enums.ReaderType;
 import com.qingyu.care.enums.SessionStatus;
+import com.qingyu.care.util.AfterCommit;
 import com.qingyu.care.repository.AgentSessionDao;
 import com.qingyu.care.repository.ChatMessageRepository;
 import com.qingyu.care.repository.ChatSessionRepository;
@@ -771,8 +772,10 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public boolean sessionExists(String sessionId) {
-        return sessionId != null && sessionRepository.findBySessionId(sessionId).isPresent();
+    public boolean isSessionOpen(String sessionId) {
+        return sessionId != null && sessionRepository.findBySessionId(sessionId)
+                .map(s -> s.getStatus() != SessionStatus.ENDED && s.getStatus() != SessionStatus.TIMEOUT)
+                .orElse(false);
     }
 
     @Override
@@ -787,6 +790,11 @@ public class ChatServiceImpl implements ChatService {
         eventPublisher.publishEvent(new WebhookDomainEvent(
                 "session.ended", session.getAppId(), session.getTenantId(),
                 session.getSessionId(), "agent", LocalDateTime.now()));
+        // 告诉访客会话结束了：widget 当场提示并丢掉本地会话，下一条消息新开（2026-09-29「一次咨询一个会话」）。
+        // 此前结束只发 webhook、不推访客，widget 的 ended 处理是死代码。必须等提交后再推：否则 widget 丢掉会话后
+        // 马上发的下一条消息可能赶在提交前到达，后端仍看到「进行中」。
+        String endedSid = session.getSessionId();
+        AfterCommit.run(() -> realtimeNotifier.toUserSessionEvent(endedSid, "ended", "本次会话已结束，如需继续咨询请直接发送消息"));
 
         // 异步生成摘要
         generateSummaryAsync(session);

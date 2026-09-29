@@ -46,6 +46,9 @@ import reactor.core.publisher.Flux;
 @RequiredArgsConstructor
 public class OpenChatController {
 
+    /** 会话不存在 / 已结束 / 已超时时的统一提示，Widget 按 404 状态码而非文案识别 */
+    static final String SESSION_CLOSED = "会话不存在或已结束";
+
     private final ChatService chatService;
     private final ApiUsageService apiUsageService;
     private final ChatFeedbackService chatFeedbackService;
@@ -60,10 +63,10 @@ public class OpenChatController {
      */
     @PostMapping("/completions")
     public OpenChatResponse completions(@Valid @RequestBody OpenChatRequest req) {
-        // 传了 sessionId 但服务端已不存在/过期 → 显式 404，供 Widget 清本地会话后自动重开
+        // 传了 sessionId 但会话已不存在 / 已结束 / 已超时 → 显式 404，供 Widget 清本地会话后自动新开
         if (req.getSessionId() != null && !req.getSessionId().isBlank()
-                && !chatService.sessionExists(req.getSessionId())) {
-            throw new OpenApiException(404, "会话不存在或已过期");
+                && !chatService.isSessionOpen(req.getSessionId())) {
+            throw new OpenApiException(404, SESSION_CLOSED);
         }
         ChatResponse resp = chatService.chat(toInternal(req, false));
         long tokens = resp.getTokenUsage() != null ? resp.getTokenUsage() : 0L;
@@ -84,11 +87,11 @@ public class OpenChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@Valid @RequestBody OpenChatRequest req) {
-        // 与 completions 一致：传了 sessionId 但服务端已不存在/过期 → 显式 404，
-        // 供 Widget 清本地会话后自动重开（改造前流式端点漏了这一步）
+        // 与 completions 一致：会话已不存在 / 已结束 / 已超时 → 显式 404，
+        // 供 Widget 清本地会话后自动新开（改造前流式端点漏了这一步）
         if (req.getSessionId() != null && !req.getSessionId().isBlank()
-                && !chatService.sessionExists(req.getSessionId())) {
-            throw new OpenApiException(404, "会话不存在或已过期");
+                && !chatService.isSessionOpen(req.getSessionId())) {
+            throw new OpenApiException(404, SESSION_CLOSED);
         }
         // 必须在请求线程（Reactor 订阅前）捕获上下文，回调运行在非 HTTP 线程中无上下文
         final Long tid = TenantContext.getTenantId();
@@ -115,6 +118,11 @@ public class OpenChatController {
     public AttachmentDTO uploadAttachment(
             @RequestParam("file") MultipartFile file,
             @RequestParam("sessionId") String sessionId) {
+        // 已结束的会话不收附件：否则附件挂在旧会话上，随后发消息 404 → Widget 换新会话重发时
+        // 必须丢掉这些附件（新会话下归属校验必拒），用户选的文件就这么没了
+        if (!chatService.isSessionOpen(sessionId)) {
+            throw new OpenApiException(404, SESSION_CLOSED);
+        }
         ChatAttachment a = chatAttachmentService.upload(sessionId, file, MessageRole.USER);
         return AttachmentDTO.of(a);
     }

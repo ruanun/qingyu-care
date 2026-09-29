@@ -9,6 +9,7 @@ import { createCoreApi } from './core/api';
 
 export type { WidgetBrand, UiNode, UiPart, OpenSessionResponse } from './core/api';
 export { SessionExpiredError } from './core/api';
+import { SessionExpiredError } from './core/api';
 
 export function createApi(cfg: WidgetConfig) {
   const core = createCoreApi({ apiBase: cfg.apiBase, appKey: cfg.appKey });
@@ -31,6 +32,8 @@ export function createApi(cfg: WidgetConfig) {
         headers: { 'X-App-Id': cfg.appKey },
         body: form,
       });
+      // 会话已结束 / 已超时：后端拒收附件（否则附件挂在旧会话上、新会话重发时必丢）
+      if (r.status === 404) throw new SessionExpiredError();
       if (!r.ok) throw new Error(`附件上传失败: ${r.status}`);
       return (await r.json()) as WidgetAttachment;
     },

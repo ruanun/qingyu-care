@@ -94,6 +94,8 @@ async function init(): Promise<void> {
         }
       } else if (event === 'session') {
         ui.showSessionState(p.text || sessionStateText(p.kind));
+        // 坐席结束了会话：当场丢掉它，下一条消息直接新开，不必先撞一次 404
+        if (p.kind === 'ended') resetSession();
       } else if (event === 'typing' && p.from === 'agent') {
         ui.setTyping(true); // 短暂显示后由下一条消息/超时清除
       } else if (event === 'read') {
@@ -105,6 +107,20 @@ async function init(): Promise<void> {
   }
   // 卸载/页面离开时释放长连接，避免泄漏
   window.addEventListener('pagehide', () => inbox?.close());
+
+  /**
+   * 丢掉当前会话：之后的第一条消息会不带 sessionId 发出，由后端新开一个会话。
+   * 「一次咨询一个会话」（2026-09-29 定）：会话被坐席结束或超时关闭后，后端对它的发消息 / 附件 / 转人工一律 404，
+   * 这里是各条路径收到 404 或「已结束」推送后的统一收尾。旧会话的 inbox 一并关掉——它不会再有新消息了。
+   */
+  function resetSession() {
+    clearSession(browserStorage, cfg!.appKey);
+    sessionId = null;
+    ui.setAttachEnabled(false);
+    inbox?.close();
+    inbox = null;
+    inboxSid = null;
+  }
 
   // 用户 typing 节流上报（≥3s 一次），仅在已有会话时上报
   let lastTypingReport = 0;
@@ -127,7 +143,14 @@ async function init(): Promise<void> {
     // 这里仍兜底判一次，防止两处状态不同步时打出一个必然 400 的请求。
     onUploadFile: (file) => {
       if (!sessionId) return Promise.reject(new Error('会话尚未建立，无法上传附件'));
-      return api.uploadAttachment(sessionId, file);
+      return api.uploadAttachment(sessionId, file).catch((e) => {
+        if (e instanceof SessionExpiredError) {
+          // 会话已超时关闭（超时不会推「已结束」事件，只能在这里发现）：附件按钮随之禁用
+          resetSession();
+          ui.addBotMessage('当前会话已结束，发送一条消息即可开始新会话，再添加附件。');
+        }
+        throw e;
+      });
     },
     // 闭包读取的是外层 let sessionId 的当前值（不是挂载时刻的快照），故会话切换后取到的
     // 始终是最新会话——历史消息里的附件也都属于当前这个会话，语义上是对的。
@@ -153,7 +176,11 @@ async function init(): Promise<void> {
     ui.markOpened();
     ui.setAttachEnabled(true); // 本地已有 sessionId，附件上传端点可用
     const restored = await api.getSession(sessionId);
-    if (restored) {
+    if (restored && (restored.status === 'ENDED' || restored.status === 'TIMEOUT')) {
+      // 已结束的会话不再恢复：下一条消息新开会话。旧记录不显示——附件下载要带旧 sessionId，
+      // 混进新会话里会拿不到文件
+      resetSession();
+    } else if (restored) {
       if (restored.messages.length) {
         restoreHistory(ui, restored.messages);
         // 补建「当前已知最新一条坐席/AI消息 id」，供刷新后面板展开时的已读上报有值可报。
@@ -168,7 +195,7 @@ async function init(): Promise<void> {
         ui.markReadUpTo(restored.agentReadUpToMessageId);
       }
     }
-    ensureInbox(sessionId);
+    if (sessionId) ensureInbox(sessionId);
   }
 
   async function handleSend(message: string, attachments?: WidgetAttachment[]): Promise<void> {
@@ -237,9 +264,7 @@ async function init(): Promise<void> {
       await api.stream(message, sessionId, handlers, attachmentIds);
     } catch (e) {
       if (e instanceof SessionExpiredError) {
-        clearSession(browserStorage, cfg!.appKey);
-        sessionId = null;
-        ui.setAttachEnabled(false);
+        resetSession();
         await api.stream(message, null, handlers);
         return;
       }
@@ -256,6 +281,12 @@ async function init(): Promise<void> {
       await api.handover(sessionId);
       ui.addBotMessage('已为你转接人工，请稍候。');
     } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        resetSession();
+        ui.addBotMessage('当前会话已结束，发送一条消息即可开始新会话，再申请转人工。');
+      } else {
+        ui.addBotMessage('转人工失败，请稍后再试。');
+      }
       console.warn('[Qingyu Widget] 转人工失败', e);
     }
   }

@@ -42,6 +42,7 @@ class SessionTimeoutSchedulerTest {
     @Mock ChatSessionRepository sessionRepository;
     @Mock SysConfigRepository sysConfigRepository;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock com.qingyu.care.service.realtime.RealtimeNotifier realtimeNotifier;
     @InjectMocks SessionTimeoutScheduler scheduler;
 
     @BeforeEach
@@ -85,6 +86,9 @@ class SessionTimeoutSchedulerTest {
         // 事件必须带会话自己的租户与应用：调度线程没有 TenantContext，分发器全靠事件上的归属过滤订阅
         assertThat(captor.getAllValues()).extracting(WebhookDomainEvent::getSessionId, WebhookDomainEvent::getAppId, WebhookDomainEvent::getTenantId)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("sid-1", 70L, 7L), org.assertj.core.groups.Tuple.tuple("sid-2", 80L, 8L));
+        // 访客还开着页面的话当场提示，widget 丢掉本地会话（「一次咨询一个会话」）
+        verify(realtimeNotifier).toUserSessionEvent(eq("sid-1"), eq("ended"), any());
+        verify(realtimeNotifier).toUserSessionEvent(eq("sid-2"), eq("ended"), any());
     }
 
     @Test
