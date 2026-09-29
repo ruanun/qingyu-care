@@ -49,9 +49,12 @@ public interface ChatService {
     ChatSession getSession(String sessionId);
 
     /**
-     * 判断会话是否存在（按当前上下文可见）。开放 API 用于对失效 sessionId 显式报错。
+     * 会话是否还能接收访客消息：存在，且没有被坐席结束（ENDED）或超时关闭（TIMEOUT）。
+     * 开放 API 对不满足的 sessionId 一律 404，Widget 据此清掉本地会话、自动新开一个——
+     * 「一次咨询一个会话」（2026-09-29 定）。此前只判存在，访客能一直往已结束的会话里发消息，
+     * 状态停在 ENDED 却不断冒出新消息与 token 消耗，转人工还会让它从 ENDED 直接跳成 WAITING_AGENT。
      */
-    boolean sessionExists(String sessionId);
+    boolean isSessionOpen(String sessionId);
     
     /**
      * 结束会话

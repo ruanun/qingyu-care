@@ -87,6 +87,26 @@ class AgentNotifyEventTest {
         return session;
     }
 
+    /**
+     * 「一次咨询一个会话」（2026-09-29）：结束会话此前只发 webhook、不推访客，widget 里处理 ended 的代码是死代码——
+     * widget 的测试桩了一个后端根本不发的事件照样绿。这条钉住后端真的推。
+     * 单测里没有活动事务，AfterCommit 立即执行，所以能直接 verify。
+     */
+    @Test
+    void endSession_推送ended事件给访客_并发session_ended事件() {
+        ChatSession session = waitingSession();
+        when(sessionRepository.findBySessionId("sess-1")).thenReturn(Optional.of(session));
+        when(sessionRepository.save(any(ChatSession.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        chatService.endSession("sess-1");
+
+        verify(realtimeNotifier).toUserSessionEvent(eq("sess-1"), eq("ended"), any());
+        ArgumentCaptor<WebhookDomainEvent> captor = ArgumentCaptor.forClass(WebhookDomainEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().getEventType()).isEqualTo("session.ended");
+        assertThat(captor.getValue().getTrigger()).isEqualTo("agent");
+    }
+
     @Test
     void acceptSession_成功后_发session_accepted事件_并推用户会话事件() {
         ChatSession session = waitingSession();

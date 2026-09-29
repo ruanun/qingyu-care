@@ -55,3 +55,28 @@ describe('鉴权头构造', () => {
     expect('Origin' in calls[0].headers).toBe(false);
   });
 });
+
+/**
+ * 转人工此前不看响应状态，失败也 resolve，widget 永远显示「已为你转接人工」。
+ * 会话已结束时后端返回 404，上层要据此清会话并提示（2026-09-29「一次咨询一个会话」）。
+ */
+describe('handover 响应状态', () => {
+  const stubStatus = (status: number) =>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status })));
+  const api = () => createCoreApi({ apiBase: 'https://x.com/api', appKey: 'k1' });
+
+  it('404 抛 SessionExpiredError', async () => {
+    stubStatus(404);
+    await expect(api().handover('s1')).rejects.toMatchObject({ name: 'SessionExpiredError' });
+  });
+
+  it('其他失败状态抛普通错误，不再假装成功', async () => {
+    stubStatus(500);
+    await expect(api().handover('s1')).rejects.toThrow('转人工失败: 500');
+  });
+
+  it('成功时 resolve', async () => {
+    stubStatus(200);
+    await expect(api().handover('s1')).resolves.toBeUndefined();
+  });
+});

@@ -94,7 +94,7 @@
 | 403 | `该应用未开放 Widget 接入` | 访客路径，且应用白名单为空 |
 | 403 | `来源域名未授权` | 访客路径，Origin（或 Referer 推出的来源）不在白名单 |
 | 403 | `本月额度已用尽，请升级套餐`（`reason: QUOTA_EXCEEDED`） | 月度额度用尽 |
-| 404 | `会话不存在或已过期` | 对话端点传了 `sessionId` 但服务端查无此会话 |
+| 404 | `会话不存在或已结束` | 发消息、转人工、上传附件时传的 `sessionId` 不存在，或已被坐席结束（`ENDED`）/ 超时关闭（`TIMEOUT`） |
 | 404 | `会话 不存在: <id>` / `附件不存在: <id>` / `消息 不存在: <id>` | 资源不存在或不属于当前应用（两者刻意同语义，防枚举） |
 | 429 | `请求过于频繁` | 任一层限流触发，带 `Retry-After: 60` |
 | 500 | `服务器内部错误` | 未预期异常；不会回显内部细节 |
@@ -152,9 +152,8 @@ curl -s -X POST "$BASE/chat/completions" "${AUTH[@]}" \
   -d '{"userId":"u_1001","message":"多少钱包邮？"}'
 ```
 
-- 传了 `sessionId` 但服务端**不存在** → 404 `会话不存在或已过期`，清掉本地记录、不带 `sessionId` 重发即可。
-- 传了一个**属于别的应用**的 `sessionId` → 不报错，静默新建会话，响应里是新的 `sessionId`。
-- 会话已被自动超时关闭（状态 `TIMEOUT`）或被坐席结束（`ENDED`）时，带着它继续发**不会** 404，消息照常追加到原会话。
+- **一次咨询一个会话**：会话被坐席结束（`ENDED`）或超时关闭（`TIMEOUT`）后不再接收消息。传了这样的 `sessionId`、或服务端根本没有这个会话 → 404 `会话不存在或已结束`，清掉本地记录、不带 `sessionId` 重发即可，后端会新开一个会话。转人工（§5.7）与上传附件（§5.4）同理。
+- 传了一个**属于别的应用**的 `sessionId` → 不报错，静默新建会话，响应里是新的 `sessionId`（按「不存在」同语义处理，防枚举探测）。
 - 会话处于人工流程（`WAITING_AGENT` / `AGENT_PROCESSING`）时不调模型，`reply` 是固定提示语，坐席的回复要从 inbox（§5.8）或会话详情（§5.6）取。
 
 ### 5.2 `POST /chat/stream` 流式对话（SSE）
@@ -225,7 +224,7 @@ curl -s -X POST "$BASE/chat/files" "${AUTH[@]}" -F "sessionId=<会话id>" -F "fi
 
 ### 5.7 `POST /sessions/{sessionId}/handover` 请求转人工
 
-无请求体。会话置为 `WAITING_AGENT`，并触发 Webhook `session.handover_requested`（`trigger: "user_request"`）。响应：
+无请求体。会话置为 `WAITING_AGENT`，并触发 Webhook `session.handover_requested`（`trigger: "user_request"`）。会话已结束或已超时时返回 404，状态不变。响应：
 
 ```json
 { "sessionId": "…", "status": "handover_requested" }
@@ -303,12 +302,12 @@ data:{"messageId":1025,"userMessageId":1024}
 | 事件 | data 字段 | 说明 |
 |---|---|---|
 | `message` | `sessionId`、`messageId`、`role`（`AGENT`）、`content`、`createdAt`、`attachments`（AttachmentDTO[]）、`uiSpec`（卡片原始 JSON 字符串，通常为 null） | 坐席发来的消息，附件在推送时已挂好 |
-| `session` | `sessionId`、`kind`、`text` | 会话状态变化：`accepted`（坐席接入）、`returned_to_ai`（交还 AI）。`text` 是可直接展示的文案 |
+| `session` | `sessionId`、`kind`、`text` | 会话状态变化：`accepted`（坐席接入）、`returned_to_ai`（交还 AI）、`ended`（坐席结束或超时关闭）。`text` 是可直接展示的文案。收到 `ended` 后应丢掉本地的 `sessionId`，下一条消息不带它发出 |
 | `typing` | `sessionId`、`from`（`agent`） | 坐席正在输入 |
 | `read` | `sessionId`、`upToMessageId` | 坐席已读到哪条（访客自己消息上的「已读」标记用它） |
 | `:ping`（注释） | — | 每 25 秒一次保活，无 data |
 
-⚠️ `read` 是独立事件，别和 `session` 一样当提示文案展示。坐席结束会话（`ENDED`）**不会**推 `session` 事件，需要感知的话用 Webhook `session.ended` 或轮询 §5.6。
+⚠️ `read` 是独立事件，别和 `session` 一样当提示文案展示。`ended` 只推给当时还连着 inbox 的访客；页面没开着的访客下次发消息会收到 404，按上面的规则新开会话即可。
 
 ---
 

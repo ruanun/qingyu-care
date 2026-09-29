@@ -1,5 +1,6 @@
 package com.qingyu.care.controller.open;
 
+import com.qingyu.care.exception.OpenApiException;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.dto.AttachmentDTO;
 import com.qingyu.care.dto.ReadReceiptRequest;
@@ -81,6 +82,10 @@ public class OpenSessionController {
      */
     @PostMapping("/{sessionId}/handover")
     public Map<String, Object> handover(@PathVariable String sessionId) {
+        // 已结束的会话不能转人工：此前会让它从 ENDED 直接跳成 WAITING_AGENT，坐席队列里冒出一个「已结束」的待接会话
+        if (!chatService.isSessionOpen(sessionId)) {
+            throw new OpenApiException(404, OpenChatController.SESSION_CLOSED);
+        }
         chatService.requestHandover(sessionId);
         return Map.of("sessionId", sessionId, "status", "handover_requested");
     }

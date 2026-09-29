@@ -122,11 +122,17 @@ export function createCoreApi(cfg: CoreApiConfig) {
       }
     },
 
+    /**
+     * 请求转人工。会话已结束 / 已超时时后端返回 404 → 抛 SessionExpiredError，由上层清会话并提示。
+     * ⚠️ 必须检查响应状态：此前不看 r.ok，请求失败也照样 resolve，widget 永远显示「已为你转接人工」。
+     */
     async handover(sessionId: string): Promise<void> {
-      await fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}/handover`, {
+      const r = await fetch(`${cfg.apiBase}/open/v1/sessions/${sessionId}/handover`, {
         method: 'POST',
         headers: headers(),
       });
+      if (r.status === 404) throw new SessionExpiredError();
+      if (!r.ok) throw new Error(`转人工失败: ${r.status}`);
     },
 
     /** 消息反馈（1=赞 / -1=踩）；失败静默（不干扰对话） */
