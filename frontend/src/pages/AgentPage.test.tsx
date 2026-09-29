@@ -420,3 +420,29 @@ describe('坐席台已读回执', () => {
         expect(await screen.findByTestId('read-mark-77')).toBeInTheDocument();
     });
 });
+
+/**
+ * 工作台里 AI 回复与坐席自己的消息同在右侧：只有 AI 回复渲染 Markdown，坐席消息保持纯文本
+ * （坐席打字时可能用到 `*`，被当成格式吃掉反而是错的）。
+ */
+describe('坐席台消息 Markdown', () => {
+    it('AI 回复渲染 Markdown，坐席与访客消息保持原文', async () => {
+        stubVisibility('visible');
+        stubs.getMySessions.mockResolvedValue(ok([mySession('s1', 0)]));
+        stubs.getSessionMessages.mockResolvedValue(ok({
+            messages: [
+                { id: 51, role: 'USER', content: '我要**退货**', createdAt: '2026-09-29T10:00:00' },
+                { id: 52, role: 'ASSISTANT', content: '流程：**先申请**', createdAt: '2026-09-29T10:00:05' },
+                { id: 53, role: 'AGENT', content: '单价 3*4 元，**请确认**', createdAt: '2026-09-29T10:01:00' },
+            ],
+            visitorReadUpToMessageId: null,
+        }));
+
+        render(<AgentPage />);
+        fireEvent.click(await screen.findByTestId('my-session-s1'));
+
+        expect((await screen.findByText('先申请')).tagName).toBe('STRONG');
+        expect(screen.getByText('单价 3*4 元，**请确认**')).toBeInTheDocument();
+        expect(screen.getByText('我要**退货**')).toBeInTheDocument();
+    });
+});
