@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mountUi } from './ui';
 import { restoreHistory } from './core/history';
-import type { WidgetBrand } from './api';
+import type { WidgetBrand, UiNode } from './api';
 
 const brand: WidgetBrand = { appName: '客服', welcomeMessage: '', avatar: '', themeColor: '#6366f1' };
 
@@ -311,6 +311,64 @@ describe('beginBotMessage 流式渲染', () => {
       .querySelector('.qy-msg.bot .qy-text')!;
     expect(container.children.length).toBe(1);
     expect(container.textContent).toBe('你好');
+  });
+});
+
+/**
+ * AI 回复渲染 Markdown（markdown.ts）的接入点。此前全部 textContent，`**加粗**` 原样显示给访客。
+ * 真人坐席与访客自己的消息保持纯文本：坐席打字时可能用到 `*`，被当成格式吃掉反而是错的。
+ */
+describe('Markdown 接入', () => {
+  const shadow = () => document.querySelector('div')!.shadowRoot!;
+
+  /** 增量把标记拆开是流式的常态；逐段 textContent 追加的实现下这条必然失败 */
+  it('流式：标记被拆在两次增量里也能渲染成加粗', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const bot = ui.beginBotMessage();
+    bot.appendText('运费**满 9');
+    bot.appendText('9 包邮**。');
+    bot.finish();
+
+    const strong = shadow().querySelector('.qy-msg.bot strong');
+    expect(strong?.textContent).toBe('满 99 包邮');
+    expect(shadow().querySelector('.qy-msg.bot .qy-text')!.textContent).toBe('运费满 99 包邮。');
+  });
+
+  it('流式：卡片之后的文本另起一块，不和卡片前的原文拼在一起重渲染', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    const bot = ui.beginBotMessage();
+    bot.appendText('**前');
+    bot.appendCard({ type: 'text', props: { text: '卡片' } } as UiNode);
+    bot.appendText('后**');
+    bot.finish();
+
+    // 两块各自渲染：未闭合的 ** 原样保留，而不是跨过卡片配成一对加粗
+    expect(shadow().querySelector('.qy-msg.bot strong')).toBeNull();
+    // 只数 Markdown 文本块：卡片渲染器给 text 节点也挂了 qy-node-text，按它数会把卡片算进去
+    expect(shadow().querySelectorAll('.qy-msg.bot .qy-node-text.qy-md')).toHaveLength(2);
+  });
+
+  it('非流式 AI 回复与卡片消息里的文字片段都渲染 Markdown', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addBotMessage('请提供**订单号**');
+    ui.addBotMessage('', undefined, [
+      { kind: 'text', text: '- 第一项\n- 第二项' },
+      { kind: 'ui', node: { type: 'text', props: { text: '卡' } } as UiNode },
+    ]);
+
+    const bots = shadow().querySelectorAll('.qy-msg.bot');
+    expect(bots[0].querySelector('strong')!.textContent).toBe('订单号');
+    expect(bots[1].querySelectorAll('li')).toHaveLength(2);
+  });
+
+  it('坐席消息与访客消息保持纯文本', () => {
+    const ui = mountUi(brand, { onSend: () => {}, onHandover: () => {} });
+    ui.addAgentMessage('单价 3*4 元，**请确认**');
+    ui.addUserMessage('我要**退货**');
+
+    expect(shadow().querySelector('strong')).toBeNull();
+    expect(shadow().querySelector('.qy-msgs')!.textContent).toContain('**请确认**');
+    expect(shadow().querySelector('.qy-msgs')!.textContent).toContain('我要**退货**');
   });
 });
 

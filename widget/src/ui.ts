@@ -1,6 +1,7 @@
 import { buildStyles } from './styles';
 import { BUBBLE_LOGO_SVG } from './logo';
 import { renderNode, safeUrl } from './render';
+import { renderMarkdown } from './markdown';
 import type { WidgetBrand, UiPart, UiNode } from './api';
 import { renderAttachments, type WidgetAttachment, type ResolveAttachmentUrl } from './attachments';
 
@@ -221,12 +222,17 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   textarea.addEventListener('input', () => handlers.onTyping?.());
   handoverBtn.addEventListener('click', () => handlers.onHandover());
 
-  function appendMsg(text: string, who: 'user' | 'bot'): HTMLDivElement {
+  /**
+   * @param markdown 只给 AI 回复与欢迎语开：访客自己的消息、真人坐席的消息保持纯文本——
+   *                 坐席打字时可能用到 `*`，被当成格式吃掉反而是错的
+   */
+  function appendMsg(text: string, who: 'user' | 'bot', markdown = false): HTMLDivElement {
     const row = document.createElement('div');
     row.className = `qy-msg ${who}`;
     const bubbleEl = document.createElement('div');
-    bubbleEl.className = 'qy-text';
-    bubbleEl.textContent = text;
+    bubbleEl.className = markdown ? 'qy-text qy-md' : 'qy-text';
+    if (markdown) bubbleEl.appendChild(renderMarkdown(text));
+    else bubbleEl.textContent = text;
     row.appendChild(bubbleEl);
     msgs.appendChild(row);
     msgs.scrollTop = msgs.scrollHeight;
@@ -254,8 +260,8 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
         const str = part.text ?? '';
         if (str) {
           const t = document.createElement('div');
-          t.className = 'qy-node-text';
-          t.textContent = str;
+          t.className = 'qy-node-text qy-md';
+          t.appendChild(renderMarkdown(str));
           container.appendChild(t);
         }
       } else if (part.kind === 'ui' && part.node) {
@@ -299,7 +305,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
 
   /**
    * 开始一条流式 AI 消息，返回增量渲染句柄。
-   * 文本全程 textContent（绝不 innerHTML）；卡片复用 renderNode（内含 safeUrl 白名单与结构守卫）。
+   * 文本经 renderMarkdown 建 DOM（不解析 HTML，文字一律 textContent，链接过 safeUrl）；卡片复用 renderNode（内含 safeUrl 白名单与结构守卫）。
    */
   function beginBotMessage(): StreamingBotMessage {
     const row = document.createElement('div');
@@ -312,6 +318,8 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
 
     // 当前文本块；插入卡片后置空，使卡片之后的文本另起一块（与后端 uiParts 的分块语义一致）
     let textEl: HTMLDivElement | null = null;
+    // 当前文本块的累积原文：Markdown 标记可能被拆在两次增量里（如 `**加` + `粗**`），只能每次按全文整体重渲染
+    let textBuf = '';
     const onAction = handlers.onAction ?? handlers.onSend;
 
     return {
@@ -319,16 +327,19 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
         if (!text) return;
         if (!textEl) {
           textEl = document.createElement('div');
-          textEl.className = 'qy-node-text';
+          textEl.className = 'qy-node-text qy-md';
           container.appendChild(textEl);
+          textBuf = '';
         }
-        textEl.textContent = (textEl.textContent ?? '') + text;
+        textBuf += text;
+        textEl.replaceChildren(renderMarkdown(textBuf));
         msgs.scrollTop = msgs.scrollHeight;
       },
       appendCard(node: UiNode) {
         const el = renderNode(node, onAction);
         if (el) container.appendChild(el);
         textEl = null;
+        textBuf = '';
         msgs.scrollTop = msgs.scrollHeight;
       },
       finish(feedback?: BotFeedback) {
@@ -372,7 +383,7 @@ export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
   }
   function addBotMessage(text: string, feedback?: BotFeedback, uiParts?: UiPart[], attachments?: WidgetAttachment[]) {
     const hasUi = Array.isArray(uiParts) && uiParts.some((p) => p.kind === 'ui' && p.node);
-    const row = hasUi ? appendUiMsg(uiParts!) : appendMsg(text, 'bot');
+    const row = hasUi ? appendUiMsg(uiParts!) : appendMsg(text, 'bot', true);
     appendAttachmentsIfAny(row, attachments);
     if (feedback) attachFeedback(row, feedback);
   }
