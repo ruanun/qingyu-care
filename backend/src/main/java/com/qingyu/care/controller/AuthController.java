@@ -6,9 +6,11 @@ import com.qingyu.care.dto.LoginRequest;
 import com.qingyu.care.dto.LoginResponse;
 import com.qingyu.care.dto.RegisterRequest;
 import com.qingyu.care.entity.User;
+import com.qingyu.care.enums.CaptchaMode;
 import com.qingyu.care.exception.BadCredentialsException;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.LoginThrottleService;
+import com.qingyu.care.service.captcha.CaptchaService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class AuthController {
     
     private final AuthService authService;
     private final LoginThrottleService loginThrottleService;
+    private final CaptchaService captchaService;
     
     /**
      * 用户登录
@@ -50,17 +53,32 @@ public class AuthController {
      */
     @PostMapping("/register")
     public ApiResponse<LoginResponse> register(@Validated @RequestBody RegisterRequest request, HttpServletRequest http) {
-        loginThrottleService.checkRegisterIp(OpenApiAuthInterceptor.resolveClientIp(http));
-        LoginResponse response = authService.register(request);
+        String clientIp = OpenApiAuthInterceptor.resolveClientIp(http);
+        loginThrottleService.checkRegisterIp(clientIp);
+        LoginResponse response = authService.register(request, clientIp);
         return ApiResponse.success("注册成功", response);
     }
     
     /**
-     * 登录页需要的公开配置（免登录）：目前只有「是否开放自助注册」，决定登录页显不显示注册入口。
+     * 登录页需要的公开配置（免登录）：是否开放自助注册（决定显不显示注册入口）、注册用哪种人机验证。
+     * Turnstile 的 site key 本就是要下发给浏览器的公开值；secret key 绝不出现在这里。
      */
     @GetMapping("/config")
     public ApiResponse<Map<String, Object>> publicConfig() {
-        return ApiResponse.success(Map.of("selfRegisterEnabled", authService.isSelfRegisterEnabled()));
+        CaptchaMode mode = captchaService.currentMode();
+        return ApiResponse.success(Map.of(
+                "selfRegisterEnabled", authService.isSelfRegisterEnabled(),
+                "captchaMode", mode.name(),
+                "turnstileSiteKey", mode == CaptchaMode.TURNSTILE ? captchaService.turnstileSiteKey() : ""));
+    }
+
+    /**
+     * 取一张图形验证码（免登录）。按 IP 限流：出图要占 CPU、还要写 Redis。
+     */
+    @GetMapping("/captcha")
+    public ApiResponse<CaptchaService.ImageCaptcha> captcha(HttpServletRequest http) {
+        loginThrottleService.checkCaptchaIp(OpenApiAuthInterceptor.resolveClientIp(http));
+        return ApiResponse.success(captchaService.generateImage());
     }
 
     /**

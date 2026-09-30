@@ -32,6 +32,7 @@ qingyu:
       # 按用户名锁定保持开启（各 IT 用户名互不相同），IP 限流由 LoginThrottleServiceTest 单测覆盖
       login-ip-limit-per-minute: 0
       register-ip-limit-per-minute: 0
+      captcha-ip-limit-per-minute: 0
     webhook:
       # IT 的 Webhook 接收端起在 127.0.0.1，放开私网目标（钉 IP 与禁重定向不受影响）
       allow-private-targets: true

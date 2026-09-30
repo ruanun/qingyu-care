@@ -57,6 +57,7 @@ public class SaTokenConfig implements WebMvcConfigurer {
                             "/v1/auth/login",
                             "/v1/auth/register",
                             "/v1/auth/config",   // 登录页据此决定是否显示注册入口，未登录也要能读
+                            "/v1/auth/captcha",  // 注册页的图形验证码，未登录才用得上
                             "/v3/api-docs/**",
                             "/swagger-ui/**",
                             "/swagger-ui.html",

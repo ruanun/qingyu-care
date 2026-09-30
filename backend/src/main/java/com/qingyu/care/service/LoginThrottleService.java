@@ -46,6 +46,10 @@ public class LoginThrottleService {
     @Value("${qingyu.care.auth.register-ip-limit-per-minute:5}")
     private int registerIpLimit;
 
+    /** 每个 IP 每分钟最多获取图形验证码的次数；0 = 关闭 */
+    @Value("${qingyu.care.auth.captcha-ip-limit-per-minute:30}")
+    private int captchaIpLimit;
+
     /** 同一用户名连续失败多少次后锁定；0 = 关闭 */
     @Value("${qingyu.care.auth.login-max-failures:5}")
     private int maxFailures;
@@ -64,6 +68,10 @@ public class LoginThrottleService {
 
     public void checkRegisterIp(String clientIp) {
         checkIp("auth-register:", clientIp, registerIpLimit);
+    }
+
+    public void checkCaptchaIp(String clientIp) {
+        checkIp("auth-captcha:", clientIp, captchaIpLimit);
     }
 
     private void checkIp(String prefix, String clientIp, int limit) {

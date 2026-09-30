@@ -12,12 +12,22 @@ export interface PlatformOverview {
   todaySessionCount: number;
 }
 
+export interface TurnstileTestResult {
+  success: boolean;
+  errorCodes: string[];
+  /** 令牌签发时所在页面的主机名，通过时才有 */
+  hostname: string | null;
+}
+
 export const platformService = {
   // 平台配置
   getPlatformConfig: (): Promise<ApiResponse<Record<string, string>>> =>
     api.get('/platform/config'),
   updatePlatformConfig: (values: Record<string, string>): Promise<ApiResponse<void>> =>
     api.put('/platform/config', values),
+  // 用表单当前的 secret（留空用已保存的）向 Cloudflare 校验一枚真实 Turnstile 令牌
+  testTurnstile: (data: { token: string; secretKey?: string }): Promise<ApiResponse<TurnstileTestResult>> =>
+    api.post('/platform/config/turnstile/test', data),
 
   // 共享模型池
   listSharedModels: (): Promise<ApiResponse<AiModelConfig[]>> =>

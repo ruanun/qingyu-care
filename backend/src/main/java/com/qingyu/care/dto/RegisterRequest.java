@@ -33,4 +33,13 @@ public class RegisterRequest {
      * 租户名称 (创建新租户时使用)
      */
     private String tenantName;
+
+    /** 图形验证码 id（平台启用图形验证码时必填，取自 {@code GET /v1/auth/captcha}） */
+    private String captchaId;
+
+    /** 用户输入的图形验证码 */
+    private String captchaCode;
+
+    /** Cloudflare Turnstile 令牌（平台启用 Turnstile 时必填） */
+    private String turnstileToken;
 }
