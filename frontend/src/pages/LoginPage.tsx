@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, User, Lock, Building2, Loader2, Sparkles } from 'lucide-react';
+import { LogIn, User, Lock, Building2, Loader2, Sparkles, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Logo from '@/components/Logo';
+import TurnstileWidget from '@/components/TurnstileWidget';
 import { authService } from '@/api/auth';
+import type { CaptchaMode, ImageCaptcha } from '@/api/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/hooks/use-toast';
 import { getErrorMessage } from '@/lib/apiResult';
@@ -20,11 +22,46 @@ const LoginPage: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     // 是否开放自助注册由后端决定（生产默认关闭）。未拿到结果前按关闭处理：接口出错时也不能把注册入口露出来
     const [selfRegister, setSelfRegister] = useState(false);
+    const [captchaMode, setCaptchaMode] = useState<CaptchaMode>('NONE');
+    const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
     useEffect(() => {
         authService.getPublicConfig()
-            .then((res) => setSelfRegister(res.code === 200 && res.data?.selfRegisterEnabled === true))
+            .then((res) => {
+                const enabled = res.code === 200 && res.data?.selfRegisterEnabled === true;
+                setSelfRegister(enabled);
+                if (enabled) {
+                    setCaptchaMode(res.data.captchaMode ?? 'NONE');
+                    setTurnstileSiteKey(res.data.turnstileSiteKey ?? '');
+                }
+            })
             .catch(() => setSelfRegister(false));
     }, []);
+
+    const [tab, setTab] = useState('login');
+    // 图形验证码：切到注册页才取第一张（只登录的人不必白占一个），提交失败后换一张——答案取出即作废
+    const [captcha, setCaptcha] = useState<ImageCaptcha | null>(null);
+    const [captchaCode, setCaptchaCode] = useState('');
+    const loadCaptcha = async () => {
+        setCaptchaCode('');
+        try {
+            const res = await authService.getCaptcha();
+            if (res.code !== 200) throw new Error(res.message);
+            setCaptcha(res.data);
+        } catch (error: unknown) {
+            setCaptcha(null);
+            toast({ variant: 'destructive', title: '验证码加载失败', description: getErrorMessage(error) });
+        }
+    };
+    // Turnstile 令牌同样一次性：提交失败后递增 resetSignal 让组件重新出题
+    const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+    const [turnstileReset, setTurnstileReset] = useState(0);
+
+    const handleTabChange = (value: string) => {
+        setTab(value);
+        if (value === 'register' && captchaMode === 'IMAGE' && !captcha) {
+            void loadCaptcha();
+        }
+    };
     // 回显上次的选择；不勾则登录态只存 sessionStorage，关掉标签页即需重新登录
     const [remember, setRemember] = useState(isRememberMe);
 
@@ -74,11 +111,25 @@ const LoginPage: React.FC = () => {
             toast({ variant: 'destructive', title: '请填写用户名和密码' });
             return;
         }
+        if (captchaMode === 'IMAGE' && (!captcha || !captchaCode.trim())) {
+            toast({ variant: 'destructive', title: '请输入验证码' });
+            return;
+        }
+        if (captchaMode === 'TURNSTILE' && !turnstileToken) {
+            toast({ variant: 'destructive', title: '请先完成人机验证' });
+            return;
+        }
 
         setIsLoading(true);
+        let succeeded = false;
         try {
-            const res = await authService.register(registerForm);
+            const res = await authService.register({
+                ...registerForm,
+                ...(captchaMode === 'IMAGE' ? { captchaId: captcha?.captchaId, captchaCode: captchaCode.trim() } : {}),
+                ...(captchaMode === 'TURNSTILE' ? { turnstileToken: turnstileToken ?? undefined } : {}),
+            });
             if (res.code === 200 && res.data) {
+                succeeded = true;
                 setAuth(res.data);
                 toast({ title: '注册成功', description: '欢迎使用轻语 AI' });
                 navigate('/');
@@ -88,6 +139,11 @@ const LoginPage: React.FC = () => {
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '注册失败', description: getErrorMessage(error) });
         } finally {
+            // 不论失败在哪一步，这次的验证码/令牌都可能已被服务端消耗，换新的才能再提交
+            if (!succeeded) {
+                if (captchaMode === 'IMAGE') void loadCaptcha();
+                if (captchaMode === 'TURNSTILE') setTurnstileReset((n) => n + 1);
+            }
             setIsLoading(false);
         }
     };
@@ -143,7 +199,7 @@ const LoginPage: React.FC = () => {
                         <p className="text-slate-500 font-medium">请登录您的账号以继续</p>
                     </div>
 
-                    <Tabs defaultValue="login" className="w-full">
+                    <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
                         {selfRegister && (
                         <TabsList className="grid w-full grid-cols-2 h-12 p-1 bg-slate-100 rounded-xl mb-8">
                             <TabsTrigger value="login" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-xs text-slate-600">
@@ -255,6 +311,32 @@ const LoginPage: React.FC = () => {
                                         />
                                     </div>
                                 </div>
+                                {captchaMode === 'IMAGE' && (
+                                    <div className="flex gap-3">
+                                        <div className="relative group flex-1">
+                                            <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400 group-focus-within:text-primary" />
+                                            <Input
+                                                placeholder="验证码"
+                                                autoComplete="off"
+                                                maxLength={8}
+                                                className="h-12 pl-12 bg-slate-50 border-slate-200 rounded-xl"
+                                                value={captchaCode}
+                                                onChange={(e) => setCaptchaCode(e.target.value)}
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            title="看不清？换一张"
+                                            className="h-12 w-[120px] shrink-0 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden text-xs text-slate-400"
+                                            onClick={() => void loadCaptcha()}
+                                        >
+                                            {captcha ? <img src={captcha.image} alt="验证码" className="h-full w-full object-cover" /> : '点击获取'}
+                                        </button>
+                                    </div>
+                                )}
+                                {captchaMode === 'TURNSTILE' && turnstileSiteKey && (
+                                    <TurnstileWidget siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetSignal={turnstileReset} />
+                                )}
                                 <Button type="submit" className="w-full h-12 rounded-xl text-lg font-bold mt-4" disabled={isLoading}>
                                     {isLoading ? (
                                         <Loader2 className="w-5 h-5 mr-3 animate-spin" />

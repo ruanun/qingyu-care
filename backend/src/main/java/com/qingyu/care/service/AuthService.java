@@ -19,12 +19,13 @@ import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.exception.ResourceNotFoundException;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
-import com.qingyu.care.service.AuditLogService;
+import com.qingyu.care.service.captcha.CaptchaService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import jakarta.annotation.PostConstruct;
 import java.security.SecureRandom;
@@ -43,6 +44,8 @@ public class AuthService {
     private final TenantRepository tenantRepository;
     private final ConfigService configService;
     private final AuditLogService auditLogService;
+    private final CaptchaService captchaService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 平台管理员初始口令（{@code QINGYU_ADMIN_INITIAL_PASSWORD}）。为空则首启时生成随机口令、
@@ -161,15 +164,6 @@ public class AuthService {
     }
     
     /**
-     * 用户注册 (同时创建租户)
-     *
-     * <p>⚠️ 自助注册<b>只能建新租户</b>。此前带 {@code tenantCode} 即可加入已有租户且身份是
-     * {@code TENANT_ADMIN}——租户 code 不是秘密（平台管理员自己填的、演示租户的写在 README 里），
-     * 等于任何人都能自封任意租户的管理员（安全审查 H2，2026-09-03）。加入已有租户只能由该租户
-     * 管理员在「成员管理」里创建账号。
-     */
-    @Transactional
-    /**
      * 自助注册是否开放：平台配置中心的 {@code platform.registration.enabled} 优先（平台管理员在后台可切换），
      * 库里没配时取部署配置 {@code qingyu.care.auth.self-register-enabled}——基线 false，dev/test 为 true。
      * 此前库里没配时默认开启：任何人都能无限开租户（2026-09-25 安全扫描 M2）。
@@ -178,10 +172,25 @@ public class AuthService {
         return configService.getBoolean(OwnerScope.PLATFORM, null, "platform.registration.enabled", selfRegisterDefault);
     }
 
-    public LoginResponse register(RegisterRequest request) {
+    /**
+     * 用户注册 (同时创建租户)
+     *
+     * <p>⚠️ 自助注册<b>只能建新租户</b>。此前带 {@code tenantCode} 即可加入已有租户且身份是
+     * {@code TENANT_ADMIN}——租户 code 不是秘密（平台管理员自己填的、演示租户的写在 README 里），
+     * 等于任何人都能自封任意租户的管理员（安全审查 H2，2026-09-03）。加入已有租户只能由该租户
+     * 管理员在「成员管理」里创建账号。
+     *
+     * <p>事务只包「建租户 + 建用户」，用 {@link TransactionTemplate} 而非方法级 {@code @Transactional}：
+     * 验证码校验在 Turnstile 模式下要同步请求 Cloudflare（最坏 5s 连接 + 8s 读），包进事务就得一直占着一个数据库连接——
+     * Cloudflare 一慢，分散 IP 的注册请求就能把连接池占满，把「只影响注册」的 fail-closed 放大成全站不可用。
+     * （此前 {@code @Transactional} 错放在 {@link #isSelfRegisterEnabled()} 上，建租户与建用户并不在同一事务里。）
+     */
+    public LoginResponse register(RegisterRequest request, String clientIp) {
         if (!isSelfRegisterEnabled()) {
             throw new BusinessException(403, "平台已关闭自助注册，请联系管理员");
         }
+        // 验证码必须在查重名之前：否则不过验证码也能拿「用户名已存在」逐个探测账号
+        captchaService.verify(request.getCaptchaId(), request.getCaptchaCode(), request.getTurnstileToken(), clientIp);
         if (request.getTenantCode() != null && !request.getTenantCode().isBlank()) {
             throw new BusinessException(403,
                     "自助注册只能创建新租户；加入已有租户请联系该租户管理员在「成员管理」中为你创建账号");
@@ -190,34 +199,37 @@ public class AuthService {
         if (userRepository.existsByUsernameAcrossTenants(request.getUsername())) {
             throw new InvalidOperationException("用户名已存在");
         }
-        
-        // 创建新租户
+
         String tenantCode = "T" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-        Tenant tenant = tenantRepository.save(Tenant.builder()
-                .name(request.getTenantName() != null ? request.getTenantName() : request.getUsername() + "的企业")
-                .code(tenantCode)
-                .status(TenantStatus.ACTIVE)
-                .plan(resolveDefaultPlan())
-                .contactName(request.getNickname())
-                .contactEmail(request.getEmail())
-                .contactPhone(request.getPhone())
-                .build());
-        log.info("New tenant created: {} ({})", tenant.getName(), tenant.getCode());
-        
-        // 创建用户
-        User user = User.builder()
-                .username(request.getUsername())
-                .password(BCrypt.hashpw(request.getPassword()))
-                .nickname(request.getNickname())
-                .email(request.getEmail())
-                .phone(request.getPhone())
-                .tenant(tenant)
-                .role(UserRole.TENANT_ADMIN) // 注册用户默认为租户管理员
-                .enabled(true)
-                .build();
-        user = userRepository.save(user);
-        
-        log.info("User {} registered successfully", user.getUsername());
+        TenantPlan plan = resolveDefaultPlan();
+        // BCrypt 是刻意的慢计算，同样放在事务外
+        String passwordHash = BCrypt.hashpw(request.getPassword());
+        transactionTemplate.executeWithoutResult(status -> {
+            // 创建新租户
+            Tenant tenant = tenantRepository.save(Tenant.builder()
+                    .name(request.getTenantName() != null ? request.getTenantName() : request.getUsername() + "的企业")
+                    .code(tenantCode)
+                    .status(TenantStatus.ACTIVE)
+                    .plan(plan)
+                    .contactName(request.getNickname())
+                    .contactEmail(request.getEmail())
+                    .contactPhone(request.getPhone())
+                    .build());
+            log.info("New tenant created: {} ({})", tenant.getName(), tenant.getCode());
+
+            // 创建用户
+            User user = userRepository.save(User.builder()
+                    .username(request.getUsername())
+                    .password(passwordHash)
+                    .nickname(request.getNickname())
+                    .email(request.getEmail())
+                    .phone(request.getPhone())
+                    .tenant(tenant)
+                    .role(UserRole.TENANT_ADMIN) // 注册用户默认为租户管理员
+                    .enabled(true)
+                    .build());
+            log.info("User {} registered successfully", user.getUsername());
+        });
         
         // 自动登录
         LoginRequest loginRequest = new LoginRequest();

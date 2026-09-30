@@ -52,7 +52,7 @@ readonly RULES=(
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::MANUAL::## 改动工具商店 / 能力包链路后必须手工验证'
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::SUBSYS::## 工具商店（能力包，`service/pkg/` + `dto/pkg/`）'
   # 安全基线：鉴权 / 守卫 / 五条出站路径 / 上传 / CORS / 异常处理 / 限流额度
-  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
+  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|Captcha|Turnstile|PlatformConfigController|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
 )
 
 resolve_file() {

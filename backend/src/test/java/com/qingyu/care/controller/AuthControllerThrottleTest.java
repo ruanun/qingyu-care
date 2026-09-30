@@ -7,6 +7,7 @@ import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.LoginThrottleService;
+import com.qingyu.care.service.captcha.CaptchaService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
@@ -33,6 +34,7 @@ class AuthControllerThrottleTest {
 
     @Mock AuthService authService;
     @Mock LoginThrottleService throttle;
+    @Mock CaptchaService captchaService;
     @InjectMocks AuthController controller;
 
     private static LoginRequest req() {
@@ -88,5 +90,27 @@ class AuthControllerThrottleTest {
         order.verify(throttle).checkLoginIp("203.0.113.7");
         order.verify(throttle).assertNotLocked("alice");
         verify(authService, never()).login(any());
+    }
+
+    /** 出图端点免登录、要占 CPU 与 Redis：先限流，超限时根本不出图 */
+    @Test
+    void 取图形验证码先按IP限流_超限不出图() {
+        doThrow(new BusinessException(429, "操作过于频繁")).when(throttle).checkCaptchaIp("203.0.113.7");
+
+        assertThatThrownBy(() -> controller.captcha(http())).hasMessage("操作过于频繁");
+
+        verify(captchaService, never()).generateImage();
+    }
+
+    @Test
+    void 注册把客户端IP一路传给校验() {
+        com.qingyu.care.dto.RegisterRequest r = new com.qingyu.care.dto.RegisterRequest();
+        when(authService.register(r, "203.0.113.7")).thenReturn(LoginResponse.builder().token("t").build());
+
+        controller.register(r, http());
+
+        InOrder order = inOrder(throttle, authService);
+        order.verify(throttle).checkRegisterIp("203.0.113.7");
+        order.verify(authService).register(r, "203.0.113.7");
     }
 }

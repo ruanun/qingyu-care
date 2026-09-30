@@ -147,6 +147,7 @@ qingyu:
       # 0 表示关闭该项。Redis 不可用时 fail-open。
       login-ip-limit-per-minute: 20
       register-ip-limit-per-minute: 5
+      captcha-ip-limit-per-minute: 30   # 注册页图形验证码的出图频率
       login-max-failures: 5
       login-lock-minutes: 15
     mcp:
