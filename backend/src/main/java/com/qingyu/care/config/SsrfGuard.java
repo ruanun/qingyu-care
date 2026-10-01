@@ -79,13 +79,26 @@ public final class SsrfGuard {
      * 没有任何正当用途，任何开关都不该放行它。
      */
     public static void assertAllowedHttpUrlAllowingPrivate(String url) {
+        resolveAllowingPrivate(url);
+    }
+
+    /**
+     * 放开私网时的「解析 + 校验」，返回<b>校验过的那一份</b>地址供连接期钉住。
+     *
+     * <p>⚠️ 出站方必须拿这个返回值去钉 IP，不能先调 {@link #assertAllowedHttpUrlAllowingPrivate} 再自己解析一次：
+     * TTL=0 的域名第一次解析给普通私网、第二次给 169.254.169.254，被钉住的就是元数据地址——「永不放行云元数据」
+     * 这半条在开关打开时就被绕过了（2026-09-30 安全审查，Webhook 与 MCP 曾是这个两次解析的写法）。
+     */
+    public static InetAddress[] resolveAllowingPrivate(String url) {
         URI uri = requireHttpUrl(url);
         try {
-            for (InetAddress addr : InetAddress.getAllByName(uri.getHost())) {
+            InetAddress[] addrs = InetAddress.getAllByName(uri.getHost());
+            for (InetAddress addr : addrs) {
                 if (isCloudMetadata(addr)) {
                     throw new IllegalArgumentException("URL 指向云元数据地址，已拒绝: " + uri.getHost());
                 }
             }
+            return addrs;
         } catch (UnknownHostException e) {
             throw new IllegalArgumentException("URL 主机无法解析: " + uri.getHost(), e);
         }
@@ -164,6 +177,22 @@ public final class SsrfGuard {
             if ((bytes[0] & 0xfe) == 0xfc) {
                 return true;
             }
+            // 以下三段 2026-09-30 安全审查补：Java 的 isLoopback / isSiteLocal 都不认它们内嵌的 IPv4
+            // ::a.b.c.d IPv4 兼容地址（已废弃但仍可解析出来）：前 96 位全零，尾 32 位是 IPv4
+            if (allZero(bytes, 0, 12)) {
+                byte[] v4 = {bytes[12], bytes[13], bytes[14], bytes[15]};
+                return isBlockedIpv4(v4) || isPrivateOrSpecialIpv4(v4);
+            }
+            // 64:ff9b:1::/48 本地使用的 NAT64 前缀（RFC 8215），只在内网有意义
+            if ((bytes[0] & 0xff) == 0x00 && (bytes[1] & 0xff) == 0x64 && (bytes[2] & 0xff) == 0xff
+                    && (bytes[3] & 0xff) == 0x9b && bytes[4] == 0 && (bytes[5] & 0xff) == 0x01) {
+                return true;
+            }
+            // 2002::/16 6to4：第 2~5 字节是内嵌的 IPv4
+            if ((bytes[0] & 0xff) == 0x20 && (bytes[1] & 0xff) == 0x02) {
+                byte[] v4 = {bytes[2], bytes[3], bytes[4], bytes[5]};
+                return isBlockedIpv4(v4) || isPrivateOrSpecialIpv4(v4);
+            }
             // 64:ff9b::/96 NAT64：前 96 位固定，尾 32 位是 IPv4
             if ((bytes[0] & 0xff) == 0x00 && (bytes[1] & 0xff) == 0x64
                     && (bytes[2] & 0xff) == 0xff && (bytes[3] & 0xff) == 0x9b) {
@@ -183,9 +212,26 @@ public final class SsrfGuard {
         return false;
     }
 
+    private static boolean allZero(byte[] b, int from, int to) {
+        for (int i = from; i < to; i++) {
+            if (b[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isBlockedIpv4(byte[] b) {
         int b0 = b[0] & 0xff;
         int b1 = b[1] & 0xff;
+        // 0.0.0.0/8：isAnyLocal 只认精确的 0.0.0.0，0.x.x.x 在部分系统上同样指向本机（2026-09-30 安全审查补）
+        if (b0 == 0) {
+            return true;
+        }
+        // 168.63.129.16：Azure 宿主内部服务（WireServer），公网段但只在宿主上可达
+        if (b0 == 168 && b1 == 63 && (b[2] & 0xff) == 129 && (b[3] & 0xff) == 16) {
+            return true;
+        }
         // 100.64.0.0/10：第二字节 0100 00xx
         if (b0 == 100 && (b1 & 0xc0) == 0x40) {
             return true;

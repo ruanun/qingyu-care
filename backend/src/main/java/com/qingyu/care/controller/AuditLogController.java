@@ -48,7 +48,9 @@ public class AuditLogController {
         boolean platformAdmin = SecurityUtil.isPlatformAdmin();
         Long tenantId = platformAdmin ? null : TenantContext.getTenantId();
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        // 夹住分页参数（2026-09-30 安全审查：此前无上限，负数还会让 SQL 报错）
+        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
         PageDTO<SysAuditLog> result = PageDTO.from(
                 auditLogService.query(platformAdmin, tenantId, action, username, pageable));
 

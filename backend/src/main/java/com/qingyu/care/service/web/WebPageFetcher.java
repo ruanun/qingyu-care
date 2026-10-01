@@ -16,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
@@ -42,6 +43,8 @@ import java.util.Set;
 public class WebPageFetcher {
 
     private static final int TIMEOUT_MS = 10_000;
+    /** 单次下载的墙钟总时长上限（单段超时只管「两次读之间」）。 */
+    private static final long TOTAL_DEADLINE_MS = 30_000;
     private static final long MAX_BYTES = 5L * 1024 * 1024;
     private static final Set<String> ALLOWED_TYPES = Set.of("text/html", "text/plain");
 
@@ -127,6 +130,12 @@ public class WebPageFetcher {
      * 包级 static 免容器单测（同本类其余提取方法的惯例）。
      */
     static String extractBySelector(org.jsoup.nodes.Document doc, String selector) {
+        if (usesRegex(selector)) {
+            // 落库时已拦（CrawlSiteRequest 的 @Pattern），这里兜存量值：jsoup 的正则选择器走 JDK 正则、
+            // 没有超时，灾难性回溯会把线程卡死，下面的 catch 对此无能为力（2026-09-30 安全审查 M2）
+            log.warn("正文选择器含正则匹配，已忽略并回退启发式剔噪 selector={}", selector);
+            return "";
+        }
         try {
             org.jsoup.select.Elements matched = doc.select(selector);
             if (matched.isEmpty()) {
@@ -140,6 +149,12 @@ public class WebPageFetcher {
             log.warn("正文选择器语法非法，将回退启发式剔噪 selector={}: {}", selector, e.getMessage());
             return "";
         }
+    }
+
+    /** jsoup 中会编译用户正则的选择器：{@code :matches} / {@code :matchesOwn} / {@code :matchesWholeText} 等与 {@code [attr~=regex]}。 */
+    static boolean usesRegex(String selector) {
+        String s = selector.toLowerCase(java.util.Locale.ROOT);
+        return s.contains(":matches") || s.contains("~=");
     }
 
     /**
@@ -202,19 +217,34 @@ public class WebPageFetcher {
 
     /** 同上，但允许调用方指定 Content-Type 白名单（见 {@link #downloadRaw(String, Set)}）。 */
     static Downloaded exchange(CloseableHttpClient httpClient, String url, Set<String> allowedTypes) {
+        return exchange(httpClient, url, allowedTypes, TOTAL_DEADLINE_MS);
+    }
+
+    /** 同上，总时长可指定——包级可见只为单测缩短等待。 */
+    static Downloaded exchange(CloseableHttpClient httpClient, String url, Set<String> allowedTypes,
+                               long deadlineMs) {
         RestClient client = RestClient.builder()
                 .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
                 .build();
 
-        return client.get().uri(url).exchange((request, response) -> {
-            int status = response.getStatusCode().value();
-            requireSuccessStatus(status);
-            MediaType contentType = response.getHeaders().getContentType();
-            requireAllowedContentType(contentType, allowedTypes);
-            Charset charset = contentType.getCharset();
-            return new Downloaded(readLimited(response.getBody()),
-                    charset == null ? null : charset.name(), status);
-        });
+        // 墙钟总时长上限（2026-09-30 安全审查 H3 同类）：5MB 字节上限挡得住「吐得多」，挡不住「吐得慢」——
+        // 每隔几秒滴 1 字节永远不触发空闲超时，抓取会一直占着长任务线程与全局爬取名额
+        try {
+            return PinnedHttpClientFactory.callWithDeadline(httpClient, deadlineMs,
+                    () -> client.get().uri(url).exchange((request, response) -> {
+                        int status = response.getStatusCode().value();
+                        requireSuccessStatus(status);
+                        MediaType contentType = response.getHeaders().getContentType();
+                        requireAllowedContentType(contentType, allowedTypes);
+                        Charset charset = contentType.getCharset();
+                        return new Downloaded(readLimited(response.getBody()),
+                                charset == null ? null : charset.name(), status);
+                    }));
+        } catch (PinnedHttpClientFactory.DeadlineExceededException e) {
+            throw new BusinessException("网页下载超过 " + deadlineMs / 1000 + " 秒上限");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /**

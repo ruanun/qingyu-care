@@ -1,5 +1,6 @@
 package com.qingyu.care.controller;
 
+import com.qingyu.care.config.ModelEndpointGuardInterceptor;
 import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiModelConfigUpdateRequest;
@@ -128,7 +129,27 @@ public class AiModelController {
             // 一起且这个 catch-all 区分不了（apiKey/baseUrl 填错、对方服务挂了、超时……），
             // 但有一点是确定的——不是本服务内部出错。502「上游没给出有效响应」不预设是谁的错，
             // 比 500 诚实，也让排查的人一眼看出该去查出站而不是查本服务。
-            return ApiResponse.error(502, "连接测试失败: " + e.getMessage());
+            return ApiResponse.error(502, "连接测试失败: " + describeUpstreamFailure(e));
         }
+    }
+
+    /**
+     * 测试连接失败的原因，<b>只给分类、不回显上游原文</b>（2026-09-30 安全审查 M1）：此前直接拼
+     * {@code e.getMessage()}，openai-java 的消息是「状态码: 完整错误 JSON」——租户把 endpoint 指向会重定向 /
+     * rebinding 到内网的服务器时，这里就成了读取内网响应的回显通道，各类失败文案的差异还能用来探测端口。
+     * 守卫拒绝的消息只含主机名，可以原样给。
+     */
+    static String describeUpstreamFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ModelEndpointGuardInterceptor.EndpointRejectedException
+                    || (t instanceof java.net.UnknownHostException && t.getMessage() != null
+                        && t.getMessage().startsWith("模型端点"))) {
+                return t.getMessage();
+            }
+            if (t instanceof com.openai.errors.OpenAIServiceException se) {
+                return "上游返回 HTTP " + se.statusCode() + "（请检查端点地址、模型 ID 与 API Key）";
+            }
+        }
+        return "无法连接上游（" + e.getClass().getSimpleName() + "）";
     }
 }

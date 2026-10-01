@@ -51,6 +51,20 @@ public class ChatAttachmentService {
     @org.springframework.beans.factory.annotation.Value("${qingyu.care.attachment.max-per-session:20}")
     private int maxAttachmentsPerSession = 20;
 
+    /**
+     * 每个应用每天访客最多上传多少个附件 / 多少字节；0 = 不限。
+     *
+     * <p>2026-09-30 安全审查：单会话上限（上面那条）挡不住「不断建新会话」，而访客附件与知识库文档共用租户存储配额——
+     * 匿名访客转人工后（此时发消息不调模型、几乎零成本）循环「上传 20MB → 挂到消息上」，挂上消息的附件不算孤儿、
+     * 不会被 2 小时清理掉，FREE 套餐 1GB 一分钟就能灌满，之后租户管理员连知识库文档都传不了。访客这一路单独封顶，
+     * 坐席上传不受影响。
+     */
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.attachment.visitor-daily-max-count-per-app:200}")
+    private int visitorDailyMaxCount = 200;
+
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.attachment.visitor-daily-max-bytes-per-app:1073741824}")
+    private long visitorDailyMaxBytes = 1024L * 1024 * 1024;
+
     /** 孤儿清理单轮批量上限，避免积压很深时一次性把全部孤儿读进持久化上下文再串行做网络删除 */
     private static final int CLEANUP_BATCH_SIZE = 200;
 
@@ -60,6 +74,26 @@ public class ChatAttachmentService {
     private final AttachmentValidator validator;
     private final com.qingyu.care.service.QuotaService quotaService;
 
+    /** 访客当日上传额度（按应用、按自然日）。并发上传会有少量超出，是软上限，防的是持续灌存储。 */
+    void requireVisitorDailyQuota(long incomingBytes) {
+        if (visitorDailyMaxCount <= 0 && visitorDailyMaxBytes <= 0) {
+            return;
+        }
+        Long appId = com.qingyu.care.config.TenantContext.getAppId();
+        if (appId == null) {
+            return;
+        }
+        java.util.List<Object[]> rows = attachmentRepository.visitorUsageSince(
+                appId, java.time.LocalDate.now().atStartOfDay());
+        Object[] row = rows.isEmpty() ? new Object[]{0L, 0L} : rows.get(0);
+        long count = ((Number) row[0]).longValue();
+        long bytes = ((Number) row[1]).longValue();
+        if ((visitorDailyMaxCount > 0 && count >= visitorDailyMaxCount)
+                || (visitorDailyMaxBytes > 0 && bytes + incomingBytes > visitorDailyMaxBytes)) {
+            throw new BusinessException("今日附件上传已达上限，请明天再试或直接用文字描述");
+        }
+    }
+
     public ChatAttachment upload(String sessionId, MultipartFile file, MessageRole uploaderRole) {
         if (file.getSize() > MAX_UPLOAD_BYTES) {
             throw new BusinessException("文件不能超过 20MB");
@@ -68,6 +102,9 @@ public class ChatAttachmentService {
         long existing = attachmentRepository.countBySessionId(sessionId);
         if (existing >= maxAttachmentsPerSession) {
             throw new BusinessException("该会话的附件数量已达上限（" + maxAttachmentsPerSession + " 个）");
+        }
+        if (uploaderRole == MessageRole.USER) {
+            requireVisitorDailyQuota(file.getSize());
         }
         // 租户级存储配额：单会话上限挡不住「不断建新会话」，总量闸门在这里
         quotaService.requireStorageAvailable(com.qingyu.care.config.TenantContext.getTenantId(), file.getSize());

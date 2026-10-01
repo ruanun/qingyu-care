@@ -78,7 +78,12 @@ public class McpToolCallback implements ToolCallback {
             // fail-soft：抛出会中断整轮对话，同 HttpToolCallback
             log.warn("MCP 工具 {} 调用失败: {}", exposedName(server, tool),
                     com.qingyu.care.service.tool.HttpToolCallback.describeForLog(e));
-            return com.qingyu.care.service.tool.ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
+            // MCP 服务端返回的业务错误（McpError）对模型有用且不含 URL，原样给；底层网络异常的消息带请求地址，
+            // 与 HTTP 工具同口径只给类名（2026-09-30 安全审查）
+            String reason = e instanceof io.modelcontextprotocol.spec.McpError
+                    ? e.getMessage()
+                    : com.qingyu.care.service.tool.HttpToolCallback.describeForModel(e);
+            return com.qingyu.care.service.tool.ToolResultDelimiter.wrap("工具调用失败: " + reason);
         }
     }
 

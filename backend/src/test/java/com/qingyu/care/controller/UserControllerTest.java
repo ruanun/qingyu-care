@@ -1,5 +1,8 @@
 package com.qingyu.care.controller;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.qingyu.care.dto.ChangePasswordRequest;
+import cn.dev33.satoken.secure.BCrypt;
 import cn.dev33.satoken.session.SaSession;
 import cn.dev33.satoken.stp.StpUtil;
 import com.qingyu.care.config.TenantContext;
@@ -52,6 +55,8 @@ class UserControllerTest {
     TenantRepository tenantRepository;
     @Mock
     com.qingyu.care.service.SessionRevocationService sessionRevocationService;
+    @Mock
+    com.qingyu.care.service.LoginThrottleService loginThrottleService;
     @InjectMocks
     UserController controller;
 
@@ -119,12 +124,13 @@ class UserControllerTest {
         when(userRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         TenantContext.setTenantId(2L);
-        TenantContext.setUserId(1L); // 改自己的密码
+        // 管理员重置他人密码：本人改密已改走 /me/password（需验证当前密码，2026-09-30 安全审查 M3）
+        TenantContext.setUserId(99L);
 
         UserUpdateRequest req = new UserUpdateRequest();
         req.setPassword("NewRealPassword123");   // 真实新密码，而非空白
 
-        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
+        try (MockedStatic<StpUtil> ignored = stubRole("TENANT_ADMIN")) {
             ApiResponse<User> resp = controller.updateUser(1L, req);
 
             assertThat(resp.getCode()).isEqualTo(200);
@@ -309,21 +315,86 @@ class UserControllerTest {
         org.mockito.Mockito.verifyNoInteractions(sessionRevocationService);
     }
 
+    /**
+     * 2026-09-30 安全审查 M3：本人改密不能走通用更新端点——那里不验当前密码，偷到 token 就能改密接管账号，
+     * 还会把真正的主人从其他设备踢下线。
+     */
     @Test
-    void 本人改密码只吊销其他设备上的登录态() {
+    void 本人经通用更新端点改密被拒() {
         when(userRepository.findById(1L)).thenReturn(Optional.of(existingUser(2L)));
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         TenantContext.setTenantId(2L);
         TenantContext.setUserId(1L);
         UserUpdateRequest req = new UserUpdateRequest();
         req.setPassword("MyNewPass123");
 
+        ApiResponse<User> resp;
         try (MockedStatic<StpUtil> ignored = stubRole("TENANT_MEMBER")) {
-            controller.updateUser(1L, req);
+            resp = controller.updateUser(1L, req);
         }
 
-        org.mockito.Mockito.verify(sessionRevocationService).revokeOtherSessions(1L, "本人修改密码");
-        org.mockito.Mockito.verify(sessionRevocationService, org.mockito.Mockito.never()).revokeUser(any(), any());
+        assertThat(resp.getCode()).isEqualTo(400);
+        verify(userRepository, never()).save(any());
+        org.mockito.Mockito.verifyNoInteractions(sessionRevocationService);
+    }
+
+    private static ChangePasswordRequest changePwd(String oldPwd, String newPwd) {
+        ChangePasswordRequest r = new ChangePasswordRequest();
+        r.setOldPassword(oldPwd);
+        r.setNewPassword(newPwd);
+        return r;
+    }
+
+    private User selfWithPassword(String plain) {
+        User u = existingUser(2L);
+        u.setUsername("alice");
+        u.setPassword(BCrypt.hashpw(plain));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(u));
+        TenantContext.setTenantId(2L);
+        TenantContext.setUserId(1L);
+        return u;
+    }
+
+    @Test
+    void 当前密码错误时拒绝改密_且计入登录失败() {
+        User u = selfWithPassword("OldPass123");
+        String hashBefore = u.getPassword();
+        when(loginThrottleService.acquireAttempt("alice")).thenReturn(true);
+
+        ApiResponse<Void> resp = controller.changeMyPassword(changePwd("guess", "NewPass456"));
+
+        assertThat(resp.getCode()).isEqualTo(400);
+        assertThat(u.getPassword()).isEqualTo(hashBefore);
+        verify(userRepository, never()).save(any());
+        verify(loginThrottleService).acquireAttempt("alice");
+        verify(loginThrottleService, never()).clearFailures(any());
+        org.mockito.Mockito.verifyNoInteractions(sessionRevocationService);
+    }
+
+    @Test
+    void 当前密码正确时改密_只吊销其他设备() {
+        User u = selfWithPassword("OldPass123");
+        when(loginThrottleService.acquireAttempt("alice")).thenReturn(true);
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ApiResponse<Void> resp = controller.changeMyPassword(changePwd("OldPass123", "NewPass456"));
+
+        assertThat(resp.getCode()).isEqualTo(200);
+        assertThat(BCrypt.checkpw("NewPass456", u.getPassword())).isTrue();
+        verify(loginThrottleService).clearFailures("alice");
+        verify(sessionRevocationService).revokeOtherSessions(1L, "本人修改密码");
+        verify(sessionRevocationService, never()).revokeUser(any(), any());
+    }
+
+    /** 锁定期内（猜错太多次）直接 429，连当前密码都不比对 */
+    @Test
+    void 锁定期内改密直接拒绝() {
+        selfWithPassword("OldPass123");
+        org.mockito.Mockito.doThrow(new com.qingyu.care.exception.BusinessException(429, "锁定"))
+                .when(loginThrottleService).acquireAttempt("alice");
+
+        assertThatThrownBy(() -> controller.changeMyPassword(changePwd("OldPass123", "NewPass456")))
+                .hasMessage("锁定");
+        verify(userRepository, never()).save(any());
     }
 
     @Test

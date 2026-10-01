@@ -1,5 +1,6 @@
 import type { UiNode } from './api';
 import { safeUrl } from './core/safeUrl';
+import { isImageHostAllowed } from './imagePolicy';
 import { executeActionUri } from './actionUri';
 
 // 保持既有导出路径不变（render.test.ts 从 './render' 导入 safeUrl）
@@ -100,7 +101,17 @@ export function renderNode(
     case 'image': {
       const src = safeUrl(p.src ?? p.url);
       if (!src) return null;
+      if (!isImageHostAllowed(src)) {
+        // 不在租户配置的图片域名里：不自动加载，只给一个访客主动点了才打开的链接（安全审查 M7）
+        const link = el('a', 'qy-node-img-link') as HTMLAnchorElement;
+        link.href = src;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = '查看图片' + (str(p.alt) ? `：${str(p.alt)}` : '');
+        return link;
+      }
       const img = el('img', 'qy-node-img') as HTMLImageElement;
+      img.referrerPolicy = 'no-referrer';
       img.src = src;
       img.alt = str(p.alt);
       return img;

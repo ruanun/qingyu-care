@@ -89,6 +89,7 @@ export function buildStyles(themeColor: string): string {
     .qy-badge { display:inline-block; padding:1px 8px; border-radius:9999px; background:#f3f4f6; color:#374151; font-size:12px; }
     .qy-divider { height:1px; background:#e5e7eb; margin:6px 0; }
     .qy-node-img { max-width:100%; border-radius:6px; }
+    .qy-node-img-link { color:${themeColor}; font-size:13px; text-decoration:underline; }
     .qy-card-btn { margin:4px 6px 0 0; padding:4px 10px; border:1px solid ${themeColor}; color:${themeColor}; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
     .qy-card-btn:hover { background:${themeColor}; color:#fff; }
     .qy-card-btn-primary { background:${themeColor}; color:#fff; }

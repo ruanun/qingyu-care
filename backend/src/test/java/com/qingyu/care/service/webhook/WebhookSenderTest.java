@@ -55,7 +55,7 @@ class WebhookSenderTest {
         when(deliveryRepository.claim(1L)).thenReturn(1);
         when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 0)));
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(
-                Application.builder().id(9L).webhookSecret("sec").build()));
+                Application.builder().id(9L).webhookSecret("sec").webhookUrl("https://cb.example.com/hook").build()));
         when(signature.sign(eq("sec"), anyLong(), anyString())).thenReturn("sha256=x");
         when(httpClient.post(any(), any(), any())).thenReturn(200);
 
@@ -72,7 +72,7 @@ class WebhookSenderTest {
         when(deliveryRepository.claim(1L)).thenReturn(1);
         when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 0)));
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(
-                Application.builder().id(9L).webhookSecret("sec").build()));
+                Application.builder().id(9L).webhookSecret("sec").webhookUrl("https://cb.example.com/hook").build()));
         when(httpClient.post(any(), any(), any())).thenReturn(500);
 
         sender.deliverAsync(1L);
@@ -89,7 +89,7 @@ class WebhookSenderTest {
         when(deliveryRepository.claim(1L)).thenReturn(1);
         when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 4))); // 第 5 次失败
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(
-                Application.builder().id(9L).webhookSecret("sec").build()));
+                Application.builder().id(9L).webhookSecret("sec").webhookUrl("https://cb.example.com/hook").build()));
         when(httpClient.post(any(), any(), any())).thenReturn(500);
 
         sender.deliverAsync(1L);
@@ -105,7 +105,7 @@ class WebhookSenderTest {
         when(deliveryRepository.claim(1L)).thenReturn(1);
         when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 0)));
         when(applicationRepository.findById(9L)).thenReturn(Optional.of(
-                Application.builder().id(9L).webhookSecret("sec").build()));
+                Application.builder().id(9L).webhookSecret("sec").webhookUrl("https://cb.example.com/hook").build()));
         when(httpClient.post(any(), any(), any())).thenThrow(new RuntimeException("connect timeout"));
 
         sender.deliverAsync(1L);
@@ -131,5 +131,28 @@ class WebhookSenderTest {
         // 时间戳必须随请求发出，接收方靠它复算签名并拒绝过期投递（安全审查 L6）
         assertThat(headers.getValue()).containsKey("X-Qingyu-Timestamp");
         assertThat(Long.parseLong(headers.getValue().get("X-Qingyu-Timestamp"))).isPositive();
+    }
+
+    /**
+     * 2026-09-30 安全审查：投递行里的目标地址在派发时就定格了。应用删除后取不到密钥会不带签名照发；
+     * 租户改了回调地址后旧地址仍会收到重试。两种情况都直接放弃、一次都不发。
+     */
+    @Test
+    void deliverAsync_abandons_whenAppDeletedOrUrlChanged() {
+        when(deliveryRepository.claim(1L)).thenReturn(1);
+        when(deliveryRepository.findById(1L)).thenReturn(Optional.of(pending(1L, 0)));
+        when(applicationRepository.findById(9L)).thenReturn(Optional.empty());
+        sender.deliverAsync(1L);
+
+        when(deliveryRepository.claim(2L)).thenReturn(1);
+        when(deliveryRepository.findById(2L)).thenReturn(Optional.of(pending(2L, 0)));
+        when(applicationRepository.findById(9L)).thenReturn(Optional.of(
+                Application.builder().id(9L).webhookSecret("sec").webhookUrl("https://new.example.com/hook").build()));
+        sender.deliverAsync(2L);
+
+        verify(httpClient, never()).post(any(), any(), any());
+        ArgumentCaptor<WebhookDelivery> saved = ArgumentCaptor.forClass(WebhookDelivery.class);
+        verify(deliveryRepository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).allMatch(d -> d.getStatus() == WebhookDeliveryStatus.FAILED);
     }
 }

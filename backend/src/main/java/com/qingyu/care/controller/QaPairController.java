@@ -23,6 +23,8 @@ public class QaPairController {
     private final QaPairService qaPairService;
     private final QaGenerationService qaGenerationService;
     private final com.qingyu.care.service.KnowledgeService knowledgeService;
+    private final com.qingyu.care.service.ModelRouterService modelRouterService;
+    private final com.qingyu.care.service.LongTaskTenantLimiter longTaskLimiter;
 
     @GetMapping("/knowledge/{kbId}/qa-pairs")
     public ApiResponse<List<QaPair>> list(@PathVariable Long kbId) {
@@ -65,7 +67,10 @@ public class QaPairController {
     @PostMapping("/qa-pairs/generate")
     public ApiResponse<Void> generate(@RequestParam Long documentId) {
         knowledgeService.getDocument(documentId); // 归属校验（越权抛）
-        qaGenerationService.generateFromDocument(documentId);
+        // 模型列表必须在请求线程解析：异步线程没有租户上下文，现查会取到别的租户的模型
+        var models = modelRouterService.getModelsForScenario("default");
+        // 按租户限并发：长任务池全平台共享（2026-09-30 安全审查 M6）
+        longTaskLimiter.acquire().launch(() -> qaGenerationService.generateFromDocument(documentId, models));
         return ApiResponse.success("已开始生成问答对，稍后在草稿列表复核", null);
     }
 }

@@ -34,8 +34,9 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
 
     @Override
     public List<Document> search(String query, RetrievalScope scope, ChatStrategy strategy) {
-        int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
-        int keywordTopK = strategy.getKeywordTopK() != null ? strategy.getKeywordTopK() : 10;
+        // 租户可填任意值、直接打在全平台共享的 pgvector 与全文索引上，这里夹住（2026-09-30 安全审查）
+        int topK = Math.max(1, Math.min(strategy.getTopK() != null ? strategy.getTopK() : 5, 50));
+        int keywordTopK = Math.max(1, Math.min(strategy.getKeywordTopK() != null ? strategy.getKeywordTopK() : 10, 100));
         int rrfK = strategy.getRrfK() != null ? strategy.getRrfK() : 60;
         // 0.45：与 ChatServiceImpl 的兜底一致（0.7 已被实测标定推翻，见该类注释）。列
         // similarity_threshold 是 nullable=false，这条兜底实际不可达，同样只是避免留一颗

@@ -31,9 +31,15 @@ public class AuditLogAspect {
     private final AuditLogService auditLogService;
     private final UserRepository userRepository;
 
-    /** 脱敏正则：匹配 apiKey/password/secret/appsecret/authHeader 等敏感字段（到下一个逗号、括号或行尾） */
-    private static final Pattern SENSITIVE =
-            Pattern.compile("(?i)(apikey|password|secret|appsecret|authheader)=([^,}\\])]*)");
+    /**
+     * 脱敏正则：键名含 password / secret / apikey / api_key / token / authheader / accesskey 的字段（覆盖
+     * {@code oldPassword}、{@code secretKey}、{@code webhookSecret}、{@code accessToken} 等变体），
+     * 值一直遮到「下一个 {@code , 键名=}」或右括号为止——此前只遮到第一个逗号，{@code password=ab,cd} 会漏出 {@code cd}，
+     * 且 {@code secretKey=}、{@code token=} 这类键名根本不匹配（2026-09-30 安全审查）。
+     */
+    private static final Pattern SENSITIVE = Pattern.compile(
+            "(?i)(\\b[a-z_]*(?:password|secret|apikey|api_key|token|authheader|accesskey)[a-z_]*)="
+            + "(.*?)(?=, ?[A-Za-z_][A-Za-z0-9_]*=|[)}\\]]|$)");
 
     /** 详情最大长度 */
     private static final int MAX_DETAIL = 1000;
@@ -103,8 +109,8 @@ public class AuditLogAspect {
     }
 
     /**
-     * 从 RequestContextHolder 提取客户端 IP，X-Forwarded-For 取<b>最后一段</b>：nginx 是追加模式，
-     * 最后一段才是 nginx 看到的直连地址，第一段可由客户端自填（安全审查 L6，2026-09-03）。
+     * 从 RequestContextHolder 提取客户端 IP，与限流同一口径（{@link OpenApiAuthInterceptor#resolveClientIp}），
+     * 别在这里另行解析转发头——原因见那个方法的注释（2026-09-30 安全审查 H2）。
      */
     private String clientIp() {
         try {
@@ -112,12 +118,7 @@ public class AuditLogAspect {
                     (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs == null) return null;
             var req = attrs.getRequest();
-            String xff = req.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                String[] parts = xff.split(",");
-                return parts[parts.length - 1].trim();
-            }
-            return req.getRemoteAddr();
+            return OpenApiAuthInterceptor.resolveClientIp(req);
         } catch (Exception e) {
             return null;
         }

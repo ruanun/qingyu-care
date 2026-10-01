@@ -137,4 +137,30 @@ class UrlTemplateFillerTest {
 
         assertThat(url).isEqualTo("https://api.example.com/orders/null");
     }
+
+    /**
+     * 2026-09-30 安全审查：/v1/orders/{id} 填 "." 或 "" 会变成集合端点，工具带着服务端凭据，
+     * 可能把「查一个订单」变成「列出全部订单」再交给访客。URLEncoder 不编码点号，只能拦。
+     */
+    @Test
+    void path参数取值为空或点号段时拒绝() {
+        for (String bad : new String[]{"", ".", ".."}) {
+            Map<String, Object> args = new HashMap<>();
+            args.put("id", bad);
+            assertThatThrownBy(() -> UrlTemplateFiller.fill("https://api.shop.com/v1/orders/{id}", args))
+                    .as("取值 [" + bad + "]")
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("id");
+        }
+        Map<String, Object> ok = new HashMap<>();
+        ok.put("id", "...");
+        assertThat(UrlTemplateFiller.fill("https://api.shop.com/v1/orders/{id}", ok)).endsWith("/orders/...");
+    }
+
+    @Test
+    void query参数取值为点号不受影响() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("q", ".");
+        assertThat(UrlTemplateFiller.fill("https://api.shop.com/v1/search?q={q}", args)).endsWith("?q=.");
+    }
 }

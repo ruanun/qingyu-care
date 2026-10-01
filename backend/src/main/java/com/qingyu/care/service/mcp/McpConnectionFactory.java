@@ -71,12 +71,8 @@ public class McpConnectionFactory {
         if (!allowPrivateServers) {
             return SsrfGuard.resolveAndValidate(host);
         }
-        SsrfGuard.assertAllowedHttpUrlAllowingPrivate(url);
-        try {
-            return InetAddress.getAllByName(host);
-        } catch (java.net.UnknownHostException e) {
-            throw new IllegalArgumentException("MCP server 主机无法解析: " + host, e);
-        }
+        // 只解析一次、钉住校验过的那一份：校验完再自己解析会被 TTL=0 的域名翻转到元数据地址（2026-09-30 安全审查）
+        return SsrfGuard.resolveAllowingPrivate(url);
     }
 
     /**

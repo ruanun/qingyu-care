@@ -59,6 +59,7 @@ class ReembedServiceTest {
         ReembedService service = new ReembedService(knowledgeService, qaPairService,
                 knowledgeBaseRepository, documentRepository, qaPairRepository);
         service.setSelf(service); // 自注入：单测无 Spring 代理，指向自身即同步触发 runReembed
+        service.setLongTaskLimiter(new LongTaskTenantLimiter()); // 未注入上限即关闭，只管走通
         return service;
     }
 
@@ -84,6 +85,7 @@ class ReembedServiceTest {
 
     @Test
     void startReembed_scopeApp_遍历应用下全部知识库_单条失败不中断且进度统计正确() {
+        TenantContext.setTenantId(7L); // 进度按发起租户隔离，查询方须同租户
         TenantContext.setAppId(100L);
         when(knowledgeBaseRepository.findByAppId(100L)).thenReturn(List.of(kb(1L), kb(2L)));
         when(documentRepository.findByKnowledgeBaseIdAndStatus(1L, DocumentStatus.COMPLETED))
@@ -120,6 +122,7 @@ class ReembedServiceTest {
     void startReembed_QA重嵌抛异常_faisoft不中断且计入failed() {
         // 覆盖文档路以外的另一条 fail-soft 路径：QaPairService.reembed 本身会抛异常（非吞异常置状态），
         // ReembedService 的 catch 直接捕获计入 failed，与文档路"回读状态判成败"互为对称验证
+        TenantContext.setTenantId(7L); // 进度按发起租户隔离，查询方须同租户
         KnowledgeBase kb = kb(9L);
         when(knowledgeService.getKnowledgeBase(9L)).thenReturn(kb);
         when(documentRepository.findByKnowledgeBaseIdAndStatus(9L, DocumentStatus.COMPLETED))
@@ -203,5 +206,20 @@ class ReembedServiceTest {
         assertThatThrownBy(() -> svc.getProgress("不存在的任务id"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("重建任务不存在");
+    }
+
+    /** 2026-09-30 安全审查：别的租户拿到 jobId 也查不到进度，且与「不存在」同一响应 */
+    @Test
+    void getProgress_别的租户查不到() {
+        TenantContext.setTenantId(7L);
+        TenantContext.setAppId(100L);
+        when(knowledgeBaseRepository.findByAppId(100L)).thenReturn(List.of());
+        ReembedService svc = service();
+        String jobId = svc.startReembed(ReembedService.Scope.APP, null);
+
+        TenantContext.setTenantId(8L);
+        assertThatThrownBy(() -> svc.getProgress(jobId))
+                .isInstanceOf(com.qingyu.care.exception.BusinessException.class)
+                .hasMessageContaining("不存在");
     }
 }

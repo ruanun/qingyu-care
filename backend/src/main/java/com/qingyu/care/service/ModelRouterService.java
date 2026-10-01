@@ -4,6 +4,7 @@ import com.qingyu.care.config.PlatformSeeder;
 import com.qingyu.care.config.SharedCredentialMasker;
 import com.qingyu.care.config.SsrfGuard;
 import com.qingyu.care.exception.InvalidOperationException;
+import com.qingyu.care.config.ModelEndpointGuardInterceptor;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
@@ -119,6 +120,46 @@ public class ModelRouterService {
      */
     @org.springframework.beans.factory.annotation.Value("${qingyu.care.model.allow-private-endpoints:false}")
     private boolean allowPrivateEndpoints;
+
+    /**
+     * 单次回复的输出 token 上限；0 = 不设（交给模型默认）。
+     *
+     * <p>2026-09-30 安全审查：此前全仓没有设置，匿名访客能诱导模型输出超长回复——按 IP 的限流只限请求次数，
+     * 限不了单次的输出长度，而 token 费用由租户（最终是平台）承担。默认 4096 远高于客服场景的正常回答长度。
+     */
+    @org.springframework.beans.factory.annotation.Value("${qingyu.care.model.max-output-tokens:4096}")
+    private int maxOutputTokens;
+
+    /**
+     * ⚠️ OpenAI 官方的推理模型（o 系列、gpt-5）<b>拒绝</b> {@code max_tokens}、只认 {@code max_completion_tokens}；
+     * 而国内各家 OpenAI 兼容模式普遍只认 {@code max_tokens}。按厂商分开给，别统一成一个。
+     */
+    void applyMaxOutputTokens(OpenAiChatOptions.Builder builder, String provider) {
+        if (maxOutputTokens <= 0) {
+            return;
+        }
+        if ("openai".equalsIgnoreCase(provider)) {
+            builder.maxCompletionTokens(maxOutputTokens);
+        } else {
+            builder.maxTokens(maxOutputTokens);
+        }
+    }
+
+    private volatile ModelEndpointGuardInterceptor endpointGuard;
+
+    /** 懒建：它内部持有一个 OkHttp 连接池，所有模型客户端共用一份；放 @PostConstruct 会让手工 new 的单测拿到 null。 */
+    private ModelEndpointGuardInterceptor endpointGuard() {
+        ModelEndpointGuardInterceptor g = endpointGuard;
+        if (g == null) {
+            synchronized (this) {
+                if (endpointGuard == null) {
+                    endpointGuard = new ModelEndpointGuardInterceptor(allowPrivateEndpoints);
+                }
+                g = endpointGuard;
+            }
+        }
+        return g;
+    }
 
     /**
      * 校验租户填的模型 endpoint（安全审查 M4，2026-09-03）：协议限 http(s)、主机须解析到公网地址。
@@ -246,15 +287,19 @@ public class ModelRouterService {
 
         // streamUsage(true)：让 OpenAI 兼容端点在流式末尾 chunk 携带 usage 信息，
         // 供 ChatServiceImpl.meterContentStream() 的 doOnNext 捕获 total_tokens。
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
+        var optionsBuilder = OpenAiChatOptions.builder()
                 .model(config.getModelId())
                 .baseUrl(baseUrl)
                 .apiKey(config.getApiKey())
-                .streamUsage(true)
-                .build();
+                .streamUsage(true);
+        applyMaxOutputTokens(optionsBuilder, config.getProvider());
+        OpenAiChatOptions options = optionsBuilder.build();
 
+        // 出站防线：禁重定向 + 连接期 DNS 校验（2026-09-30 安全审查 M1，见 ModelEndpointGuardInterceptor）
+        ModelEndpointGuardInterceptor guard = endpointGuard();
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
                 .options(options)
+                .httpClientBuilderCustomizer(b -> b.interceptor(guard))
                 .build();
 
         return ChatClient.builder(chatModel).build();
@@ -284,9 +329,20 @@ public class ModelRouterService {
      * @return AI 回复（类型由调用方决定：String 或 Spring AI ChatResponse）
      */
     public <T> T callWithFallback(String scenario, java.util.function.Function<ChatClient, T> promptRunner) {
-        List<AiModelConfig> models = getModelsForScenario(scenario);
+        return callWithModels(getModelsForScenario(scenario), promptRunner);
+    }
 
-        if (models.isEmpty()) {
+    /**
+     * 用调用方事先解析好的模型列表依次尝试（带降级）。
+     *
+     * <p>⚠️ 给 {@code @Async} 等<b>没有 TenantContext 的线程</b>用：{@link #getModelsForScenario} 的
+     * 「租户自有」那半靠 Hibernate 过滤器隔离，而 {@code TenantDataAspect} 对「无上下文 + 未登录」
+     * 一律不加过滤——在异步线程里直接调 {@link #callWithFallback} 会取到<b>全平台所有租户</b>的模型，
+     * 把本租户的数据发往别的租户配置的 endpoint（2026-09-30 安全审查 H1，QA 生成曾如此）。
+     * 正确做法是在请求线程调 {@link #getModelsForScenario} 解析好，再把列表传进异步方法。
+     */
+    public <T> T callWithModels(List<AiModelConfig> models, java.util.function.Function<ChatClient, T> promptRunner) {
+        if (models == null || models.isEmpty()) {
             throw new RuntimeException("没有可用的 AI 模型配置");
         }
 
@@ -306,7 +362,7 @@ public class ModelRouterService {
         }
 
         // 所有模型都失败
-        log.error("All models failed for scenario: {}", scenario);
+        log.error("All {} models failed", models.size());
         throw new RuntimeException("所有 AI 模型调用失败", lastException);
     }
 

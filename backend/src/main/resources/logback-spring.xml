@@ -45,7 +45,9 @@
     
     <!-- 应用日志级别 -->
     <logger name="com.qingyu.care" level="INFO"/>
-    <logger name="com.qingyu.care.service" level="DEBUG"/>
+    <!-- ⚠️ 别在这里给子包单独配 DEBUG：子 logger 的显式级别不会被 application.yml 里父包的 INFO 覆盖，
+         曾让 com.qingyu.care.service 在所有 profile 下都是 DEBUG（2026-09-30 安全审查，基线第 11 条）。
+         需要 DEBUG 时在 application-dev.yml 里开。 -->
     
     <!-- 框架日志级别 -->
     <logger name="org.springframework" level="WARN"/>

@@ -58,6 +58,7 @@ const UserListPage: React.FC = () => {
     const { user: currentUser } = useAuthStore();
     // 平台管理员无自身租户，创建租户成员时需显式指定所属租户
     const isPlatformAdmin = currentUser?.role === 'PLATFORM_ADMIN';
+    const isEditingSelf = !!editingUser && editingUser.id === currentUser?.userId;
 
     useEffect(() => {
         fetchUsers();
@@ -335,9 +336,12 @@ const UserListPage: React.FC = () => {
                                     name="password"
                                     type="password"
                                     required={!editingUser}
+                                    // 改自己的密码要验证当前密码，只能走左下角菜单的「修改密码」（2026-09-30 安全审查 M3），
+                                    // 后端对「本人 + password」一律 400
+                                    disabled={isEditingSelf}
                                     value={formData.password}
                                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                    placeholder={editingUser ? "留空则不修改" : "登录密码"}
+                                    placeholder={isEditingSelf ? "请在左下角菜单「修改密码」" : editingUser ? "留空则不修改" : "登录密码"}
                                 />
                             </div>
                         </div>

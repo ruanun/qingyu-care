@@ -444,6 +444,9 @@ public class ChatServiceImpl implements ChatService {
         ChatStreamEvent startEvent =
                 ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits, null);
 
+        // 客户端中途断开、usage 未到时按它估算 prompt 侧 token（见 meterContentStream）
+        final int promptTokenEstimate = estimatePromptTokens(messages);
+
         // 请求线程内捕获（Reactor 线程无 ThreadLocal 上下文，回退分支要手动搬运）
         final Long tenantIdForFallback = TenantContext.getTenantId();
         final Long appIdForFallback = TenantContext.getAppId();
@@ -456,7 +459,7 @@ public class ChatServiceImpl implements ChatService {
             StringBuilder acc = new StringBuilder();
             java.util.concurrent.atomic.AtomicBoolean emitted =
                     new java.util.concurrent.atomic.AtomicBoolean(false);
-            Flux<ChatStreamEvent> body = meterContentStream(source, onTokensUsed)
+            Flux<ChatStreamEvent> body = meterContentStream(source, onTokensUsed, promptTokenEstimate)
                     .doOnNext(acc::append)
                     .concatMap(chunk -> Flux.fromIterable(splitter.accept(chunk)))
                     .concatWith(Flux.defer(() -> Flux.fromIterable(splitter.flush())))
@@ -502,8 +505,8 @@ public class ChatServiceImpl implements ChatService {
      * 补记 {@code chat()} 返回的真实 token 用量——只补 token 差值，不重复计调用/消息次数（不能直接复用
      * 主计量回调，{@code ApiUsageService.record} 的 SQL 无条件把 call_count + 1）。回退本身失败则不补记，
      * 维持已记的 0。
-     * <p>已知取舍（token 计量的另一半）：客户端「停止生成」/异步超时（{@code doFinally(CANCEL)}）与本方法
-     * 无关，同样只记 0 token——彼时真实 token 已被上游模型消耗但无法追加计量，这是流式取消场景的固有代价。
+     * <p>客户端「停止生成」/异步超时（{@code doFinally(CANCEL)}）与本方法无关：usage 未到时由
+     * {@link #meterContentStream} 按估算值记账（2026-09-30 安全审查 M5，此前记 0）。
      * <p>已知取舍（no_hit_streak）：回退会重跑 {@code self.chat(request)}，其内部重新执行一次检索并
      * 二次更新会话的 {@code no_hit_streak} 计数；未命中场景下该计数会因这次"重复的未命中"而虚高一次，
      * 转人工阈值可能因此提前触发。
@@ -622,7 +625,27 @@ public class ChatServiceImpl implements ChatService {
     static Flux<String> meterContentStream(
             Flux<org.springframework.ai.chat.model.ChatResponse> source,
             java.util.function.IntConsumer onTokensUsed) {
+        return meterContentStream(source, onTokensUsed, 0);
+    }
+
+    /**
+     * 同上，另带 prompt 侧的 token 估算值，供「客户端中途断开」时估算记账。
+     *
+     * <p>⚠️ 2026-09-30 安全审查 M5：usage 只出现在流的<b>最后一个</b> chunk 里。客户端在拿到正文之后、末尾 usage
+     * 到达之前断开（「停止生成」或直接掐连接），此前这一轮记 0 token——上游模型早已按生成量计费，而 token 额度
+     * 被完全绕过，只剩调用次数一个维度在约束。现在：取消（{@code CANCEL}）且 usage 没到时，按
+     * 「prompt 估算 + 已输出文本估算」记账。
+     *
+     * <p>只对 {@code CANCEL} 估算，{@code ON_ERROR} 不估：出错会走 {@link #fallbackToNonStreaming}，回退成功后经
+     * {@code onFallbackTokensUsed} 补记真实用量，这里再估就重复计了。正常结束而上游不回 usage 的，维持原样记 0
+     * （那是端点不支持 {@code stream_options}，属配置问题而非绕过）。
+     */
+    static Flux<String> meterContentStream(
+            Flux<org.springframework.ai.chat.model.ChatResponse> source,
+            java.util.function.IntConsumer onTokensUsed,
+            int promptTokenEstimate) {
         java.util.concurrent.atomic.AtomicInteger tokens = new java.util.concurrent.atomic.AtomicInteger(0);
+        StringBuilder emittedText = new StringBuilder();
         return source
                 .doOnNext(cr -> {
                     if (cr.getMetadata() != null && cr.getMetadata().getUsage() != null
@@ -632,7 +655,46 @@ public class ChatServiceImpl implements ChatService {
                 })
                 .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
                         ? cr.getResult().getOutput().getText() : null)
-                .doFinally(sig -> onTokensUsed.accept(tokens.get()));
+                .doOnNext(emittedText::append)
+                .doFinally(sig -> {
+                    int used = tokens.get();
+                    if (used == 0 && sig == reactor.core.publisher.SignalType.CANCEL) {
+                        used = promptTokenEstimate + estimateTokens(emittedText);
+                    }
+                    onTokensUsed.accept(used);
+                });
+    }
+
+    /** prompt 侧 token 估算：各条消息正文估算之和（系统提示 + 知识库上下文 + 历史 + 本轮问题）。 */
+    static int estimatePromptTokens(List<Message> messages) {
+        int total = 0;
+        for (Message m : messages) {
+            total += estimateTokens(m.getText());
+        }
+        return total;
+    }
+
+    /**
+     * 粗估 token 数：中日韩字符按 1 字 1 token，其余按 4 个字符 1 token 向上取整。只用于「usage 拿不到」的兜底，
+     * 宁可略高——低估正是要堵的绕过额度的口子。
+     */
+    static int estimateTokens(CharSequence text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        int cjk = 0;
+        int other = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN
+                    || (c >= 0x3040 && c <= 0x30FF)      // 日文假名
+                    || (c >= 0xAC00 && c <= 0xD7AF)) {   // 韩文音节
+                cjk++;
+            } else {
+                other++;
+            }
+        }
+        return cjk + (other + 3) / 4;
     }
 
     /**
@@ -977,7 +1039,8 @@ public class ChatServiceImpl implements ChatService {
                 return hybridRetrievalService.search(query, scope, strategy);
             }
 
-            int topK = strategy.getTopK() != null ? strategy.getTopK() : 5;
+            // 策略里的 topK 由租户填写、没有范围校验，直接打在全平台共享的 pgvector 上，这里夹住（2026-09-30 安全审查）
+            int topK = Math.max(1, Math.min(strategy.getTopK() != null ? strategy.getTopK() : 5, 50));
             // 0.45：与本类顶部及 ChatStrategyService 的实测标定一致（0.7 已被证实几乎滤掉全部
             // 真实相关命中）。列 similarity_threshold 是 nullable=false，这条兜底实际不可达，
             // 但留着一个用已推翻的值做的哑弹只会误导下一个读代码的人。
@@ -1143,6 +1206,8 @@ public class ChatServiceImpl implements ChatService {
         }
         return "<knowledge>\n" + docs.stream()
                 .map(Document::getText)
+                // 正文里的定界标签先中和，否则网页里写一个 </knowledge> 就能「走出」数据区
+                .map(t -> com.qingyu.care.service.tool.ToolResultDelimiter.neutralize(t == null ? "" : t))
                 .collect(Collectors.joining("\n\n---\n\n")) + "\n</knowledge>";
     }
     

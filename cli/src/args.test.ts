@@ -37,4 +37,16 @@ describe('parseCliArgs', () => {
   it('两种身份都没给时报错（不要静默退化成匿名）', () => {
     expect(() => parseCliArgs(base)).toThrow();
   });
+
+  // 2026-09-30 安全审查：密钥放命令行参数会进 shell 历史与进程列表，支持从环境变量读
+  it('未给 --api-secret 时从环境变量 QINGYU_API_SECRET 读取', () => {
+    const o = parseCliArgs([...base], { QINGYU_API_SECRET: 'env-secret' });
+    expect(o).toMatchObject({ apiSecret: 'env-secret' });
+  });
+
+  it('--api-secret 优先于环境变量；--as-visitor 时忽略环境变量而不报互斥', () => {
+    expect(parseCliArgs([...base, '--api-secret', 'arg'], { QINGYU_API_SECRET: 'env' })).toMatchObject({ apiSecret: 'arg' });
+    const v = parseCliArgs([...base, '--as-visitor', '--origin', 'https://shop.com'], { QINGYU_API_SECRET: 'env' });
+    expect(v).not.toHaveProperty('apiSecret');
+  });
 });

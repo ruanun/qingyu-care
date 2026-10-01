@@ -212,6 +212,8 @@ export interface Application {
     enabled: boolean;
     rateLimitPerMinute?: number | null;
     allowedOrigins?: string | null;
+    /** 卡片图片允许自动加载的域名，逗号分隔（安全审查 M7） */
+    imageAllowedDomains?: string | null;
     webhookUrl?: string | null;
     webhookSecret?: string | null;
     webhookEvents?: string | null;

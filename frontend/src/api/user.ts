@@ -18,6 +18,10 @@ export const userService = {
     update: (id: number, data: Partial<User> & { password?: string }): Promise<ApiResponse<User>> =>
         api.put(`/users/${id}`, data),
 
+    // 本人修改密码：必须带当前密码（后端校验，猜错与登录共用失败计数）
+    changeMyPassword: (data: { oldPassword: string; newPassword: string }): Promise<ApiResponse<void>> =>
+        api.post('/users/me/password', data),
+
     // 删除
     delete: (id: number): Promise<ApiResponse<void>> =>
         api.delete(`/users/${id}`),

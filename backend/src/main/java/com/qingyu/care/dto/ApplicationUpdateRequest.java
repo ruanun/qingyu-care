@@ -41,6 +41,7 @@ public class ApplicationUpdateRequest {
     private Boolean enabled;
     private Integer rateLimitPerMinute;
     private String allowedOrigins;
+    private String imageAllowedDomains;
     private String webhookUrl;
     private String webhookEvents;
 }

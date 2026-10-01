@@ -1,11 +1,15 @@
 package com.qingyu.care.service.webhook;
 
 import com.qingyu.care.config.WebhookProperties;
+import com.qingyu.care.support.DripHttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
  * Webhook 投递客户端必须走与 HTTP 工具同款的 SSRF 防线。
@@ -53,5 +57,22 @@ class RestClientWebhookHttpClientTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> client(true).post("http://100.100.100.200/hook", Map.of(), "{}"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * 安全审查 H3（2026-09-30）：接收端先回 200、再每 100ms 滴 1 字节，永远比空闲超时快。
+     * 此前 Spring 关闭响应时会把 body 读完，这次投递永不结束，8 个这样的地址就能占满默认异步池。
+     * 现在拿到状态码立即断开，应远快于总时长上限（2×500ms）返回，且照常拿到 200。
+     */
+    @Test
+    void 慢速滴灌的接收端不会挂住投递线程() {
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+            try (DripHttpServer drip = new DripHttpServer("application/json", 100)) {
+                long start = System.nanoTime();
+                int status = client(true).post(drip.url("/hook"), Map.of(), "{}");
+                assertThat(status).isEqualTo(200);
+                assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(900));
+            }
+        });
     }
 }

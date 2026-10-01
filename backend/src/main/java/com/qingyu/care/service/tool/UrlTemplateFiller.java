@@ -43,7 +43,7 @@ public final class UrlTemplateFiller {
         String path = q < 0 ? template : template.substring(0, q);
         String query = q < 0 ? null : template.substring(q + 1);
 
-        String filledPath = replacePresent(path, args);
+        String filledPath = replacePresent(path, args, true);
         requireNoPlaceholder(filledPath);
 
         if (query == null || query.isBlank()) {
@@ -55,7 +55,7 @@ public final class UrlTemplateFiller {
             if (segment.isEmpty()) {
                 continue;
             }
-            String filled = replacePresent(segment, args);
+            String filled = replacePresent(segment, args, false);
             // 段内仍有占位符 = 该参数 LLM 没填 → 整段丢弃。
             // ⚠️ 变异点：改成 kept.add(filled) 会退回旧的坏行为，UrlTemplateFillerTest
             // 的「可选query参数未填时整段删除」会转红。
@@ -72,7 +72,7 @@ public final class UrlTemplateFiller {
      *
      * <p>遍历模板里的占位符而不是遍历 args：只有这样才能区分「填了」与「没填」。
      */
-    private static String replacePresent(String text, Map<String, Object> args) {
+    private static String replacePresent(String text, Map<String, Object> args, boolean inPath) {
         Matcher m = PLACEHOLDER.matcher(text);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
@@ -81,7 +81,13 @@ public final class UrlTemplateFiller {
                 m.appendReplacement(sb, Matcher.quoteReplacement(m.group()));
                 continue;
             }
-            String encoded = URLEncoder.encode(String.valueOf(args.get(key)), StandardCharsets.UTF_8);
+            String raw = String.valueOf(args.get(key));
+            // path 段里填空串、"." 或 ".." 会改变路径结构：/v1/orders/{id} 填 "." 就变成集合端点 /v1/orders/.，
+            // 可能把「查一个订单」变成「列出全部订单」。URLEncoder 不编码点号，只能在这里拦（2026-09-30 安全审查）
+            if (inPath && (raw.isEmpty() || raw.equals(".") || raw.equals(".."))) {
+                throw new IllegalArgumentException("参数 " + key + " 取值非法");
+            }
+            String encoded = URLEncoder.encode(raw, StandardCharsets.UTF_8);
             // quoteReplacement：replacement 串里的 $ 与 \ 对 appendReplacement 有特殊含义。
             // URLEncoder 已把它们编码掉，此处是纵深防御，别删。
             m.appendReplacement(sb, Matcher.quoteReplacement(encoded));

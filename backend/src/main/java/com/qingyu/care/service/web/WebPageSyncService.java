@@ -1,5 +1,6 @@
 package com.qingyu.care.service.web;
 
+import com.qingyu.care.service.LongTaskTenantLimiter;
 import com.qingyu.care.entity.Document;
 import com.qingyu.care.entity.KnowledgeBase;
 import com.qingyu.care.enums.DocumentStatus;
@@ -67,6 +68,14 @@ public class WebPageSyncService {
         this.webPageFetcher = webPageFetcher;
     }
 
+    private LongTaskTenantLimiter longTaskLimiter;
+
+    /** setter 注入：构造函数被多条单测手工调用，见 LongTaskTenantLimiter。没注入会 NPE 而不是静默跳过限流。 */
+    @Autowired
+    public void setLongTaskLimiter(LongTaskTenantLimiter longTaskLimiter) {
+        this.longTaskLimiter = longTaskLimiter;
+    }
+
     @Autowired
     @Lazy
     public void setSelf(WebPageSyncService self) {
@@ -86,6 +95,8 @@ public class WebPageSyncService {
     @Transactional
     public Document addWebPage(Long knowledgeBaseId, String url, SyncInterval interval) {
         KnowledgeBase kb = knowledgeService.getKnowledgeBase(knowledgeBaseId);
+        // 先占名额再建档，超限直接拒绝；事务回滚时名额自动归还（2026-09-30 安全审查 M6）
+        LongTaskTenantLimiter.Permit permit = longTaskLimiter.acquire();
 
         Document doc = Document.builder()
                 .knowledgeBase(kb)
@@ -109,18 +120,19 @@ public class WebPageSyncService {
         //     取不到刚建的行，只会留一句「网页同步跳过：文档不存在」的 warn，文档卡在 PENDING
         //     再无人处理（同站点爬取 C-1 那条竞态）。
         final Long docId = doc.getId();
-        AfterCommit.run(() -> self.syncDocumentAsync(docId));
+        AfterCommit.run(() -> permit.launch(() -> self.syncDocumentAsync(docId)));
         return doc;
     }
 
     /** 异步入口：手动「立即同步」用它，立刻返回、前端轮询文档状态看结果。 */
     @Async(AsyncConfig.LONG_TASK_EXECUTOR)
-    public void syncDocumentAsync(Long documentId) {
+    public java.util.concurrent.CompletableFuture<Void> syncDocumentAsync(Long documentId) {
         // 必须走 self：同类直调不经代理，syncDocument 的 @Transactional 会失效——
         // findById/save 各自落进自己的迷你事务，doc 在方法体内途中就已 detached，
         // 后面对它的 save() 会把陈旧字段 merge 回库，静默覆盖 processDocument 刚提交的结果
         // （同 KnowledgeServiceImpl.processDocumentAsync 范式，这里曾经漏掉）
         self.syncDocument(documentId);
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
     }
 
     /**

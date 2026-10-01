@@ -10,6 +10,7 @@ import type { UiNode } from '@/types';
 import { safeUrl } from '@/lib/safeUrl';
 import { executeActionUri } from '@/lib/actionUri';
 import { useToast } from '@/hooks/use-toast';
+import CardImage from './CardImage';
 
 function str(v: unknown): string {
   return v == null ? '' : String(v);
@@ -192,7 +193,7 @@ export function renderNode(node: UiNode, onAction: (value: string) => void, key:
       return <Separator key={key} className="my-2" />;
     case 'image': {
       const src = safeUrl(p.src ?? p.url);
-      return src ? <img key={key} src={src} alt={str(p.alt)} className="max-w-full rounded" /> : null;
+      return src ? <CardImage key={key} src={src} alt={str(p.alt)} /> : null;
     }
     case 'button':
       return <ActionButton key={key} node={node} onAction={onAction} />;
