@@ -123,6 +123,9 @@ sa-token:
   is-share: false
   # token 风格
   token-style: uuid
+  # 只认请求头里的 satoken：不读 ?satoken= 查询参数（默认为 true）。token 一旦被拼进 URL 就会进 Referer、
+  # nginx access log 与代理日志（2026-09-30 安全审查，与 is-read-cookie: false 同理）
+  is-read-body: false
   # 是否输出日志。保持开启：登录/注销/配置加载这些事件对排查有用。
   # ⚠️ 内置实现会把完整会话凭证打进 INFO（实测见 TokenMaskingSaLog 的类注释），
   # 故 SaTokenConfig 在启动时把日志实现换成脱敏版并转交 SLF4J，别把那段删掉。
@@ -157,6 +160,8 @@ qingyu:
     model:
       # 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型时打开；生产保持 false）
       allow-private-endpoints: ${MODEL_ALLOW_PRIVATE_ENDPOINTS:false}
+      # 单次回复的输出 token 上限（0 = 不设）。防访客诱导超长输出烧 token；客服回答远用不到 4096（安全基线第 49 条）
+      max-output-tokens: ${MODEL_MAX_OUTPUT_TOKENS:4096}
     cors:
       # 管理端允许的跨域来源（逗号分隔，精确匹配 scheme://host[:port]）。前端与后端同源部署
       # （nginx 反代 /api、Vite 代理）时留空即可；只有前端单独部署到别的域名才需要填。
@@ -191,7 +196,7 @@ qingyu:
     openapi:
       # 单个应用默认每分钟请求上限（应用可覆盖）
       default-rate-limit-per-minute: 60
-      # 单个客户端（应用 + IP，X-Forwarded-For 取最后一段）每分钟上限，0 关闭。appKey 是公开的，
+      # 单个客户端（应用 + IP，IP 取 getRemoteAddr，可信性靠反代覆盖 XFF，见安全基线第 37 条）每分钟上限，0 关闭。appKey 是公开的，
       # 没有这层子桶时一个滥用者就能让该应用所有真实访客一起吃 429（安全审查 M5）
       per-client-rate-limit-per-minute: 20
 
@@ -227,6 +232,10 @@ qingyu:
       orphan-retain-hours: 2
       # 单个会话最多上传多少附件（含未挂到消息上的）
       max-per-session: 20
+      # 每个应用每天访客最多上传多少个附件 / 多少字节（0 = 不限）。单会话上限挡不住「不断建新会话」，
+      # 而访客附件与知识库文档共用租户存储配额——不封顶时匿名访客能把配额灌满（安全基线第 48 条）
+      visitor-daily-max-count-per-app: 200
+      visitor-daily-max-bytes-per-app: 1073741824
       # 清理任务首次延迟与间隔（毫秒）
       cleanup-initial-delay-ms: 600000
       cleanup-interval-ms: 3600000
@@ -236,6 +245,9 @@ qingyu:
       long-task:
         pool-size: 6        # 固定线程数（core == max；有界队列下 max 只在队列满后才生效，配大于 core 无意义）
         queue-capacity: 500 # 有界；排满即抛 TaskRejectedException，各调用方都有兜底，好过无界堆积到 OOM
+      # 手动触发的长任务（重嵌 / QA 生成 / 重新处理 / 添加网页 / 立即同步）每个租户同时最多几个（0 = 不限）。
+      # 池是全平台共享的，不按租户封顶时一个租户就能占满 6 个线程（安全基线第 46 条）
+      long-task-max-per-tenant: 3
 
     # 站点爬取（网站知识库第二期）
     site-crawl:

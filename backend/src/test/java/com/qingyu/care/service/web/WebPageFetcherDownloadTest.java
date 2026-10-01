@@ -1,6 +1,7 @@
 package com.qingyu.care.service.web;
 
 import com.qingyu.care.exception.BusinessException;
+import com.qingyu.care.support.DripHttpServer;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.hc.client5.http.DnsResolver;
@@ -16,9 +17,12 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
  * 单元测试：真正跑一遍 {@code WebPageFetcher.download()} 的四道安全门槛。
@@ -187,5 +191,25 @@ class WebPageFetcherDownloadTest {
         assertThatThrownBy(() -> new WebPageFetcher().fetch("http://127.0.0.1:" + port + "/ok"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("内网");
+    }
+
+    /**
+     * 2026-09-30 安全审查 H3 同类：5MB 上限挡「吐得多」，挡不住「吐得慢」——每 200ms 滴 1 字节永远不触发
+     * 10 秒的空闲超时，此前这次抓取会一直占着长任务线程与全局爬取名额。总时长上限到点即中断。
+     */
+    @Test
+    void 慢速滴灌的页面到总时长上限即中断() {
+        assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+            try (DripHttpServer drip = new DripHttpServer("text/html", 200)) {
+                DnsResolver resolver = WebPageFetcher.pinnedResolver(
+                        "localhost", new InetAddress[]{InetAddress.getLoopbackAddress()});
+                try (CloseableHttpClient client = WebPageFetcher.buildHttpClient(resolver)) {
+                    assertThatThrownBy(() -> WebPageFetcher.exchange(client, drip.url("/slow"),
+                            Set.of("text/html"), 1500))
+                            .isInstanceOf(BusinessException.class)
+                            .hasMessageContaining("秒上限");
+                }
+            }
+        });
     }
 }

@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -49,10 +50,17 @@ public class ReembedService {
         public volatile String status;
         public final LocalDateTime startedAt = LocalDateTime.now();
         public volatile LocalDateTime finishedAt;
+        /** 发起任务的租户（平台管理员发起为 null）。private 且无 getter：不进响应体 */
+        private final Long tenantId;
 
         Progress(String jobId, String scope) {
+            this(jobId, scope, null);
+        }
+
+        Progress(String jobId, String scope, Long tenantId) {
             this.jobId = jobId;
             this.scope = scope;
+            this.tenantId = tenantId;
             this.status = "RUNNING";
         }
     }
@@ -84,21 +92,37 @@ public class ReembedService {
         this.self = self;
     }
 
+
+    private LongTaskTenantLimiter longTaskLimiter;
+
+    /** setter 注入：构造函数被多条单测手工调用，见 LongTaskTenantLimiter。没注入会 NPE 而不是静默跳过限流。 */
+    @Autowired
+    public void setLongTaskLimiter(LongTaskTenantLimiter longTaskLimiter) {
+        this.longTaskLimiter = longTaskLimiter;
+    }
+
     private final ConcurrentHashMap<String, Progress> jobs = new ConcurrentHashMap<>();
 
     /** 触发重嵌，返回 jobId（异步执行）。范围解析 + 归属校验在请求线程同步完成，越权/参数缺失直接抛异常。 */
     public String startReembed(Scope scope, Long knowledgeBaseId) {
         List<KnowledgeBase> kbs = resolveKbs(scope, knowledgeBaseId);
+        // 先占名额再登记任务：超限时不留一条永远 RUNNING 的进度（2026-09-30 安全审查 M6）
+        LongTaskTenantLimiter.Permit permit = longTaskLimiter.acquire();
         String jobId = UUID.randomUUID().toString();
-        Progress p = new Progress(jobId, scope.name());
+        Progress p = new Progress(jobId, scope.name(), TenantContext.getTenantId());
         jobs.put(jobId, p);
-        self.runReembed(p, kbs.stream().map(KnowledgeBase::getId).toList());
+        List<Long> kbIds = kbs.stream().map(KnowledgeBase::getId).toList();
+        permit.launch(() -> self.runReembed(p, kbIds));
         return jobId;
     }
 
     public Progress getProgress(String jobId) {
         Progress p = jobs.get(jobId);
-        if (p == null) {
+        // 只能查自己租户发起的任务；平台管理员可查全部。不存在与无权一律 404，不泄露 jobId 是否存在
+        // （2026-09-30 安全审查：此前任何登录用户拿到 jobId 都能看别人的进度）
+        boolean visible = p != null && (SecurityUtil.isPlatformAdmin()
+                || (p.tenantId != null && p.tenantId.equals(TenantContext.getTenantId())));
+        if (!visible) {
             throw new BusinessException(404, "重建任务不存在: " + jobId);
         }
         return p;
@@ -129,7 +153,7 @@ public class ReembedService {
 
     /** 异步执行：遍历 KB → COMPLETED 文档重嵌 + ACTIVE QA 重嵌；单条 fail-soft，不中断整批。 */
     @Async(AsyncConfig.LONG_TASK_EXECUTOR)
-    public void runReembed(Progress p, List<Long> kbIds) {
+    public CompletableFuture<Void> runReembed(Progress p, List<Long> kbIds) {
         try {
             List<Document> docs = kbIds.stream()
                     .flatMap(kbId -> documentRepository.findByKnowledgeBaseIdAndStatus(kbId, DocumentStatus.COMPLETED).stream())
@@ -171,5 +195,7 @@ public class ReembedService {
         } finally {
             p.finishedAt = LocalDateTime.now();
         }
+        // 返回 future 是为了让 LongTaskTenantLimiter 在任务真正结束时归还名额
+        return CompletableFuture.completedFuture(null);
     }
 }

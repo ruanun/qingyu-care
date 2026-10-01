@@ -17,7 +17,7 @@ import java.util.Locale;
  * <ul>
  *   <li><b>按 IP 限流</b>：挡单一来源的高频尝试。复用 {@link RateLimitService}（Bucket4j + Redis）。</li>
  *   <li><b>按用户名锁定</b>：挡「换很多 IP 猜同一个账号」——按 IP 限流对它无效。连续失败到上限后锁定一段时间，
- *       计数从第一次失败起算、到期自动清零，登录成功即清零。</li>
+ *       计数从第一次失败起算、到期自动清零，登录成功即清零。名额在校验密码前原子占用，见 {@link #acquireAttempt}。</li>
  * </ul>
  * 不存在的用户名同样计数：否则「锁定」与「不锁定」的差异本身就能用来探测哪些用户名存在。
  *
@@ -83,29 +83,46 @@ public class LoginThrottleService {
         }
     }
 
-    /** 已锁定则抛 429。在校验密码之前调用：锁定期内连正确密码也不放行，否则锁定形同虚设。 */
-    public void assertNotLocked(String username) {
+    /**
+     * 在校验密码<b>之前</b>原子地占一次尝试名额：先 INCR，结果超过上限即抛 429。锁定期内连正确密码也不放行。
+     *
+     * <p>⚠️ 2026-09-30 安全审查 M4：此前是「先 GET 判断是否锁定 → 校验密码（BCrypt 约 50~100ms）→ 失败再 INCR」，
+     * 第一次 INCR 落地之前并发到达的请求全都能通过检查——同时发 200 个不同密码，200 次都真的被校验了，之后才锁。
+     * 先占名额再校验，并发里最多只有上限个能走到 BCrypt。
+     *
+     * @return 是否真的计了数。Redis 不可用（fail-open）或功能关闭时为 false，调用方据此决定要不要 {@link #releaseAttempt}
+     */
+    public boolean acquireAttempt(String username) {
         if (maxFailures <= 0 || username == null) {
-            return;
-        }
-        String count = redis(r -> r.opsForValue().get(failKey(username)), null);
-        if (count != null && Long.parseLong(count) >= maxFailures) {
-            throw new BusinessException(429, "密码错误次数过多，账号已临时锁定，请 " + lockMinutes + " 分钟后再试");
-        }
-    }
-
-    public void recordFailure(String username) {
-        if (maxFailures <= 0 || username == null) {
-            return;
+            return false;
         }
         String key = failKey(username);
-        redis(r -> {
-            Long n = r.opsForValue().increment(key);
-            if (n != null && n == 1L) {
+        Long n = redis(r -> {
+            Long v = r.opsForValue().increment(key);
+            if (v != null && v == 1L) {
+                // 锁定窗口从第一次尝试起算，到期自动清零
                 r.expire(key, Duration.ofMinutes(lockMinutes));
             }
-            return n;
+            return v;
         }, null);
+        if (n == null) {
+            return false;
+        }
+        if (n > maxFailures) {
+            throw new BusinessException(429, "密码错误次数过多，账号已临时锁定，请 " + lockMinutes + " 分钟后再试");
+        }
+        return true;
+    }
+
+    /**
+     * 归还名额：只有凭据错才算失败。账号停用 / 租户冻结时密码其实是对的，计进去会把人锁在一个本就进不去的门外；
+     * 其它异常（系统故障）同理不该算到用户头上。
+     */
+    public void releaseAttempt(String username) {
+        if (username == null) {
+            return;
+        }
+        redis(r -> r.opsForValue().decrement(failKey(username)), null);
     }
 
     public void clearFailures(String username) {

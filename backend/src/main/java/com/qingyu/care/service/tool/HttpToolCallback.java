@@ -59,13 +59,26 @@ public class HttpToolCallback implements ToolCallback {
             return ToolResultDelimiter.wrap(truncate(resp, tool.getMaxResponseChars()));
         } catch (Exception e) {
             log.warn("工具 {} 调用失败: {}", tool.getName(), describeForLog(e));
-            return ToolResultDelimiter.wrap("工具调用失败: " + e.getMessage());
+            return ToolResultDelimiter.wrap("工具调用失败: " + describeForModel(e));
         }
     }
 
     @Override
     public String call(String toolInput, ToolContext toolContext) {
         return call(toolInput);
+    }
+
+    /**
+     * 交给模型的失败原因（2026-09-30 安全审查）：这条消息进模型上下文，访客能诱导模型复述出来。
+     * 守卫的 {@link IllegalArgumentException} 只含 host 或参数名、执行器自己构造的 {@link IllegalStateException}
+     * 只含状态码与正文片段，可以原样给；其余异常（如 Spring 的 {@code ResourceAccessException}）消息里带完整请求 URL，
+     * 路径里可能有密钥，只给类名。
+     */
+    public static String describeForModel(Exception e) {
+        if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
+            return e.getMessage();
+        }
+        return "网络或服务异常（" + e.getClass().getSimpleName() + "）";
     }
 
     /**

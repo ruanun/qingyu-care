@@ -263,6 +263,36 @@ class MemberPrivilegeIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.code").value(403));
     }
 
+    /**
+     * 2026-09-30 安全审查 M3：本人改密必须验证当前密码，走真实请求（TenantContext 的 userId 由拦截器填入）。
+     * 旧密码错 → 400 且密码不变；对 → 新密码能登、旧密码登不上；经通用更新端点改自己的密码 → 400。
+     */
+    @Test
+    void 本人改密必须验证当前密码() throws Exception {
+        String name = "priv_selfpwd_" + SUF;
+        Tenant tenant = tenantRepository.findByCode(TENANT_CODE).orElseThrow();
+        Long id = userRepository.save(user(tenant, name, UserRole.TENANT_MEMBER)).getId();
+        String token = login(name);
+
+        mockMvc.perform(put("/v1/users/" + id).header("satoken", token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"NoOldPass1\"}"))
+                .andExpect(jsonPath("$.code").value(400));
+        mockMvc.perform(post("/v1/users/me/password").header("satoken", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"oldPassword\":\"wrong-guess\",\"newPassword\":\"NewPass456\"}"))
+                .andExpect(jsonPath("$.code").value(400));
+        login(name); // 原密码仍然有效
+
+        mockMvc.perform(post("/v1/users/me/password").header("satoken", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"oldPassword\":\"pwd123456\",\"newPassword\":\"NewPass456\"}"))
+                .andExpect(jsonPath("$.code").value(200));
+        login(name, "NewPass456");
+        mockMvc.perform(post("/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + name + "\",\"password\":\"pwd123456\"}"))
+                .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.not(200)));
+    }
+
     private String login(String username) throws Exception {
         return login(username, "pwd123456");
     }

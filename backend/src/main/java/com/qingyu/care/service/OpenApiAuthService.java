@@ -30,7 +30,10 @@ public class OpenApiAuthService {
             throw new OpenApiException(403, "应用已停用");
         }
         requireTenantActive(app);
-        if (!apiKey.equals(app.getAppSecret())) {
+        // 常量时间比较：String.equals 遇到第一个不同字符就返回，耗时随匹配前缀长度变化（2026-09-30 安全审查）
+        if (app.getAppSecret() == null || !java.security.MessageDigest.isEqual(
+                apiKey.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                app.getAppSecret().getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             throw new OpenApiException(401, "无效的凭据");
         }
         return app;

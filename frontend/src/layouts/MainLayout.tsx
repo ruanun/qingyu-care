@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
     MessageSquare, Database, UserPen, LayoutDashboard,
     History, FileText, Layers, Settings, Bot,
-    LogOut, User as UserIcon, Shield, Users, Smartphone, Building,
+    LogOut, User as UserIcon, KeyRound, Users, Smartphone, Building,
     Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3,
     FlaskConical, Wrench, Sparkles, Server, Package, Store
 } from 'lucide-react';
@@ -14,6 +14,7 @@ import { useAppStore } from '@/stores/appStore';
 import { platformService } from '@/api/platform';
 import AppSwitcher from '@/components/AppSwitcher';
 import Logo from '@/components/Logo';
+import ChangePasswordDialog from '@/components/ChangePasswordDialog';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -146,6 +147,8 @@ const MainLayout: React.FC = () => {
     const canSee = (item: NavItem) =>
         !item.roles || (!!user?.role && item.roles.includes(user.role));
 
+    const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+
     const handleLogout = async () => {
         // 先让服务端作废 token 再清本地（安全审查 M7），见 lib/session.ts
         await performLogout();
@@ -254,9 +257,9 @@ const MainLayout: React.FC = () => {
                                 <UserIcon className="mr-2 h-4 w-4" />
                                 <span>个人信息</span>
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="cursor-pointer">
-                                <Shield className="mr-2 h-4 w-4" />
-                                <span>安全中心</span>
+                            <DropdownMenuItem onClick={() => setPasswordDialogOpen(true)} className="cursor-pointer">
+                                <KeyRound className="mr-2 h-4 w-4" />
+                                <span>修改密码</span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-destructive focus:text-destructive">
@@ -267,6 +270,7 @@ const MainLayout: React.FC = () => {
                     </DropdownMenu>
                 </div>
             </aside>
+            <ChangePasswordDialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen} />
 
             {/* Main Content */}
             <main className="flex-1 flex flex-col relative overflow-hidden bg-background">

@@ -34,6 +34,25 @@ public class ProductionSecretsGuard implements InitializingBean {
             "QINGYU_ADMIN_INITIAL_PASSWORD",
             "REDIS_PASSWORD");
 
+    /**
+     * 实际生效的密钥属性 → 对应的环境变量名（报错时告诉运维改哪一行）。
+     *
+     * <p>2026-09-30 安全审查：只查环境变量拦不住「不用 compose、直接跑 jar」——变量没设，application.yml 里的
+     * 默认值（{@code postgres}、{@code rustfsadmin123}）照样生效，而上面那份按变量名的检查看到的是 null、直接放行。
+     */
+    static final java.util.Map<String, String> EFFECTIVE_SECRETS = new java.util.LinkedHashMap<>();
+    static {
+        EFFECTIVE_SECRETS.put("spring.datasource.password", "SPRING_DATASOURCE_PASSWORD");
+        EFFECTIVE_SECRETS.put("dromara.x-file-storage.amazon-s3-v2[0].secret-key", "STORAGE_SECRET_KEY");
+        EFFECTIVE_SECRETS.put("dromara.x-file-storage.amazon-s3-v2[0].access-key", "STORAGE_ACCESS_KEY");
+        EFFECTIVE_SECRETS.put("qingyu.care.platform.admin-initial-password", "QINGYU_ADMIN_INITIAL_PASSWORD");
+        EFFECTIVE_SECRETS.put("spring.data.redis.password", "REDIS_PASSWORD");
+    }
+
+    /** 仓库里写死过的默认口令：配置文件默认值、本地 compose 与 dev profile 用的那几个 */
+    static final java.util.Set<String> KNOWN_DEFAULTS = java.util.Set.of(
+            "postgres", "rustfsadmin", "rustfsadmin123", "admin123", "demo123456");
+
     private final Environment environment;
 
     public ProductionSecretsGuard(Environment environment) {
@@ -53,8 +72,18 @@ public class ProductionSecretsGuard implements InitializingBean {
                 offending.add(name);
             }
         }
+        for (java.util.Map.Entry<String, String> e : EFFECTIVE_SECRETS.entrySet()) {
+            String v = environment.getProperty(e.getKey());
+            if (v == null || v.isBlank()) {
+                continue; // 留空有各自的语义（管理员口令随机生成、Redis 无密码），不在这里判
+            }
+            String lower = v.toLowerCase(Locale.ROOT);
+            if ((lower.contains("change-me") || KNOWN_DEFAULTS.contains(lower)) && !offending.contains(e.getValue())) {
+                offending.add(e.getValue());
+            }
+        }
         if (!offending.isEmpty()) {
-            throw new IllegalStateException("以下环境变量仍是 .env.example 里的占位符，拒绝启动："
+            throw new IllegalStateException("以下密钥仍是占位符或仓库里的默认值，拒绝启动："
                     + String.join("、", offending)
                     + "。请在 .env 中改成真实的随机值后重启（生成方式见部署文档）。");
         }

@@ -5,8 +5,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
  * {@link WebPageFetcher} 的选择器分支与「剔噪前 DOM 副本」单测。
@@ -110,5 +112,27 @@ class WebPageFetcherSelectorTest {
 
         assertThat(result.content()).doesNotContain("导航噪声");
         assertThat(result.dom().select("nav a")).hasSize(2);
+    }
+
+    /**
+     * 2026-09-30 安全审查 M2：jsoup 的 {@code :matches()} 走 JDK 正则、没有超时。{@code (.*a){20}$} 对一串 a 加一个
+     * 非 a 结尾是灾难性回溯——此前这一句会把爬取线程卡死，两个这样的站点就占满全局爬取名额。
+     * ⚠️ 别换成教科书上的 {@code (a+)+$}：JDK 25 的正则引擎对它有优化，300ms 就返回，测试会失去判别力
+     * （变异验证时踩过：去掉防线照样绿）。
+     * 存量值在执行侧也必须被跳过（落库校验拦不住改造前已存进库的值）。
+     */
+    @Test
+    @DisplayName("正则类选择器被忽略：不执行、立即返回空串回退启发式")
+    void regex_selector_is_ignored_without_hanging() {
+        org.jsoup.nodes.Document doc = Jsoup.parse(
+                "<div>" + "a".repeat(40) + "!</div>", "https://x.com/");
+
+        String content = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> WebPageFetcher.extractBySelector(doc, "div:matches((.*a){20}$)"));
+
+        assertThat(content).isEmpty();
+        assertThat(WebPageFetcher.usesRegex("div:matchesOwn(x)")).isTrue();
+        assertThat(WebPageFetcher.usesRegex("a[href~=^/help]")).isTrue();
+        assertThat(WebPageFetcher.usesRegex("div.content > p, [data-role=main]")).isFalse();
     }
 }

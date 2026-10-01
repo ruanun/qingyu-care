@@ -5,15 +5,18 @@ import cn.dev33.satoken.secure.BCrypt;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ApiResponse;
+import com.qingyu.care.dto.ChangePasswordRequest;
 import com.qingyu.care.dto.UserUpdateRequest;
 import com.qingyu.care.entity.Tenant;
 import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.UserRole;
 import com.qingyu.care.repository.TenantRepository;
 import com.qingyu.care.repository.UserRepository;
+import com.qingyu.care.service.LoginThrottleService;
 import com.qingyu.care.service.SessionRevocationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -57,6 +60,7 @@ public class UserController {
     private final UserRepository userRepository;
     private final TenantRepository tenantRepository;
     private final SessionRevocationService sessionRevocationService;
+    private final LoginThrottleService loginThrottleService;
 
     /**
      * 获取当前租户下的所有用户
@@ -169,6 +173,37 @@ public class UserController {
     }
 
     /**
+     * 本人修改密码：必须验证当前密码（2026-09-30 安全审查 M3）。任何已登录角色都可调用，坐席此前在界面上根本改不了自己的密码。
+     *
+     * <p>猜当前密码复用登录的失败计数（同一用户名的同一个键）：否则持有被盗 token 的人能在这里无限次猜原密码，
+     * 绕开登录页的锁定。猜错 5 次后登录与这里一起锁 15 分钟。成功后其他设备的登录态失效，本设备保留。
+     */
+    @PostMapping("/me/password")
+    @AuditLog(action = "CHANGE_OWN_PASSWORD", targetType = "User")
+    public ApiResponse<Void> changeMyPassword(@Valid @RequestBody ChangePasswordRequest request) {
+        Long userId = TenantContext.getUserId();
+        if (userId == null) {
+            return ApiResponse.error(400, "无法识别当前用户");
+        }
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) {
+            return ApiResponse.error(404, "用户不存在或无权限访问");
+        }
+        boolean counted = loginThrottleService.acquireAttempt(user.getUsername());
+        if (!BCrypt.checkpw(request.getOldPassword(), user.getPassword())) {
+            // 名额保留：这就是一次失败的凭据尝试
+            return ApiResponse.error(400, "当前密码不正确");
+        }
+        if (counted) {
+            loginThrottleService.clearFailures(user.getUsername());
+        }
+        user.setPassword(BCrypt.hashpw(request.getNewPassword()));
+        userRepository.save(user);
+        sessionRevocationService.revokeOtherSessions(user.getId(), "本人修改密码");
+        return ApiResponse.success("密码已修改，其他设备需要重新登录", null);
+    }
+
+    /**
      * 更新用户信息
      */
     @AuditLog(action = "USER_UPDATE", targetType = "User")
@@ -222,6 +257,11 @@ public class UserController {
                     // 穿到 BCrypt.hashpw("   ")，后果与空串完全一致，只是构造方式换成粘贴带
                     // 尾随空格，比空串更容易无意间触发。
                     if (request.getPassword() != null && !request.getPassword().isBlank()) {
+                        if (self) {
+                            // 本人改密必须验证当前密码，走 POST /me/password（2026-09-30 安全审查 M3）：
+                            // 否则偷到的 token 就能改密接管账号，还会把真正的主人从其他设备踢下线
+                            return ApiResponse.<User>error(400, "修改自己的密码请使用「修改密码」，需要验证当前密码");
+                        }
                         user.setPassword(BCrypt.hashpw(request.getPassword()));
                         passwordChanged = true;
                     }

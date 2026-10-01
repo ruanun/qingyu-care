@@ -154,16 +154,20 @@ public class OpenApiAuthInterceptor implements AsyncHandlerInterceptor {
     }
 
     /**
-     * 客户端 IP：取 {@code X-Forwarded-For} 的<b>最后一段</b>。nginx 是追加模式
-     * （{@code $proxy_add_x_forwarded_for}），最后一段才是 nginx 自己看到的直连地址，
-     * 前面的段都是客户端可自填的；没有转发头就用直连地址。
+     * 客户端 IP：一律取 {@link HttpServletRequest#getRemoteAddr()}，<b>不要自己读转发头</b>。
+     *
+     * <p>{@code server.forward-headers-strategy: framework} 注册了 Spring 的 {@code ForwardedHeaderFilter}，
+     * 它在请求到达这里之前已经：① 把 {@code X-Forwarded-For} / {@code Forwarded} 从请求头里<b>藏掉</b>
+     * （{@code getHeader} 恒为 null）；② 用 {@code Forwarded: for=} 或 {@code X-Forwarded-For} 的
+     * <b>第一段</b>改写 {@code getRemoteAddr()}。所以「自己解析 XFF」在生产上根本执行不到，
+     * 而第一段又是客户端可自填的——曾因此让登录 / 注册 / 出图 / 访客全部按 IP 限流可被伪造 IP 绕过
+     * （2026-09-30 安全审查 H2；此前「取最后一段」的写法只在 mock 了 {@code getHeader} 的单测里成立）。
+     *
+     * <p>可信的前提由反代保证：nginx 用 {@code $remote_addr} <b>覆盖</b>（而非追加）{@code X-Forwarded-For}，
+     * 并清空客户端自带的 {@code Forwarded}，见 {@code frontend/nginx.conf}，{@code NginxForwardedHeadersTest} 守着。
+     * 后端 8080 不得绕过反代直接对外。
      */
     public static String resolveClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            String[] parts = xff.split(",");
-            return parts[parts.length - 1].trim();
-        }
         return request.getRemoteAddr();
     }
 

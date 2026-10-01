@@ -35,13 +35,19 @@ public class AuthController {
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Validated @RequestBody LoginRequest request, HttpServletRequest http) {
         loginThrottleService.checkLoginIp(OpenApiAuthInterceptor.resolveClientIp(http));
-        loginThrottleService.assertNotLocked(request.getUsername());
+        // 校验密码之前先原子占一次尝试名额，超限直接 429——并发请求也最多只有上限个能走到密码校验
+        boolean counted = loginThrottleService.acquireAttempt(request.getUsername());
         LoginResponse response;
         try {
             response = authService.login(request);
         } catch (BadCredentialsException e) {
+            // 凭据错：占掉的名额就是这次失败，保留
+            throw e;
+        } catch (RuntimeException e) {
             // 只有凭据错才计数：账号停用 / 租户冻结时密码其实是对的，计进去会把用户锁在一个本就进不去的门外
-            loginThrottleService.recordFailure(request.getUsername());
+            if (counted) {
+                loginThrottleService.releaseAttempt(request.getUsername());
+            }
             throw e;
         }
         loginThrottleService.clearFailures(request.getUsername());

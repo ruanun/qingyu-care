@@ -13,7 +13,7 @@
 
 | 参数 | 鉴权方式 | 可见文档 |
 |---|---|---|
-| `--api-secret <secret>` | `X-App-Id` + `X-Api-Key` | 服务端身份，INTERNAL + PUBLIC 全见 |
+| `--api-secret <secret>`（或环境变量 `QINGYU_API_SECRET`） | `X-App-Id` + `X-Api-Key` | 服务端身份，INTERNAL + PUBLIC 全见。推荐用环境变量：命令行参数会进 shell 历史与进程列表 |
 | `--as-visitor --origin <域名>` | `X-App-Id` + Origin 白名单 | 浏览器访客身份，仅见 PUBLIC |
 
 两者**互斥**，必须显式二选一——同时给出会被拒绝，缺一个会报错提示，不会静默退化成某一种。

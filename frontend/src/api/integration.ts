@@ -18,6 +18,10 @@ export const integrationService = {
     updateAllowedOrigins: (id: number, allowedOrigins: string): Promise<ApiResponse<Application>> =>
         api.put(`/applications/${id}`, { allowedOrigins }),
 
+    // 更新卡片图片域名白名单（换行、逗号、空格分隔均可，后端归一化）
+    updateImageDomains: (id: number, imageAllowedDomains: string): Promise<ApiResponse<Application>> =>
+        api.put(`/applications/${id}`, { imageAllowedDomains }),
+
     // 更新 Webhook 配置（回调 URL 与订阅事件，逗号分隔）
     updateWebhook: (id: number, payload: { webhookUrl: string; webhookEvents: string }): Promise<ApiResponse<Application>> =>
         api.put(`/applications/${id}`, payload),

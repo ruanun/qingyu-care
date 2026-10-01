@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import org.springframework.mock.web.MockMultipartFile;
@@ -582,5 +583,53 @@ class ChatAttachmentServiceTest {
                 new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.USER);
 
         assertThat(saved.getStorageKey()).isEqualTo("chat/x.png");
+    }
+
+    // ===== 2026-09-30 安全审查：访客附件按应用每日限额 =====
+
+    private void stubVisitorUsage(long count, long bytes) {
+        TenantContext.setAppId(20L);
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        rows.add(new Object[]{count, bytes});
+        when(attachmentRepository.visitorUsageSince(eq(20L), any())).thenReturn(rows);
+    }
+
+    /** 单会话上限挡不住「不断建新会话」：访客当日个数到顶就拒，且不碰对象存储 */
+    @Test
+    void 访客当日附件个数到顶则拒绝且不上传() {
+        stubOwnedSession("s-1");
+        stubVisitorUsage(200, 0);
+
+        assertThatThrownBy(() -> service.upload("s-1",
+                new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.USER))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("今日附件上传已达上限");
+        verify(fileService, never()).uploadChatBytes(any(), any(), any());
+    }
+
+    @Test
+    void 访客当日字节数加上本次超额则拒绝() {
+        stubOwnedSession("s-1");
+        stubVisitorUsage(1, 1024L * 1024 * 1024 - 5);
+
+        assertThatThrownBy(() -> service.upload("s-1",
+                new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.USER))
+                .hasMessageContaining("今日附件上传已达上限");
+        verify(fileService, never()).uploadChatBytes(any(), any(), any());
+    }
+
+    /** 坐席上传不受访客额度约束 */
+    @Test
+    void 坐席上传不查访客额度() {
+        stubOwnedSession("s-1");
+        TenantContext.setAppId(20L);
+        when(validator.validate(any(), any()))
+                .thenReturn(new AttachmentValidator.ValidatedFile("image/png", true, 1, 1));
+        when(fileService.uploadChatBytes(any(), any(), any())).thenReturn("chat/x.png");
+        when(attachmentRepository.save(any(ChatAttachment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.upload("s-1", new MockMultipartFile("file", "a.png", "image/png", new byte[10]), MessageRole.AGENT);
+
+        verify(attachmentRepository, never()).visitorUsageSince(any(), any());
     }
 }

@@ -16,7 +16,7 @@ export interface CliOptions {
  *
  * @author ruan
  */
-export function parseCliArgs(argv: string[]): CliOptions {
+export function parseCliArgs(argv: string[], env: Record<string, string | undefined> = process.env): CliOptions {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -35,7 +35,9 @@ export function parseCliArgs(argv: string[]): CliOptions {
   if (!appKey) throw new Error('缺少 --app-key');
 
   const asVisitor = values['as-visitor'] === true;
-  const apiSecret = values['api-secret'];
+  // 密钥也可以从环境变量 QINGYU_API_SECRET 读：放在命令行参数里会进 shell 历史和进程列表（ps / 任务管理器）
+  // （2026-09-30 安全审查）。--as-visitor 时忽略环境变量，否则全局设过它的人就再也用不了访客身份。
+  const apiSecret = values['api-secret'] ?? (asVisitor ? undefined : env.QINGYU_API_SECRET);
   const origin = values.origin;
 
   if (asVisitor && apiSecret) {
@@ -46,7 +48,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     return { apiBase, appKey, origin };
   }
   if (!apiSecret) {
-    throw new Error('需要 --api-secret（服务端身份），或用 --as-visitor --origin <白名单域名> 切到访客身份');
+    throw new Error('需要 --api-secret 或环境变量 QINGYU_API_SECRET（服务端身份），或用 --as-visitor --origin <白名单域名> 切到访客身份');
   }
   return { apiBase, appKey, apiSecret };
 }

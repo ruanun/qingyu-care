@@ -346,6 +346,7 @@ class WebPageSyncServiceTest {
         // value too long，用户拿到一个不可读的 500
         String longUrl = "https://example.com/faq?utm_source=" + "a".repeat(300);
         service.setSelf(mock(WebPageSyncService.class));
+        service.setLongTaskLimiter(new com.qingyu.care.service.LongTaskTenantLimiter());
         when(knowledgeService.getKnowledgeBase(1L)).thenReturn(new KnowledgeBase());
         when(documentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

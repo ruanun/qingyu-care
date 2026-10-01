@@ -97,14 +97,22 @@ public class AuthService {
         return sb.toString();
     }
     
+    /** 与真实哈希同轮数的占位哈希，只用于让「用户名不存在」与「密码错」耗时一致 */
+    private static final String DUMMY_HASH = BCrypt.hashpw("qingyu-timing-equalizer");
+
     /**
      * 用户登录
      */
     public LoginResponse login(LoginRequest request) {
         // 跨租户查：username 是全局唯一键，且带着上一个账号 satoken 的请求会让租户过滤器
         // 在这里生效，把别租户的账号挡成「用户名或密码错误」（详见 UserRepository 上的说明）。
-        User user = userRepository.findByUsernameAcrossTenants(request.getUsername())
-                .orElseThrow(BadCredentialsException::new);
+        User user = userRepository.findByUsernameAcrossTenants(request.getUsername()).orElse(null);
+        if (user == null) {
+            // 不存在的用户名也跑一次 BCrypt：否则直接抛只要约 1ms、存在时要 50~100ms，响应耗时本身就能探测
+            // 哪些用户名存在——锁定计数对不存在的用户名同样计数，就是为了不泄露这一点（2026-09-30 安全审查）
+            BCrypt.checkpw(request.getPassword(), DUMMY_HASH);
+            throw new BadCredentialsException();
+        }
         
         if (!BCrypt.checkpw(request.getPassword(), user.getPassword())) {
             throw new BadCredentialsException();

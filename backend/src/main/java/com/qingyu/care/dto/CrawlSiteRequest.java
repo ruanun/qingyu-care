@@ -40,8 +40,14 @@ public class CrawlSiteRequest {
     @Max(value = 5, message = "深度不能超过 5")
     private Integer maxDepth;
 
-    /** 正文 CSS 选择器；空则走启发式剔噪。 */
+    /**
+     * 正文 CSS 选择器；空则走启发式剔噪。
+     * 禁用 jsoup 的正则类选择器（{@code :matches*}、{@code [attr~=regex]}）：它们用 JDK 正则、没有超时，
+     * {@code :matches((a+)+$)} 就能把爬取线程卡死（2026-09-30 安全审查 M2，执行侧见 {@code WebPageFetcher}）。
+     */
     @Size(max = 500, message = "选择器长度不能超过 500 个字符")
+    @Pattern(regexp = "^(?!.*(?i::matches|~=)).*$", flags = Pattern.Flag.DOTALL,
+            message = "选择器不支持正则匹配（:matches 系列与 ~=），请改用标签、类名或属性选择器")
     private String contentSelector;
 
     /** 爬出的每篇文档的同步周期；不传按 MANUAL 处理。 */

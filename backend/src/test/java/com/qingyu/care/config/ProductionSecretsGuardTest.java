@@ -51,4 +51,31 @@ class ProductionSecretsGuardTest {
         MockEnvironment env = new MockEnvironment().withProperty("REDIS_PASSWORD", "k8Jq2mX9vLp4");
         assertThatCode(() -> new ProductionSecretsGuard(env).afterPropertiesSet()).doesNotThrowAnyException();
     }
+
+    /**
+     * 2026-09-30 安全审查：不用 compose、直接跑 jar 时环境变量没设，application.yml 里的默认值照样生效，
+     * 只查环境变量的版本看到 null 就放行了。按实际生效的属性值再查一遍。
+     */
+    @Test
+    void 环境变量没设但生效配置仍是仓库默认值时拒绝启动() {
+        MockEnvironment env = new MockEnvironment()
+                .withProperty("spring.datasource.password", "postgres")
+                .withProperty("dromara.x-file-storage.amazon-s3-v2[0].secret-key", "rustfsadmin123")
+                .withProperty("spring.data.redis.password", "");
+
+        assertThatThrownBy(() -> new ProductionSecretsGuard(env).afterPropertiesSet())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("SPRING_DATASOURCE_PASSWORD")
+                .hasMessageContaining("STORAGE_SECRET_KEY")
+                .hasMessageNotContaining("REDIS_PASSWORD");
+    }
+
+    @Test
+    void 生效配置是真实随机值时放行() {
+        MockEnvironment env = new MockEnvironment()
+                .withProperty("spring.datasource.password", "Xk2!9fQz-real")
+                .withProperty("dromara.x-file-storage.amazon-s3-v2[0].secret-key", "s3-real-secret-77");
+
+        new ProductionSecretsGuard(env).afterPropertiesSet();
+    }
 }

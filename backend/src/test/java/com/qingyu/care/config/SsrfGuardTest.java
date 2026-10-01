@@ -121,4 +121,31 @@ class SsrfGuardTest {
         assertThatCode(() -> SsrfGuard.assertAllowedHttpUrlAllowingPrivate("http://10.0.0.5:8080/hook"))
                 .doesNotThrowAnyException();
     }
+
+    /** 2026-09-30 安全审查补的网段：Java 自带判定都不认，或内嵌 IPv4 走不到 IPv4 分支 */
+    @org.junit.jupiter.api.Test
+    void 补充网段被拦截() throws Exception {
+        for (String a : new String[]{
+                "0.1.2.3",                 // 0.0.0.0/8
+                "168.63.129.16",           // Azure WireServer
+                "::127.0.0.1",             // IPv4 兼容地址
+                "::10.0.0.5",
+                "64:ff9b:1::a00:5",        // 本地 NAT64
+                "2002:a00:5::1",           // 6to4 内嵌 10.0.0.5
+                "2002:7f00:1::1"}) {       // 6to4 内嵌 127.0.0.1
+            assertThat(SsrfGuard.isBlocked(InetAddress.getByName(a))).as(a).isTrue();
+        }
+        // 正常公网 IPv6 / 6to4 内嵌公网地址不误伤
+        assertThat(SsrfGuard.isBlocked(InetAddress.getByName("2606:4700:4700::1111"))).isFalse();
+        assertThat(SsrfGuard.isBlocked(InetAddress.getByName("2002:808:808::1"))).isFalse();
+    }
+
+    @org.junit.jupiter.api.Test
+    void 放开私网时返回校验过的那一份地址_元数据仍拒() {
+        assertThat(SsrfGuard.resolveAllowingPrivate("http://127.0.0.1:9/x"))
+                .extracting(InetAddress::getHostAddress).containsExactly("127.0.0.1");
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> SsrfGuard.resolveAllowingPrivate("http://169.254.169.254/latest"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("元数据");
+    }
 }

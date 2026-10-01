@@ -48,7 +48,7 @@
 | 层 | 默认值 | 配置项 | 说明 |
 |---|---|---|---|
 | 应用级 | 60 次/分钟 | `qingyu.care.openapi.default-rate-limit-per-minute`；单个应用可在接入配置页覆盖 | 该应用**所有调用方共享**一个桶 |
-| 应用 + 客户端 IP | 20 次/分钟 | `qingyu.care.openapi.per-client-rate-limit-per-minute`（0 = 关闭） | **只作用于浏览器访客路径**（不带 `X-Api-Key`）。IP 取 `X-Forwarded-For` 的**最后一段**，没有就用直连地址 |
+| 应用 + 客户端 IP | 20 次/分钟 | `qingyu.care.openapi.per-client-rate-limit-per-minute`（0 = 关闭） | **只作用于浏览器访客路径**（不带 `X-Api-Key`）。IP 取反代传来的客户端地址（nginx 须用 `$remote_addr` 覆盖 `X-Forwarded-For`，见部署文档） |
 
 超限返回 **429** + `Retry-After: 60`（固定 60 秒）。Redis 不可用时限流放行（fail-open）。
 

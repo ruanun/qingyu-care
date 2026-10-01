@@ -22,6 +22,8 @@ export interface WidgetBrand {
   welcomeMessage: string;
   avatar: string;
   themeColor: string;
+  /** 卡片图片允许自动加载的域名；不在其中的只显示为链接（安全审查 M7）。旧后端没有该字段时按空处理 */
+  imageDomains?: string[];
 }
 
 /** 结构化卡片 UI 节点（镜像后端 UiNode）。 */

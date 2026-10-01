@@ -32,9 +32,9 @@ import static org.mockito.Mockito.when;
  *
  * <p>appKey 明写在宿主页里，Origin 头非浏览器客户端随便填：此前一个滥用者就能用满整个应用的
  * 桶，让该应用所有真实访客一起吃 429，或以应用级上限持续烧租户的模型额度。子桶把单个来源的
- * 上限压到更低。IP 取 {@code X-Forwarded-For} 的<b>最后一段</b>——nginx 是追加模式
- * （{@code $proxy_add_x_forwarded_for}），最后一段才是 nginx 自己看到的直连地址，前面的段
- * 都是客户端可自填的。
+ * 上限压到更低。IP 一律取 {@code getRemoteAddr()}——转发头已由 {@code ForwardedHeaderFilter} 解析并藏掉，
+ * 自己读 {@code X-Forwarded-For} 在生产上恒为 null（2026-09-30 安全审查 H2）。过滤器那一段的真实行为
+ * 由 {@code ClientIpResolutionTest} 走真实过滤器守着，这里只测分桶逻辑。
  *
  * @author ruan
  */
@@ -75,9 +75,9 @@ class OpenApiAuthInterceptorClientLimitTest {
     }
 
     @Test
-    void 客户端子桶用满时429_且键含最后一跳IP() throws Exception {
+    void 客户端子桶用满时429_且键含客户端IP() throws Exception {
         stubAuthenticated();
-        when(request.getHeader("X-Forwarded-For")).thenReturn("1.2.3.4, 203.0.113.9");
+        when(request.getRemoteAddr()).thenReturn("203.0.113.9");
         when(rateLimitService.tryConsume(eq("app-key-1"), anyInt())).thenReturn(true);
         when(rateLimitService.tryConsume(eq("client:app-key-1:203.0.113.9"), eq(20))).thenReturn(false);
 
@@ -89,9 +89,10 @@ class OpenApiAuthInterceptorClientLimitTest {
     }
 
     @Test
-    void 没有转发头时按直连地址分桶() throws Exception {
+    void 不读转发头_只按过滤器解析后的地址分桶() throws Exception {
         stubAuthenticated();
-        when(request.getHeader("X-Forwarded-For")).thenReturn(null);
+        // 即便请求头里还看得到 XFF（真实环境下它已被过滤器藏掉），也不得采信
+        org.mockito.Mockito.lenient().when(request.getHeader("X-Forwarded-For")).thenReturn("6.6.6.6");
         when(request.getRemoteAddr()).thenReturn("198.51.100.7");
         when(rateLimitService.tryConsume(anyString(), anyInt())).thenReturn(true);
 
@@ -111,7 +112,7 @@ class OpenApiAuthInterceptorClientLimitTest {
         when(request.getHeader("X-Api-Key")).thenReturn("s");
         when(openApiAuthService.authenticate("app-key-1", "s")).thenReturn(app);
         // 必须给出客户端 IP：否则代码会因「IP 为空」而非「服务端路径」跳过分桶，本条变异验证过是永真的
-        when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.9");
+        when(request.getRemoteAddr()).thenReturn("203.0.113.9");
         when(rateLimitService.tryConsume(anyString(), anyInt())).thenReturn(true);
 
         boolean result = interceptor.preHandle(request, response, new Object());

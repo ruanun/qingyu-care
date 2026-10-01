@@ -43,6 +43,7 @@ public class KnowledgeController {
     private final ReembedService reembedService;
     private final WebPageSyncService webPageSyncService;
     private final SiteCrawlService siteCrawlService;
+    private final com.qingyu.care.service.LongTaskTenantLimiter longTaskLimiter;
 
     @PostMapping
     @Operation(summary = "创建知识库", description = "创建新的知识库")
@@ -155,7 +156,8 @@ public class KnowledgeController {
     @AuditLog(action = "SYNC_WEB_PAGE", targetType = "Document")
     public ApiResponse<Void> syncWebPage(@PathVariable Long documentId) {
         knowledgeService.getDocument(documentId);   // 归属校验：越权直接抛，避免跨租户触发同步
-        webPageSyncService.syncDocumentAsync(documentId);
+        // 按租户限并发：长任务池全平台共享（2026-09-30 安全审查 M6）
+        longTaskLimiter.acquire().launch(() -> webPageSyncService.syncDocumentAsync(documentId));
         return ApiResponse.success("已触发同步", null);
     }
 
@@ -221,6 +223,10 @@ public class KnowledgeController {
     @ReadOnlyEndpoint // id 列表放请求体的查询；知识库页会轮询它，坐席只读浏览时不能被 @AdminOnlyWrites 拦掉
     @Operation(summary = "批量获取文档处理状态", description = "一次查询多个文档的处理状态")
     public ApiResponse<List<DocumentStatusDTO>> getDocumentsStatus(@RequestBody List<Long> documentIds) {
+        // 坐席也能调、且逐个 id 查库做归属校验：列表不设上限就是一个放大器（2026-09-30 安全审查：此前无上限，负数还会让 SQL 报错）
+        if (documentIds == null || documentIds.size() > 200) {
+            throw new com.qingyu.care.exception.InvalidOperationException("一次最多查询 200 个文档的状态");
+        }
         List<DocumentStatusDTO> statusList = knowledgeService.getDocumentsStatus(documentIds);
         return ApiResponse.success(statusList);
     }

@@ -1,5 +1,7 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.service.LongTaskTenantLimiter;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.dto.KnowledgeBaseRequest;
@@ -54,6 +56,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @org.springframework.beans.factory.annotation.Autowired
     public void setQuotaService(com.qingyu.care.service.QuotaService quotaService) {
         this.quotaService = quotaService;
+    }
+
+
+    private LongTaskTenantLimiter longTaskLimiter;
+
+    /** setter 注入：构造函数被多条单测手工调用，见 LongTaskTenantLimiter。没注入会 NPE 而不是静默跳过限流。 */
+    @Autowired
+    public void setLongTaskLimiter(LongTaskTenantLimiter longTaskLimiter) {
+        this.longTaskLimiter = longTaskLimiter;
     }
 
     // 自注入解决 @Async 同类调用不生效问题
@@ -312,16 +323,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         requireDocumentOwnership(doc, documentId);
         doc.setStatus(DocumentStatus.PENDING);
         documentRepository.save(doc);
-        // 必须走 self：同类直调不经代理，@Async 不生效（重处理会占住请求线程）
-        self.processDocumentAsync(documentId);
+        // 必须走 self：同类直调不经代理，@Async 不生效（重处理会占住请求线程）；
+        // 按租户限并发：长任务池全平台共享（2026-09-30 安全审查 M6）
+        longTaskLimiter.acquire().launch(() -> self.processDocumentAsync(documentId));
     }
 
     @Async(AsyncConfig.LONG_TASK_EXECUTOR)
-    public void processDocumentAsync(Long documentId) {
+    public java.util.concurrent.CompletableFuture<Void> processDocumentAsync(Long documentId) {
         // 必须走 self：同类直调不经代理，processDocument 的 @Transactional 会失效，
         // 其首行 deleteByDocumentId 是 @Modifying 原生删除，无环绕事务直接抛
         // TransactionRequiredException，整条摄取链路静默失败在 @Async 线程里。
         self.processDocument(documentId);
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
     }
     
     @Override

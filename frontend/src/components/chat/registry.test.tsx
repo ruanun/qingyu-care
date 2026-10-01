@@ -2,6 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { UiNode } from '@/types';
 import { renderNode } from './registry';
+import { useAppStore } from '@/stores/appStore';
+import type { Application } from '@/types';
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
@@ -36,5 +38,33 @@ describe('卡片表单 select 对畸形选项 fail-soft', () => {
 
         fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
         expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['M', 'L']);
+    });
+});
+
+/**
+ * 安全审查 M7：卡片 image 的地址由模型生成，可被提示注入操纵成外带地址。
+ * 只有命中当前应用配置的图片域名才自动加载，否则只给链接。
+ */
+describe('卡片图片按应用的域名白名单放行', () => {
+    const setApp = (imageAllowedDomains: string) => {
+        useAppStore.setState({
+            currentApp: { id: 20, name: '商城' },
+            apps: [{ id: 20, name: '商城', imageAllowedDomains } as Application],
+        });
+    };
+
+    it('命中白名单：自动加载且不带 Referer', () => {
+        setApp('*.shop.com');
+        const { container } = render(<>{renderNode({ type: 'image', props: { src: 'https://img.shop.com/a.png' } }, vi.fn(), 0)}</>);
+        const img = container.querySelector('img')!;
+        expect(img.getAttribute('src')).toBe('https://img.shop.com/a.png');
+        expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+    });
+
+    it('不在白名单：不加载，只给可点击链接', () => {
+        setApp('img.shop.com');
+        const { container } = render(<>{renderNode({ type: 'image', props: { src: 'https://evil.com/x.png?q=1', alt: '物流' } }, vi.fn(), 0)}</>);
+        expect(container.querySelector('img')).toBeNull();
+        expect(container.querySelector('a')!.textContent).toBe('查看图片：物流');
     });
 });
