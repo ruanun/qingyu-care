@@ -145,20 +145,14 @@ public class ModelRouterService {
         }
     }
 
-    private volatile ModelEndpointGuardInterceptor endpointGuard;
+    private ModelEndpointGuardInterceptor endpointGuard;
 
     /** 懒建：它内部持有一个 OkHttp 连接池，所有模型客户端共用一份；放 @PostConstruct 会让手工 new 的单测拿到 null。 */
-    private ModelEndpointGuardInterceptor endpointGuard() {
-        ModelEndpointGuardInterceptor g = endpointGuard;
-        if (g == null) {
-            synchronized (this) {
-                if (endpointGuard == null) {
-                    endpointGuard = new ModelEndpointGuardInterceptor(allowPrivateEndpoints);
-                }
-                g = endpointGuard;
-            }
+    private synchronized ModelEndpointGuardInterceptor endpointGuard() {
+        if (endpointGuard == null) {
+            endpointGuard = new ModelEndpointGuardInterceptor(allowPrivateEndpoints);
         }
-        return g;
+        return endpointGuard;
     }
 
     /**
@@ -231,6 +225,14 @@ public class ModelRouterService {
     }
 
     private List<AiModelConfig> mergeTenantAndShared(String scenario) {
+        // 「租户自有」那半靠 Hibernate 过滤器隔离，而 TenantDataAspect 对「无上下文 + 未登录」一律不加过滤：
+        // 在没有租户上下文的后台线程里查，拿到的是全平台所有租户的模型（2026-09-30 安全审查 H1，QA 生成曾如此）。
+        // 这里直接拒绝，别让下一个 @Async / @Scheduled 调用方再把它带回来。请求线程（含平台管理员）与
+        // 自己设好上下文的后台任务（如非流式回退）不受影响。
+        if (TenantContext.getTenantId() == null
+                && org.springframework.web.context.request.RequestContextHolder.getRequestAttributes() == null) {
+            throw new IllegalStateException("后台线程没有租户上下文，不能解析模型——请在请求线程解析好后传入（callWithModels）");
+        }
         List<AiModelConfig> own = repository.findByScenarioAndEnabledTrueOrderByPriorityAsc(scenario);
         List<AiModelConfig> shared = repository.findSharedModelsByScenario(scenario);
         java.util.LinkedHashMap<String, AiModelConfig> byKey = new java.util.LinkedHashMap<>();

@@ -43,14 +43,8 @@ public class RestClientWebhookHttpClient implements WebhookHttpClient {
     public int post(String url, Map<String, String> headers, String body) {
         URI uri = SsrfGuard.requireHttpUrl(url);
         String host = uri.getHost();
-        InetAddress[] pinned;
-        if (properties.isAllowPrivateTargets()) {
-            // 放开私网（集成测试的接收端在 127.0.0.1），但云元数据段永不放行；
-            // 只解析一次、钉住校验过的那一份，不能校验完再自己解析（DNS rebinding）
-            pinned = SsrfGuard.resolveAllowingPrivate(url);
-        } else {
-            pinned = SsrfGuard.resolveAndValidate(host);
-        }
+        // 私网开关只给集成测试与本地联调（接收端在 127.0.0.1），云元数据永不放行；钉住的就是校验过的那一份
+        InetAddress[] pinned = SsrfGuard.resolve(host, properties.isAllowPrivateTargets());
 
         try (CloseableHttpClient httpClient = PinnedHttpClientFactory.create(
                 PinnedHttpClientFactory.pinnedResolver(host, pinned), properties.getTimeoutMs())) {

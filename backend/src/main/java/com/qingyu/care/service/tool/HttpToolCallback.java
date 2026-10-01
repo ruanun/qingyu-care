@@ -51,7 +51,13 @@ public class HttpToolCallback implements ToolCallback {
     public String call(String toolInput) {
         try {
             Map<String, Object> args = parseArgs(toolInput);
-            String url = UrlTemplateFiller.fill(tool.getUrlTemplate(), args);
+            String url;
+            try {
+                url = UrlTemplateFiller.fill(tool.getUrlTemplate(), args);
+            } catch (IllegalArgumentException e) {
+                // 「缺少必填参数 X」「参数 X 取值非法」：模型据此补参数重试，消息只含参数名
+                throw new ToolCallFailure(e.getMessage(), e);
+            }
             String body = "POST".equalsIgnoreCase(tool.getHttpMethod()) ? toolInput : null;
             // 审计：记录工具名与参数键（不记值，避免泄露）
             log.info("调用工具 {} 参数键={}", tool.getName(), args.keySet());
@@ -70,12 +76,11 @@ public class HttpToolCallback implements ToolCallback {
 
     /**
      * 交给模型的失败原因（2026-09-30 安全审查）：这条消息进模型上下文，访客能诱导模型复述出来。
-     * 守卫的 {@link IllegalArgumentException} 只含 host 或参数名、执行器自己构造的 {@link IllegalStateException}
-     * 只含状态码与正文片段，可以原样给；其余异常（如 Spring 的 {@code ResourceAccessException}）消息里带完整请求 URL，
-     * 路径里可能有密钥，只给类名。
+     * 只有抛出方声明过「消息可外露」的 {@link ToolCallFailure} 原样给；其余异常只给类名——
+     * Spring 的 {@code ResourceAccessException}、{@code URI.create} 抛的 IAE 消息里都带完整请求 URL，路径或查询串里可能有密钥。
      */
     public static String describeForModel(Exception e) {
-        if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
+        if (e instanceof ToolCallFailure) {
             return e.getMessage();
         }
         return "网络或服务异常（" + e.getClass().getSimpleName() + "）";
@@ -93,7 +98,7 @@ public class HttpToolCallback implements ToolCallback {
      * 否则同一个 SSRF 拦截在 HTTP 工具上能看出原因、在 MCP 上看不出。
      */
     public static String describeForLog(Exception e) {
-        return e instanceof IllegalArgumentException
+        return e instanceof IllegalArgumentException || e instanceof ToolCallFailure
                 ? e.getClass().getSimpleName() + ": " + e.getMessage()
                 : e.getClass().getSimpleName();
     }

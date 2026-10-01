@@ -141,4 +141,21 @@ class HttpToolCallbackTest {
         String result = cb.call("{\"orderId\":\"A123\"}");
         assertThat(result.split("</tool_result>", -1)).hasSize(2);
     }
+
+    /**
+     * 「是否可外露」由抛出方声明（ToolCallFailure），不按通用异常类型推断：URI.create 等库代码抛的
+     * IllegalArgumentException 消息里带完整 URL，查询串里可能直接写着 key。
+     */
+    @Test
+    void 通用IAE的消息不交给模型_只有ToolCallFailure原样给() {
+        HttpToolCallback leaky = new HttpToolCallback(tool(), (m, u, a, b, t) -> {
+            throw new IllegalArgumentException("Illegal character in query at index 30: http://8.8.8.8/o?key=SECRET x");
+        }, mapper);
+        assertThat(leaky.call("{\"orderId\":\"A123\"}")).doesNotContain("SECRET").contains("IllegalArgumentException");
+
+        HttpToolCallback declared = new HttpToolCallback(tool(), (m, u, a, b, t) -> {
+            throw new ToolCallFailure("工具返回 HTTP 404：订单不存在");
+        }, mapper);
+        assertThat(declared.call("{\"orderId\":\"A123\"}")).contains("订单不存在");
+    }
 }

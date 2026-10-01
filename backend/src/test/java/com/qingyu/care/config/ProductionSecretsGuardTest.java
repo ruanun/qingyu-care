@@ -16,9 +16,9 @@ class ProductionSecretsGuardTest {
     @Test
     void 生产环境仍用占位符时拒绝启动并列出变量名() {
         MockEnvironment env = new MockEnvironment()
-                .withProperty("QINGYU_ADMIN_INITIAL_PASSWORD", "change-me-in-production")
-                .withProperty("REDIS_PASSWORD", "Change-Me-Too")
-                .withProperty("SPRING_DATASOURCE_PASSWORD", "a-real-random-value");
+                .withProperty("qingyu.care.platform.admin-initial-password", "change-me-in-production")
+                .withProperty("spring.data.redis.password", "Change-Me-Too")
+                .withProperty("spring.datasource.password", "a-real-random-value");
 
         assertThatThrownBy(() -> new ProductionSecretsGuard(env).afterPropertiesSet())
                 .isInstanceOf(IllegalStateException.class)
@@ -30,7 +30,7 @@ class ProductionSecretsGuardTest {
     /** demo 是对外演示环境，照样要拦——只有 dev/test 豁免 */
     @Test
     void demo_profile同样要拦() {
-        MockEnvironment env = new MockEnvironment().withProperty("STORAGE_SECRET_KEY", "change-me-in-production");
+        MockEnvironment env = new MockEnvironment().withProperty("dromara.x-file-storage.amazon-s3-v2[0].secret-key", "change-me-in-production");
         env.setActiveProfiles("demo");
         assertThatThrownBy(() -> new ProductionSecretsGuard(env).afterPropertiesSet())
                 .hasMessageContaining("STORAGE_SECRET_KEY");
@@ -39,7 +39,7 @@ class ProductionSecretsGuardTest {
     @Test
     void dev与test_profile豁免() {
         for (String profile : new String[]{"dev", "test"}) {
-            MockEnvironment env = new MockEnvironment().withProperty("REDIS_PASSWORD", "change-me-in-production");
+            MockEnvironment env = new MockEnvironment().withProperty("spring.data.redis.password", "change-me-in-production");
             env.setActiveProfiles(profile);
             assertThatCode(() -> new ProductionSecretsGuard(env).afterPropertiesSet()).as(profile).doesNotThrowAnyException();
         }
@@ -48,7 +48,7 @@ class ProductionSecretsGuardTest {
     /** 本地不带 profile 直接跑、变量都没设时不能误伤 */
     @Test
     void 变量未设置或已是真实值时放行() {
-        MockEnvironment env = new MockEnvironment().withProperty("REDIS_PASSWORD", "k8Jq2mX9vLp4");
+        MockEnvironment env = new MockEnvironment().withProperty("spring.data.redis.password", "k8Jq2mX9vLp4");
         assertThatCode(() -> new ProductionSecretsGuard(env).afterPropertiesSet()).doesNotThrowAnyException();
     }
 

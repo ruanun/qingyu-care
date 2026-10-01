@@ -76,7 +76,7 @@ public class DashboardController {
     @Operation(summary = "获取最近会话", description = "返回最近的会话列表")
     public ApiResponse<List<ChatSession>> getRecentSessions(
             @RequestParam(defaultValue = "5") int limit) {
-        limit = Math.max(1, Math.min(limit, 100)); // 坐席也能调（2026-09-30 安全审查：此前无上限，负数还会让 SQL 报错）
+        limit = com.qingyu.care.util.PageParams.size(limit); // 坐席也能调，不设上限一次能拉全部会话
         // 改走 ChatService（复用已按 TenantContext 收窄的 getAllSessions），不再直连 repository
         Page<ChatSession> recentSessions = chatService.getAllSessions(null, PageRequest.of(0, limit));
         return ApiResponse.success(recentSessions.getContent());

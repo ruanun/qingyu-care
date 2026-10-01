@@ -33,8 +33,11 @@ import java.util.concurrent.TimeUnit;
  */
 public final class ModelEndpointGuardInterceptor implements Interceptor {
 
-    /** 守卫拒绝：消息里只有主机名 / IP，可安全回显给管理员。 */
-    public static class EndpointRejectedException extends IOException {
+    /**
+     * 守卫拒绝：消息里只有主机名 / IP，可安全回显给管理员。继承 {@link UnknownHostException} 是因为 OkHttp 的
+     * {@code Dns} 契约只允许抛它；调用方按这个类型识别「被守卫拦下」，不要按消息文案识别。
+     */
+    public static class EndpointRejectedException extends UnknownHostException {
         public EndpointRejectedException(String message) {
             super(message);
         }
@@ -79,18 +82,25 @@ public final class ModelEndpointGuardInterceptor implements Interceptor {
         return response;
     }
 
+    /** 判据与其余出站路径共用 {@link SsrfGuard#resolve}，这里只把它的异常翻译成 OkHttp 认的类型 */
     private static InetAddress[] resolve(String host, boolean allowPrivate) throws UnknownHostException {
-        InetAddress[] addrs = InetAddress.getAllByName(host);
-        for (InetAddress a : addrs) {
-            check(a, allowPrivate, host);
+        try {
+            return SsrfGuard.resolve(host, allowPrivate);
+        } catch (IllegalArgumentException e) {
+            if (e.getCause() instanceof UnknownHostException unknown) {
+                throw unknown;
+            }
+            throw rejected(host);
         }
-        return addrs;
     }
 
     private static void check(InetAddress a, boolean allowPrivate, String host) throws UnknownHostException {
-        if (SsrfGuard.isCloudMetadata(a) || (!allowPrivate && SsrfGuard.isBlocked(a))) {
-            // OkHttp 的 Dns 契约只允许抛 UnknownHostException；消息与 SsrfGuard 口径一致，只含主机名
-            throw new UnknownHostException("模型端点指向内网或元数据地址，已拒绝: " + host);
+        if (!SsrfGuard.isAllowed(a, allowPrivate)) {
+            throw rejected(host);
         }
+    }
+
+    private static EndpointRejectedException rejected(String host) {
+        return new EndpointRejectedException("模型端点指向内网或元数据地址，已拒绝: " + host);
     }
 }

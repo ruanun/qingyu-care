@@ -43,7 +43,13 @@ public class RestClientHttpToolExecutor implements HttpToolExecutor {
     public String execute(String method, String url, String authHeader, String body, int timeoutMs) {
         // 出站前解析+校验目标主机一次，拿到「已校验」的全部地址，供连接期复用。
         final String host = URI.create(url).getHost();
-        final InetAddress[] pinned = SsrfGuard.resolveAndValidate(host);
+        final InetAddress[] pinned;
+        try {
+            pinned = SsrfGuard.resolveAndValidate(host);
+        } catch (IllegalArgumentException e) {
+            // 守卫消息只含主机名，可以交给模型；模型据此知道是地址被拦而不是网络抖动
+            throw new ToolCallFailure(e.getMessage(), e);
+        }
         final int timeout = effectiveTimeout(timeoutMs);
 
         try (CloseableHttpClient httpClient = PinnedHttpClientFactory.create(
@@ -71,13 +77,15 @@ public class RestClientHttpToolExecutor implements HttpToolExecutor {
                         if (status < 200 || status >= 300) {
                             // 只给状态码与正文片段，不带 URL：Spring 默认的错误消息含请求路径，
                             // 路径里可能有密钥，而这条消息会交给模型、可被访客诱导复述
-                            throw new IllegalStateException("工具返回 HTTP " + status
+                            throw new ToolCallFailure("工具返回 HTTP " + status
                                     + (text.isBlank() ? "" : "：" + truncate(text, ERROR_SNIPPET_CHARS)));
                         }
                         return text;
                     }));
+        } catch (PinnedHttpClientFactory.DeadlineExceededException e) {
+            throw new ToolCallFailure(e.getMessage(), e);
         } catch (IOException e) {
-            throw new IllegalStateException("工具 HTTP 调用失败: " + e.getClass().getSimpleName(), e);
+            throw new ToolCallFailure("工具 HTTP 调用失败: " + e.getClass().getSimpleName(), e);
         }
     }
 

@@ -7,8 +7,11 @@ import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 占位符密钥没改就拒绝启动（2026-09-25 安全扫描 M4）。
@@ -27,20 +30,14 @@ import java.util.Locale;
 @Component
 public class ProductionSecretsGuard implements InitializingBean {
 
-    /** 与 .env.example 一一对应；新增密钥类变量时同步加在这里 */
-    static final List<String> SECRET_VARS = List.of(
-            "SPRING_DATASOURCE_PASSWORD",
-            "STORAGE_SECRET_KEY",
-            "QINGYU_ADMIN_INITIAL_PASSWORD",
-            "REDIS_PASSWORD");
-
     /**
-     * 实际生效的密钥属性 → 对应的环境变量名（报错时告诉运维改哪一行）。
+     * 实际生效的密钥属性 → 对应的环境变量名（报错时告诉运维改哪一行）。新增密钥类配置时同步加在这里。
      *
-     * <p>2026-09-30 安全审查：只查环境变量拦不住「不用 compose、直接跑 jar」——变量没设，application.yml 里的
-     * 默认值（{@code postgres}、{@code rustfsadmin123}）照样生效，而上面那份按变量名的检查看到的是 null、直接放行。
+     * <p>按<b>实际生效的属性值</b>查，而不是按环境变量名查（2026-09-30 安全审查）：环境变量经占位符或宽松绑定最终都落到
+     * 这些属性上，所以按属性查是它的超集；而只查环境变量拦不住「不用 compose、直接跑 jar」——变量没设，
+     * application.yml 里的默认值（{@code postgres}、{@code rustfsadmin123}）照样生效，按变量名查看到的却是 null。
      */
-    static final java.util.Map<String, String> EFFECTIVE_SECRETS = new java.util.LinkedHashMap<>();
+    static final Map<String, String> EFFECTIVE_SECRETS = new LinkedHashMap<>();
     static {
         EFFECTIVE_SECRETS.put("spring.datasource.password", "SPRING_DATASOURCE_PASSWORD");
         EFFECTIVE_SECRETS.put("dromara.x-file-storage.amazon-s3-v2[0].secret-key", "STORAGE_SECRET_KEY");
@@ -50,7 +47,7 @@ public class ProductionSecretsGuard implements InitializingBean {
     }
 
     /** 仓库里写死过的默认口令：配置文件默认值、本地 compose 与 dev profile 用的那几个 */
-    static final java.util.Set<String> KNOWN_DEFAULTS = java.util.Set.of(
+    static final Set<String> KNOWN_DEFAULTS = Set.of(
             "postgres", "rustfsadmin", "rustfsadmin123", "admin123", "demo123456");
 
     private final Environment environment;
@@ -66,19 +63,13 @@ public class ProductionSecretsGuard implements InitializingBean {
             return;
         }
         List<String> offending = new ArrayList<>();
-        for (String name : SECRET_VARS) {
-            String v = environment.getProperty(name);
-            if (v != null && v.toLowerCase(Locale.ROOT).contains("change-me")) {
-                offending.add(name);
-            }
-        }
-        for (java.util.Map.Entry<String, String> e : EFFECTIVE_SECRETS.entrySet()) {
+        for (Map.Entry<String, String> e : EFFECTIVE_SECRETS.entrySet()) {
             String v = environment.getProperty(e.getKey());
             if (v == null || v.isBlank()) {
                 continue; // 留空有各自的语义（管理员口令随机生成、Redis 无密码），不在这里判
             }
             String lower = v.toLowerCase(Locale.ROOT);
-            if ((lower.contains("change-me") || KNOWN_DEFAULTS.contains(lower)) && !offending.contains(e.getValue())) {
+            if (lower.contains("change-me") || KNOWN_DEFAULTS.contains(lower)) {
                 offending.add(e.getValue());
             }
         }

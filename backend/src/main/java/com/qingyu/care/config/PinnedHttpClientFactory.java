@@ -14,9 +14,8 @@ import org.apache.hc.core5.util.Timeout;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -44,13 +43,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class PinnedHttpClientFactory {
 
-    /** 截止看门狗：只做「到点关客户端」这一件事，单线程足够，daemon 不拦 JVM 退出。 */
-    private static final ScheduledExecutorService DEADLINE_WATCHDOG =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "outbound-deadline");
-                t.setDaemon(true);
-                return t;
-            });
+    /**
+     * 截止看门狗：只做「到点关客户端」这一件事，单线程足够，daemon 不拦 JVM 退出。
+     * ⚠️ 必须 {@code removeOnCancelPolicy}：默认被取消的任务要留在延迟队列里直到原定时刻，而任务闭包抓着这次的
+     * 客户端（含连接池），正常结束的调用也会把它多留 10~60 秒，Webhook 突发时堆积成百上千个。
+     */
+    private static final ScheduledThreadPoolExecutor DEADLINE_WATCHDOG = newWatchdog();
+
+    private static ScheduledThreadPoolExecutor newWatchdog() {
+        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "outbound-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.setRemoveOnCancelPolicy(true);
+        return ex;
+    }
 
     private PinnedHttpClientFactory() {
     }
@@ -86,18 +94,10 @@ public final class PinnedHttpClientFactory {
             fired.set(true);
             client.close(CloseMode.IMMEDIATE);
         }, deadlineMs, TimeUnit.MILLISECONDS);
+        T result;
         try {
-            T result = call.call();
-            // 被看门狗关掉时 Spring 关闭响应的那步 IOException 会被它自己吞掉，调用看似正常返回——
-            // 只要截止触发过就一律按失败算，别把「超时被掐断」当成功
-            if (fired.get()) {
-                throw new DeadlineExceededException(deadlineMs);
-            }
-            return result;
+            result = call.call();
         } catch (IOException | RuntimeException e) {
-            if (e instanceof DeadlineExceededException) {
-                throw e;
-            }
             if (fired.get()) {
                 throw new DeadlineExceededException(deadlineMs);
             }
@@ -105,6 +105,12 @@ public final class PinnedHttpClientFactory {
         } finally {
             watchdog.cancel(false);
         }
+        // 被看门狗关掉时 Spring 关闭响应的那步 IOException 会被它自己吞掉，调用看似正常返回——
+        // 只要截止触发过就一律按失败算，别把「超时被掐断」当成功
+        if (fired.get()) {
+            throw new DeadlineExceededException(deadlineMs);
+        }
+        return result;
     }
 
     /**

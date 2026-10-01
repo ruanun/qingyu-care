@@ -141,9 +141,7 @@ public class AiModelController {
      */
     static String describeUpstreamFailure(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof ModelEndpointGuardInterceptor.EndpointRejectedException
-                    || (t instanceof java.net.UnknownHostException && t.getMessage() != null
-                        && t.getMessage().startsWith("模型端点"))) {
+            if (t instanceof ModelEndpointGuardInterceptor.EndpointRejectedException) {
                 return t.getMessage();
             }
             if (t instanceof com.openai.errors.OpenAIServiceException se) {

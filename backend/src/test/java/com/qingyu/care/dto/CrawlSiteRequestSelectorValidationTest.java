@@ -19,7 +19,7 @@ class CrawlSiteRequestSelectorValidationTest {
     private boolean selectorValid(String selector) {
         CrawlSiteRequest req = new CrawlSiteRequest();
         req.setContentSelector(selector);
-        return validator.validateProperty(req, "contentSelector").isEmpty();
+        return validator.validateProperty(req, "contentSelectorSafe").isEmpty();
     }
 
     @Test

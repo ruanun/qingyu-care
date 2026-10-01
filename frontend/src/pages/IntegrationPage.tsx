@@ -6,6 +6,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
+import { parseImageDomains } from '@/lib/imagePolicy';
 import { useConfirm } from '@/hooks/use-confirm';
 
 const IntegrationPage: React.FC = () => {
@@ -31,7 +33,7 @@ const IntegrationPage: React.FC = () => {
             setAppSecret(r.data.appSecret ?? '');
             setRateLimit(r.data.rateLimitPerMinute != null ? String(r.data.rateLimitPerMinute) : '');
             setAllowedOrigins(r.data.allowedOrigins ?? '');
-            setImageDomains((r.data.imageAllowedDomains ?? '').split(',').filter(Boolean).join('\n'));
+            setImageDomains(parseImageDomains(r.data.imageAllowedDomains).join('\n'));
             setWebhookUrl(r.data.webhookUrl ?? '');
             setWebhookSecret(r.data.webhookSecret ?? '');
             setWebhookEvents(r.data.webhookEvents ?? '');
@@ -101,15 +103,14 @@ const IntegrationPage: React.FC = () => {
         if (!currentApp) return;
         try {
             const r = await integrationService.updateImageDomains(currentApp.id, imageDomains);
-            if (r.code !== 200) throw new Error(r.message);
+            throwIfFailed(r);
             const saved = r.data.imageAllowedDomains ?? '';
-            setImageDomains(saved.split(',').filter(Boolean).join('\n'));
+            setImageDomains(parseImageDomains(saved).join('\n'));
             // 同步进应用列表：会话详情、坐席工作台的卡片图片按它判断是否自动加载，不刷新页面也立即生效
             setApps(apps.map((a) => (a.id === currentApp.id ? { ...a, imageAllowedDomains: saved } : a)));
             toast({ title: '已保存' });
         } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : '未知错误';
-            toast({ title: '保存失败', description: msg, variant: 'destructive' });
+            toast({ title: '保存失败', description: getErrorMessage(e), variant: 'destructive' });
         }
     };
 

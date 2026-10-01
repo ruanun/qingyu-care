@@ -142,10 +142,10 @@ class SsrfGuardTest {
 
     @org.junit.jupiter.api.Test
     void 放开私网时返回校验过的那一份地址_元数据仍拒() {
-        assertThat(SsrfGuard.resolveAllowingPrivate("http://127.0.0.1:9/x"))
+        assertThat(SsrfGuard.resolve("127.0.0.1", true))
                 .extracting(InetAddress::getHostAddress).containsExactly("127.0.0.1");
         org.assertj.core.api.Assertions.assertThatThrownBy(
-                () -> SsrfGuard.resolveAllowingPrivate("http://169.254.169.254/latest"))
+                () -> SsrfGuard.resolve("169.254.169.254", true))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("元数据");
     }
 }

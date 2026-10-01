@@ -189,14 +189,12 @@ public class UserController {
         if (user == null) {
             return ApiResponse.error(404, "用户不存在或无权限访问");
         }
-        boolean counted = loginThrottleService.acquireAttempt(user.getUsername());
+        loginThrottleService.acquireAttempt(user.getUsername());
         if (!BCrypt.checkpw(request.getOldPassword(), user.getPassword())) {
             // 名额保留：这就是一次失败的凭据尝试
             return ApiResponse.error(400, "当前密码不正确");
         }
-        if (counted) {
-            loginThrottleService.clearFailures(user.getUsername());
-        }
+        loginThrottleService.clearFailures(user.getUsername());
         user.setPassword(BCrypt.hashpw(request.getNewPassword()));
         userRepository.save(user);
         sessionRevocationService.revokeOtherSessions(user.getId(), "本人修改密码");

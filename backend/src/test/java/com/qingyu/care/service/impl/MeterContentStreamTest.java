@@ -31,7 +31,7 @@ class MeterContentStreamTest {
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 Flux.just(SpringAiResponses.of("hi", 99));
 
-        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set)
+        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set, () -> 0)
                 .collectList()
                 .block();
 
@@ -48,7 +48,7 @@ class MeterContentStreamTest {
 
         Flux<org.springframework.ai.chat.model.ChatResponse> source = Flux.empty();
 
-        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set)
+        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set, () -> 0)
                 .collectList()
                 .block();
 
@@ -75,7 +75,7 @@ class MeterContentStreamTest {
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 Flux.just(chunkNoUsage, chunkWithUsage);
 
-        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set)
+        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set, () -> 0)
                 .collectList()
                 .block();
 
@@ -94,7 +94,7 @@ class MeterContentStreamTest {
                 Flux.error(new RuntimeException("LLM 调用失败"));
 
         // 错误流：collectList().block() 会抛异常，用 onErrorReturn 兜底
-        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set)
+        List<String> contents = ChatServiceImpl.meterContentStream(source, captured::set, () -> 0)
                 .onErrorReturn("__error__")
                 .collectList()
                 .block();
@@ -122,7 +122,7 @@ class MeterContentStreamTest {
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 Flux.just(chunk("退货"), chunk("七天内"), SpringAiResponses.of("。", 999));
 
-        List<String> got = ChatServiceImpl.meterContentStream(source, captured::set, 100)
+        List<String> got = ChatServiceImpl.meterContentStream(source, captured::set, () -> 100)
                 .take(2)
                 .collectList()
                 .block();
@@ -138,7 +138,7 @@ class MeterContentStreamTest {
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 Flux.just(chunk("退货"), SpringAiResponses.of("七天内", 42));
 
-        ChatServiceImpl.meterContentStream(source, captured::set, 100).collectList().block();
+        ChatServiceImpl.meterContentStream(source, captured::set, () -> 100).collectList().block();
 
         assertThat(captured.get()).isEqualTo(42);
     }
@@ -150,7 +150,7 @@ class MeterContentStreamTest {
         Flux<org.springframework.ai.chat.model.ChatResponse> source =
                 Flux.concat(Flux.just(chunk("退货")), Flux.error(new RuntimeException("炸了")));
 
-        ChatServiceImpl.meterContentStream(source, captured::set, 100)
+        ChatServiceImpl.meterContentStream(source, captured::set, () -> 100)
                 .onErrorReturn("__error__").collectList().block();
 
         assertThat(captured.get()).isEqualTo(0);

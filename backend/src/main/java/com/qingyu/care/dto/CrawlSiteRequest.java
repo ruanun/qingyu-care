@@ -4,6 +4,7 @@ import com.qingyu.care.enums.SyncInterval;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -46,10 +47,15 @@ public class CrawlSiteRequest {
      * {@code :matches((a+)+$)} 就能把爬取线程卡死（2026-09-30 安全审查 M2，执行侧见 {@code WebPageFetcher}）。
      */
     @Size(max = 500, message = "选择器长度不能超过 500 个字符")
-    @Pattern(regexp = "^(?!.*(?i::matches|~=)).*$", flags = Pattern.Flag.DOTALL,
-            message = "选择器不支持正则匹配（:matches 系列与 ~=），请改用标签、类名或属性选择器")
     private String contentSelector;
 
     /** 爬出的每篇文档的同步周期；不传按 MANUAL 处理。 */
     private SyncInterval syncInterval;
+
+    /** 与执行侧同一份判定（{@code JsoupSelectors.usesRegex}），避免落库规则与执行规则各写一份后漂移 */
+    @AssertTrue(message = "选择器不支持正则匹配（:matches 系列与 ~=），请改用标签、类名或属性选择器")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isContentSelectorSafe() {
+        return contentSelector == null || !com.qingyu.care.util.JsoupSelectors.usesRegex(contentSelector);
+    }
 }

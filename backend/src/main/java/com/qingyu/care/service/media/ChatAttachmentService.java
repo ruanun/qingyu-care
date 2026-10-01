@@ -85,7 +85,7 @@ public class ChatAttachmentService {
         }
         java.util.List<Object[]> rows = attachmentRepository.visitorUsageSince(
                 appId, java.time.LocalDate.now().atStartOfDay());
-        Object[] row = rows.isEmpty() ? new Object[]{0L, 0L} : rows.get(0);
+        Object[] row = rows.get(0); // 不带 GROUP BY 的聚合恒返回一行
         long count = ((Number) row[0]).longValue();
         long bytes = ((Number) row[1]).longValue();
         if ((visitorDailyMaxCount > 0 && count >= visitorDailyMaxCount)

@@ -22,6 +22,21 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ChatStrategy extends BaseTenantEntity {
 
+    /** 向量检索条数上限：租户可填任意值，直接打在全平台共享的 pgvector 上（2026-09-30 安全审查） */
+    public static final int MAX_TOP_K = 50;
+    /** 关键词检索条数上限 */
+    public static final int MAX_KEYWORD_TOP_K = 100;
+
+    /** 实际生效的向量检索条数：未填取 5，夹到 [1, {@link #MAX_TOP_K}]。两条检索路径都用它，别在调用点各写一份。 */
+    public int effectiveTopK() {
+        return Math.max(1, Math.min(topK != null ? topK : 5, MAX_TOP_K));
+    }
+
+    /** 实际生效的关键词检索条数：未填取 10，夹到 [1, {@link #MAX_KEYWORD_TOP_K}] */
+    public int effectiveKeywordTopK() {
+        return Math.max(1, Math.min(keywordTopK != null ? keywordTopK : 10, MAX_KEYWORD_TOP_K));
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
