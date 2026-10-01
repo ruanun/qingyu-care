@@ -50,17 +50,15 @@ public class ReembedService {
         public volatile String status;
         public final LocalDateTime startedAt = LocalDateTime.now();
         public volatile LocalDateTime finishedAt;
-        /** 发起任务的租户（平台管理员发起为 null）。private 且无 getter：不进响应体 */
+        /** 发起任务的租户与应用（平台管理员发起为 null）。private 且无 getter：不进响应体 */
         private final Long tenantId;
+        private final Long appId;
 
-        Progress(String jobId, String scope) {
-            this(jobId, scope, null);
-        }
-
-        Progress(String jobId, String scope, Long tenantId) {
+        Progress(String jobId, String scope, Long tenantId, Long appId) {
             this.jobId = jobId;
             this.scope = scope;
             this.tenantId = tenantId;
+            this.appId = appId;
             this.status = "RUNNING";
         }
     }
@@ -109,7 +107,7 @@ public class ReembedService {
         // 先占名额再登记任务：超限时不留一条永远 RUNNING 的进度（2026-09-30 安全审查 M6）
         LongTaskTenantLimiter.Permit permit = longTaskLimiter.acquire();
         String jobId = UUID.randomUUID().toString();
-        Progress p = new Progress(jobId, scope.name(), TenantContext.getTenantId());
+        Progress p = new Progress(jobId, scope.name(), TenantContext.getTenantId(), TenantContext.getAppId());
         jobs.put(jobId, p);
         List<Long> kbIds = kbs.stream().map(KnowledgeBase::getId).toList();
         permit.launch(() -> self.runReembed(p, kbIds));
@@ -120,9 +118,7 @@ public class ReembedService {
         Progress p = jobs.get(jobId);
         // 只能查自己租户发起的任务；平台管理员可查全部。不存在与无权一律 404，不泄露 jobId 是否存在
         // （2026-09-30 安全审查：此前任何登录用户拿到 jobId 都能看别人的进度）
-        boolean visible = p != null && (SecurityUtil.isPlatformAdmin()
-                || (p.tenantId != null && p.tenantId.equals(TenantContext.getTenantId())));
-        if (!visible) {
+        if (p == null || !com.qingyu.care.config.TenantOwnershipGuard.mutableInCurrentContext(p.tenantId, p.appId)) {
             throw new BusinessException(404, "重建任务不存在: " + jobId);
         }
         return p;

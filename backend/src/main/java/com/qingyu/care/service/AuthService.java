@@ -97,8 +97,11 @@ public class AuthService {
         return sb.toString();
     }
     
-    /** 与真实哈希同轮数的占位哈希，只用于让「用户名不存在」与「密码错」耗时一致 */
-    private static final String DUMMY_HASH = BCrypt.hashpw("qingyu-timing-equalizer");
+    /**
+     * 与真实哈希同轮数（$2a$10$）的占位哈希，只用于让「用户名不存在」与「密码错」耗时一致。
+     * 写成预先算好的常量：在类加载时 hashpw 会给每次启动、每个加载该类的测试 JVM 平白多一次 BCrypt。
+     */
+    private static final String DUMMY_HASH = "$2a$10$iXO0qIc9GDpyfuT.JQZY0.eIrsLJQu4RyOxw7jEcpE8h4HVZpRmkC";
 
     /**
      * 用户登录

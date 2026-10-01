@@ -192,8 +192,8 @@ public class ChatController {
             @RequestParam(defaultValue = "20") int size) {
         SecurityUtil.requireAgent();
         Long agentId = cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong();
-        // 夹住分页参数再交给原生 SQL（2026-09-30 安全审查：此前无上限，负数还会让 SQL 报错）
-        return ApiResponse.success(chatService.getMySessions(agentId, Math.max(0, page), Math.max(1, Math.min(size, 100))));
+        return ApiResponse.success(chatService.getMySessions(agentId,
+                com.qingyu.care.util.PageParams.page(page), com.qingyu.care.util.PageParams.size(size)));
     }
 
     @GetMapping("/sessions/waiting")

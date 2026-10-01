@@ -17,6 +17,17 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ModelRouterServiceMergeTest {
 
+    // 模型解析要求有租户上下文或处在请求线程里（后台线程兜底，见下方最后一条）；仓库是 mock，取值不影响合并逻辑
+    @org.junit.jupiter.api.BeforeEach
+    void setTenant() {
+        com.qingyu.care.config.TenantContext.setTenantId(1L);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearTenant() {
+        com.qingyu.care.config.TenantContext.clear();
+    }
+
     @Mock AiModelConfigRepository repository;
     @InjectMocks ModelRouterService service;
 
@@ -89,5 +100,17 @@ class ModelRouterServiceMergeTest {
         List<AiModelConfig> result = service.getModelsForScenario("default");
 
         assertThat(result).extracting(AiModelConfig::getName).containsExactly("own");
+    }
+
+    /**
+     * 2026-09-30 安全审查 H1 的机制层兜底：没有租户上下文的后台线程里，过滤器不生效、会查到全平台所有租户的模型。
+     * 直接拒绝，别让新的 @Async / @Scheduled 调用方把泄漏带回来。
+     */
+    @Test
+    void 后台线程没有租户上下文时拒绝解析模型() {
+        com.qingyu.care.config.TenantContext.clear();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.getModelsForScenario("default"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("租户上下文");
     }
 }

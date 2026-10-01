@@ -79,28 +79,38 @@ public final class SsrfGuard {
      * 没有任何正当用途，任何开关都不该放行它。
      */
     public static void assertAllowedHttpUrlAllowingPrivate(String url) {
-        resolveAllowingPrivate(url);
+        resolve(requireHttpUrl(url).getHost(), true);
     }
 
     /**
-     * 放开私网时的「解析 + 校验」，返回<b>校验过的那一份</b>地址供连接期钉住。
+     * 出站前的「解析 + 校验」统一入口，返回<b>校验过的那一份</b>地址供连接期钉住。
+     * {@code allowPrivate} 对应各出站方自己的私网开关（模型 / Webhook / MCP），放开时仍拦云元数据。
      *
-     * <p>⚠️ 出站方必须拿这个返回值去钉 IP，不能先调 {@link #assertAllowedHttpUrlAllowingPrivate} 再自己解析一次：
-     * TTL=0 的域名第一次解析给普通私网、第二次给 169.254.169.254，被钉住的就是元数据地址——「永不放行云元数据」
-     * 这半条在开关打开时就被绕过了（2026-09-30 安全审查，Webhook 与 MCP 曾是这个两次解析的写法）。
+     * <p>⚠️ 出站方必须拿这个返回值去钉 IP，不能校验完再自己解析一次：TTL=0 的域名第一次解析给普通私网、
+     * 第二次给 169.254.169.254，被钉住的就是元数据地址（2026-09-30 安全审查，Webhook 与 MCP 曾是这个写法）。
+     *
+     * @throws IllegalArgumentException 地址未通过守卫；主机无法解析时 cause 是 {@link UnknownHostException}
      */
-    public static InetAddress[] resolveAllowingPrivate(String url) {
-        URI uri = requireHttpUrl(url);
+    public static InetAddress[] resolve(String host, boolean allowPrivate) {
+        return allowPrivate ? resolveAllowingPrivate(host) : resolveAndValidate(host);
+    }
+
+    /** 单个地址是否放行：云元数据任何时候都拦，其余内网 / 特殊网段看开关。供只拿得到实连地址的场景复核。 */
+    public static boolean isAllowed(InetAddress a, boolean allowPrivate) {
+        return !isCloudMetadata(a) && (allowPrivate || !isBlocked(a));
+    }
+
+    private static InetAddress[] resolveAllowingPrivate(String host) {
         try {
-            InetAddress[] addrs = InetAddress.getAllByName(uri.getHost());
+            InetAddress[] addrs = InetAddress.getAllByName(host);
             for (InetAddress addr : addrs) {
                 if (isCloudMetadata(addr)) {
-                    throw new IllegalArgumentException("URL 指向云元数据地址，已拒绝: " + uri.getHost());
+                    throw new IllegalArgumentException("URL 指向云元数据地址，已拒绝: " + host);
                 }
             }
             return addrs;
         } catch (UnknownHostException e) {
-            throw new IllegalArgumentException("URL 主机无法解析: " + uri.getHost(), e);
+            throw new IllegalArgumentException("URL 主机无法解析: " + host, e);
         }
     }
 

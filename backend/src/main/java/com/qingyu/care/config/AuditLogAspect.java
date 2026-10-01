@@ -52,7 +52,10 @@ public class AuditLogAspect {
      */
     public static String sanitize(String raw) {
         if (raw == null) return "";
-        String masked = SENSITIVE.matcher(raw).replaceAll("$1=***");
+        // 先粗截断再跑正则：脱敏正则逐字符做先行断言，对整段长参数（如 QA 正文）跑一遍是白费，
+        // 超出部分反正会被下面截掉，不会漏出密钥。留 4 倍余量给被遮掉的值
+        String head = raw.length() > MAX_DETAIL * 4 ? raw.substring(0, MAX_DETAIL * 4) : raw;
+        String masked = SENSITIVE.matcher(head).replaceAll("$1=***");
         return masked.length() > MAX_DETAIL ? masked.substring(0, MAX_DETAIL) : masked;
     }
 

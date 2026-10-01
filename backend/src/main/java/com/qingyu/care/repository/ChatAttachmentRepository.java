@@ -3,6 +3,8 @@ package com.qingyu.care.repository;
 import com.qingyu.care.entity.ChatAttachment;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -27,10 +29,9 @@ public interface ChatAttachmentRepository extends JpaRepository<ChatAttachment, 
      * 某应用自 {@code since} 起访客（{@code uploader_role = 'USER'}）上传的附件数与总字节，返回单行 [count, bytes]。
      * 显式按 app_id 收窄而不依赖过滤器：调用方在开放 API 上下文里，但口径必须是「这个应用」而不是「当前过滤器恰好开着什么」。
      */
-    @org.springframework.data.jpa.repository.Query(value = "SELECT count(*), COALESCE(SUM(file_size), 0) FROM chat_attachment "
+    @Query(value = "SELECT count(*), COALESCE(SUM(file_size), 0) FROM chat_attachment "
             + "WHERE app_id = :appId AND uploader_role = 'USER' AND created_at >= :since", nativeQuery = true)
-    java.util.List<Object[]> visitorUsageSince(@org.springframework.data.repository.query.Param("appId") Long appId,
-                                             @org.springframework.data.repository.query.Param("since") java.time.LocalDateTime since);
+    List<Object[]> visitorUsageSince(@Param("appId") Long appId, @Param("since") LocalDateTime since);
 
     /**
      * 孤儿：始终没被任何消息引用、且早于给定时间创建。带 Pageable 分批取——

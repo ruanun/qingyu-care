@@ -131,8 +131,8 @@ class WebPageFetcherSelectorTest {
                 () -> WebPageFetcher.extractBySelector(doc, "div:matches((.*a){20}$)"));
 
         assertThat(content).isEmpty();
-        assertThat(WebPageFetcher.usesRegex("div:matchesOwn(x)")).isTrue();
-        assertThat(WebPageFetcher.usesRegex("a[href~=^/help]")).isTrue();
-        assertThat(WebPageFetcher.usesRegex("div.content > p, [data-role=main]")).isFalse();
+        assertThat(com.qingyu.care.util.JsoupSelectors.usesRegex("div:matchesOwn(x)")).isTrue();
+        assertThat(com.qingyu.care.util.JsoupSelectors.usesRegex("a[href~=^/help]")).isTrue();
+        assertThat(com.qingyu.care.util.JsoupSelectors.usesRegex("div.content > p, [data-role=main]")).isFalse();
     }
 }

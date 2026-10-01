@@ -1,4 +1,13 @@
-export function buildStyles(themeColor: string): string {
+const DEFAULT_THEME_COLOR = '#0d9488';
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+
+/**
+ * themeColor 原样拼进下面十几处 CSS：不是十六进制颜色就回退默认色（2026-09-30 安全审查）。
+ * 后端落库时已校验，这里是危险点本身的防线——拦住存量数据与今后任何没走校验的写入路径，
+ * 否则 `red} .qy-panel{...}` 这种值能在宿主页上铺一层覆盖或用 url() 追踪访客。
+ */
+export function buildStyles(rawThemeColor: string): string {
+  const themeColor = HEX_COLOR.test(rawThemeColor) ? rawThemeColor : DEFAULT_THEME_COLOR;
   return `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }

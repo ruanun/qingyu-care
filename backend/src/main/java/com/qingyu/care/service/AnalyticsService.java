@@ -332,7 +332,7 @@ public class AnalyticsService {
         Scope sc = resolveScope(appIdFilter);
         Page<MissedQuestionRow> rows = messageRepository.findMissedQuestions(
                 from, sc.tenantId(), sc.appId(),
-                PageRequest.of(Math.max(0, page), Math.min(Math.max(1, size), 100)));
+                PageRequest.of(com.qingyu.care.util.PageParams.page(page), com.qingyu.care.util.PageParams.size(size)));
         return PageDTO.from(rows.map(r ->
                 new MissedQuestionDTO(r.getContent(), r.getCreatedAt(), r.getSessionId())));
     }

@@ -444,8 +444,8 @@ public class ChatServiceImpl implements ChatService {
         ChatStreamEvent startEvent =
                 ChatStreamEvent.start(session.getSessionId(), suggestHandover, knowledgeHits, null);
 
-        // 客户端中途断开、usage 未到时按它估算 prompt 侧 token（见 meterContentStream）
-        final int promptTokenEstimate = estimatePromptTokens(messages);
+        // 客户端中途断开、usage 未到时才估算 prompt 侧 token（见 meterContentStream）；延迟计算，正常结束的轮次不付这笔开销
+        final java.util.function.IntSupplier promptTokenEstimate = () -> estimatePromptTokens(messages);
 
         // 请求线程内捕获（Reactor 线程无 ThreadLocal 上下文，回退分支要手动搬运）
         final Long tenantIdForFallback = TenantContext.getTenantId();
@@ -622,12 +622,6 @@ public class ChatServiceImpl implements ChatService {
      * 重跑（见类注释与 CLAUDE.md），而非流式是累计的。换用不触发该上游缺陷的供应商时，
      * 这条要重新评估。
      */
-    static Flux<String> meterContentStream(
-            Flux<org.springframework.ai.chat.model.ChatResponse> source,
-            java.util.function.IntConsumer onTokensUsed) {
-        return meterContentStream(source, onTokensUsed, 0);
-    }
-
     /**
      * 同上，另带 prompt 侧的 token 估算值，供「客户端中途断开」时估算记账。
      *
@@ -643,9 +637,10 @@ public class ChatServiceImpl implements ChatService {
     static Flux<String> meterContentStream(
             Flux<org.springframework.ai.chat.model.ChatResponse> source,
             java.util.function.IntConsumer onTokensUsed,
-            int promptTokenEstimate) {
+            java.util.function.IntSupplier promptTokenEstimate) {
         java.util.concurrent.atomic.AtomicInteger tokens = new java.util.concurrent.atomic.AtomicInteger(0);
-        StringBuilder emittedText = new StringBuilder();
+        // 只累计已输出部分的字数统计，不另存一份整段回复（外层已有累加器存着正文）
+        TokenTally emitted = new TokenTally();
         return source
                 .doOnNext(cr -> {
                     if (cr.getMetadata() != null && cr.getMetadata().getUsage() != null
@@ -655,11 +650,11 @@ public class ChatServiceImpl implements ChatService {
                 })
                 .mapNotNull(cr -> (cr.getResult() != null && cr.getResult().getOutput() != null)
                         ? cr.getResult().getOutput().getText() : null)
-                .doOnNext(emittedText::append)
+                .doOnNext(emitted::add)
                 .doFinally(sig -> {
                     int used = tokens.get();
                     if (used == 0 && sig == reactor.core.publisher.SignalType.CANCEL) {
-                        used = promptTokenEstimate + estimateTokens(emittedText);
+                        used = promptTokenEstimate.getAsInt() + emitted.estimate();
                     }
                     onTokensUsed.accept(used);
                 });
@@ -679,22 +674,35 @@ public class ChatServiceImpl implements ChatService {
      * 宁可略高——低估正是要堵的绕过额度的口子。
      */
     static int estimateTokens(CharSequence text) {
-        if (text == null || text.isEmpty()) {
+        if (text == null) {
             return 0;
         }
-        int cjk = 0;
-        int other = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN
-                    || (c >= 0x3040 && c <= 0x30FF)      // 日文假名
-                    || (c >= 0xAC00 && c <= 0xD7AF)) {   // 韩文音节
-                cjk++;
-            } else {
-                other++;
+        TokenTally t = new TokenTally();
+        t.add(text);
+        return t.estimate();
+    }
+
+    /** 字数统计：中日韩字符按 1 字 1 token，其余按 4 个字符 1 token 向上取整。可增量累加，供流式逐块计数。 */
+    static final class TokenTally {
+        private int cjk;
+        private int other;
+
+        void add(CharSequence text) {
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                // 直接比码点区间：基本汉字、扩展 A、兼容汉字、日文假名、韩文音节
+                if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF)
+                        || (c >= 0x3040 && c <= 0x30FF) || (c >= 0xAC00 && c <= 0xD7AF)) {
+                    cjk++;
+                } else {
+                    other++;
+                }
             }
         }
-        return cjk + (other + 3) / 4;
+
+        int estimate() {
+            return cjk + (other + 3) / 4;
+        }
     }
 
     /**
@@ -1039,8 +1047,7 @@ public class ChatServiceImpl implements ChatService {
                 return hybridRetrievalService.search(query, scope, strategy);
             }
 
-            // 策略里的 topK 由租户填写、没有范围校验，直接打在全平台共享的 pgvector 上，这里夹住（2026-09-30 安全审查）
-            int topK = Math.max(1, Math.min(strategy.getTopK() != null ? strategy.getTopK() : 5, 50));
+            int topK = strategy.effectiveTopK();
             // 0.45：与本类顶部及 ChatStrategyService 的实测标定一致（0.7 已被证实几乎滤掉全部
             // 真实相关命中）。列 similarity_threshold 是 nullable=false，这条兜底实际不可达，
             // 但留着一个用已推翻的值做的哑弹只会误导下一个读代码的人。

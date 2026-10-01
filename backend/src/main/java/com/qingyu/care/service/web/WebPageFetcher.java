@@ -130,7 +130,7 @@ public class WebPageFetcher {
      * 包级 static 免容器单测（同本类其余提取方法的惯例）。
      */
     static String extractBySelector(org.jsoup.nodes.Document doc, String selector) {
-        if (usesRegex(selector)) {
+        if (com.qingyu.care.util.JsoupSelectors.usesRegex(selector)) {
             // 落库时已拦（CrawlSiteRequest 的 @Pattern），这里兜存量值：jsoup 的正则选择器走 JDK 正则、
             // 没有超时，灾难性回溯会把线程卡死，下面的 catch 对此无能为力（2026-09-30 安全审查 M2）
             log.warn("正文选择器含正则匹配，已忽略并回退启发式剔噪 selector={}", selector);
@@ -149,12 +149,6 @@ public class WebPageFetcher {
             log.warn("正文选择器语法非法，将回退启发式剔噪 selector={}: {}", selector, e.getMessage());
             return "";
         }
-    }
-
-    /** jsoup 中会编译用户正则的选择器：{@code :matches} / {@code :matchesOwn} / {@code :matchesWholeText} 等与 {@code [attr~=regex]}。 */
-    static boolean usesRegex(String selector) {
-        String s = selector.toLowerCase(java.util.Locale.ROOT);
-        return s.contains(":matches") || s.contains("~=");
     }
 
     /**

@@ -68,11 +68,9 @@ public class McpConnectionFactory {
         if (host == null) {
             throw new IllegalArgumentException("MCP server URL 无法解析主机名: " + url);
         }
-        if (!allowPrivateServers) {
-            return SsrfGuard.resolveAndValidate(host);
-        }
+        SsrfGuard.requireHttpUrl(url);
         // 只解析一次、钉住校验过的那一份：校验完再自己解析会被 TTL=0 的域名翻转到元数据地址（2026-09-30 安全审查）
-        return SsrfGuard.resolveAllowingPrivate(url);
+        return SsrfGuard.resolve(host, allowPrivateServers);
     }
 
     /**

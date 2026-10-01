@@ -23,7 +23,8 @@ import java.time.LocalDateTime;
  * @author ruan
  */
 @Entity
-@Table(name = "chat_attachment")
+// (app_id, created_at)：访客每日额度在每次访客上传时按「本应用当天」聚合，没有索引就是对只增不减的整表顺序扫描
+@Table(name = "chat_attachment", indexes = @Index(name = "idx_chat_attachment_app_created", columnList = "app_id, created_at"))
 @Getter
 @Setter
 @NoArgsConstructor
