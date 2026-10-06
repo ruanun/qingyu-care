@@ -13,9 +13,11 @@ import { EmbeddingModelCard } from './EmbeddingModelCard';
  *
  * @author ruan
  */
-const { toastSpy } = vi.hoisted(() => ({ toastSpy: vi.fn() }));
+const { toastSpy, confirmSpy } = vi.hoisted(() => ({ toastSpy: vi.fn(), confirmSpy: vi.fn() }));
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastSpy }) }));
+// 确认框本身有自己的实现与测试；这里只关心「确认 / 不确认」之后的分支
+vi.mock('@/hooks/use-confirm', () => ({ useConfirm: () => ({ confirm: confirmSpy, confirmDialog: null }) }));
 
 vi.mock('@/api/embedding', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/api/embedding')>();
@@ -24,6 +26,7 @@ vi.mock('@/api/embedding', async (importOriginal) => {
         embeddingService: {
             getState: vi.fn(),
             switchModel: vi.fn(),
+            rebuild: vi.fn(),
             cancelJob: vi.fn(),
             resumeJob: vi.fn(),
         },
@@ -67,7 +70,7 @@ const idle = (): EmbeddingState => ({
 
 const running = (done: number): EmbeddingState => ({
     ...idle(), pending: BGE,
-    job: { id: 30, status: 'RUNNING', fromTag: 'qwen3.7-text-embedding', toTag: 'BAAI/bge-m3', total: 10, done, failed: 0,
+    job: { id: 30, kind: 'SWITCH', status: 'RUNNING', fromTag: 'qwen3.7-text-embedding', toTag: 'BAAI/bge-m3', total: 10, done, failed: 0,
         message: null, startedAt: '', finishedAt: null },
 });
 
@@ -78,6 +81,8 @@ describe('EmbeddingModelCard', () => {
         vi.mocked(embeddingService.switchModel).mockReset();
         vi.mocked(embeddingService.cancelJob).mockReset();
         vi.mocked(embeddingService.resumeJob).mockReset();
+        vi.mocked(embeddingService.rebuild).mockReset();
+        confirmSpy.mockReset();
     });
 
     afterEach(() => {
@@ -185,5 +190,47 @@ describe('EmbeddingModelCard', () => {
 
         expect(await screen.findByText(/平台尚未配置可用的向量模型/)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /更换/ })).toBeDisabled();
+    });
+
+    it('重建向量：确认后发起并重新拉状态，进度文案说明检索不受影响', async () => {
+        const rebuilding: EmbeddingState = {
+            ...idle(),
+            job: { id: 41, kind: 'REBUILD', status: 'RUNNING', fromTag: 'qwen3.7-text-embedding', toTag: 'qwen3.7-text-embedding',
+                total: 12, done: 4, failed: 0, message: null, startedAt: '', finishedAt: null },
+        };
+        vi.mocked(embeddingService.getState).mockResolvedValueOnce(ok(idle())).mockResolvedValueOnce(ok(rebuilding));
+        vi.mocked(embeddingService.rebuild).mockResolvedValue(ok({ jobId: 41 }));
+        confirmSpy.mockResolvedValue(true);
+        render(<EmbeddingModelCard />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /重建向量/ }));
+
+        await waitFor(() => expect(embeddingService.rebuild).toHaveBeenCalled());
+        expect(await screen.findByText(/正在用当前模型重建向量/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '取消重建' })).toBeInTheDocument();
+    });
+
+    it('重建向量：不确认就不发起', async () => {
+        vi.mocked(embeddingService.getState).mockResolvedValue(ok(idle()));
+        confirmSpy.mockResolvedValue(false);
+        render(<EmbeddingModelCard />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /重建向量/ }));
+
+        await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+        expect(embeddingService.rebuild).not.toHaveBeenCalled();
+    });
+
+    it('重建向量：业务错误弹 destructive toast', async () => {
+        vi.mocked(embeddingService.getState).mockResolvedValue(ok(idle()));
+        vi.mocked(embeddingService.rebuild).mockResolvedValue(fail('本应用有向量任务正在进行，请等它完成或先取消'));
+        confirmSpy.mockResolvedValue(true);
+        render(<EmbeddingModelCard />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /重建向量/ }));
+
+        await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({
+            variant: 'destructive', description: '本应用有向量任务正在进行，请等它完成或先取消',
+        })));
     });
 });

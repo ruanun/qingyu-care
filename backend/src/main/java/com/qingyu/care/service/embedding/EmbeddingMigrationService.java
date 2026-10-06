@@ -5,6 +5,7 @@ import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.config.TenantOwnershipGuard;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.entity.EmbeddingMigrationJob;
+import com.qingyu.care.enums.EmbeddingJobKind;
 import com.qingyu.care.enums.EmbeddingMigrationStatus;
 import com.qingyu.care.exception.BusinessException;
 import com.qingyu.care.exception.InvalidOperationException;
@@ -124,6 +125,7 @@ public class EmbeddingMigrationService {
         if (resolver.pending(appId) != null) {
             throw new InvalidOperationException("已有一次向量模型切换在进行中，请等它完成或先取消");
         }
+        requireNoRunningJob(appId);
         if (active.getId().equals(target.getId())) {
             return new SwitchResult(SwitchOutcome.UNCHANGED, null);
         }
@@ -145,6 +147,7 @@ public class EmbeddingMigrationService {
         EmbeddingMigrationJob job = jobRepository.save(EmbeddingMigrationJob.builder()
                 .tenantId(TenantContext.getTenantId())
                 .appId(appId)
+                .kind(EmbeddingJobKind.SWITCH)
                 .fromModelId(active.getId())
                 .fromTag(EmbeddingTag.of(active))
                 .toModelId(target.getId())
@@ -159,6 +162,39 @@ public class EmbeddingMigrationService {
         return new SwitchResult(SwitchOutcome.MIGRATING, jobId);
     }
 
+    /**
+     * 用当前向量模型原地重建本应用全部向量（模型没换、向量化的输入或切分方式变了时用，如 2026-10-06 起只嵌入正文）。
+     *
+     * <p>标签不变，不走影子重建：逐篇调 {@code reembedDocumentFor(doc, 当前模型)}，它在<b>一个事务</b>里先删本篇该标签的向量
+     * 再写新向量——提交前其他连接看到的仍是旧向量，所以重建期间检索不中断（MVCC 保证，不是靠双写）。
+     * 取消只是停下：已重建的部分与没重建的部分同一个模型、同一个向量空间，混着检索没有问题。
+     */
+    @Transactional
+    public Long rebuild() {
+        Long appId = requireAppId();
+        AiModelConfig active = resolver.active(appId);
+        if (resolver.pending(appId) != null) {
+            throw new InvalidOperationException("有一次向量模型切换还没结束，请等它完成或先取消");
+        }
+        requireNoRunningJob(appId);
+        LongTaskTenantLimiter.Permit permit = longTaskLimiter.acquire();
+        EmbeddingMigrationJob job = jobRepository.save(EmbeddingMigrationJob.builder()
+                .tenantId(TenantContext.getTenantId())
+                .appId(appId)
+                .kind(EmbeddingJobKind.REBUILD)
+                .fromModelId(active.getId())
+                .fromTag(EmbeddingTag.of(active))
+                .toModelId(active.getId())
+                .toTag(EmbeddingTag.of(active))
+                .status(EmbeddingMigrationStatus.RUNNING)
+                .total(0).done(0).failed(0)
+                .build());
+        Long jobId = job.getId();
+        AfterCommit.run(() -> permit.launch(() -> self.run(jobId)));
+        log.info("应用 {} 开始用当前向量模型 {} 重建向量，任务 {}", appId, EmbeddingTag.of(active), jobId);
+        return jobId;
+    }
+
     /** 取消：运行中的任务置 CANCELLING，由任务在检查点自行清理；已停下的（失败 / 中断）当场清理。 */
     @Transactional
     public void cancel(Long jobId) {
@@ -169,7 +205,13 @@ public class EmbeddingMigrationService {
             return;
         }
         if (RESUMABLE.contains(job.getStatus())) {
-            rollBack(job);
+            if (EmbeddingJobKind.orDefault(job.getKind()) == EmbeddingJobKind.REBUILD) {
+                // 重建没有挂起的指针、没有要回滚的向量，标成已取消即可
+                jobRepository.transition(jobId, RESUMABLE, EmbeddingMigrationStatus.CANCELLED,
+                        "已取消，已重建的部分保留", LocalDateTime.now());
+            } else {
+                rollBack(job);
+            }
             return;
         }
         throw new InvalidOperationException("该任务已结束，无需取消");
@@ -182,9 +224,15 @@ public class EmbeddingMigrationService {
         if (!RESUMABLE.contains(job.getStatus())) {
             throw new InvalidOperationException("只有失败或被中断的任务可以继续");
         }
-        AiModelConfig pending = resolver.pending(job.getAppId());
-        if (pending == null || !pending.getId().equals(job.getToModelId())) {
-            throw new InvalidOperationException("该切换已不再挂起，请重新发起");
+        if (EmbeddingJobKind.orDefault(job.getKind()) == EmbeddingJobKind.REBUILD) {
+            if (!resolver.active(job.getAppId()).getId().equals(job.getToModelId())) {
+                throw new InvalidOperationException("向量模型已变更，请重新发起重建");
+            }
+        } else {
+            AiModelConfig pending = resolver.pending(job.getAppId());
+            if (pending == null || !pending.getId().equals(job.getToModelId())) {
+                throw new InvalidOperationException("该切换已不再挂起，请重新发起");
+            }
         }
         LongTaskTenantLimiter.Permit permit = longTaskLimiter.acquire();
         if (jobRepository.transition(jobId, RESUMABLE, EmbeddingMigrationStatus.RUNNING, null, null) == 0) {
@@ -221,6 +269,10 @@ public class EmbeddingMigrationService {
             return;
         }
         Long appId = job.getAppId();
+        if (EmbeddingJobKind.orDefault(job.getKind()) == EmbeddingJobKind.REBUILD) {
+            executeRebuild(job);
+            return;
+        }
         AiModelConfig target = resolver.pending(appId);
         if (target == null || !target.getId().equals(job.getToModelId())) {
             transition(jobId, ACTIVE, EmbeddingMigrationStatus.CANCELLED, "切换已不再挂起", true);
@@ -291,6 +343,56 @@ public class EmbeddingMigrationService {
         int late = sweepOnce(appId, target);
         transition(jobId, ACTIVE, EmbeddingMigrationStatus.COMPLETED,
                 late > 0 ? "已完成（另有 " + late + " 项在收尾时补写）" : null, true);
+    }
+
+    /** 原地重建：逐条在一个事务里删本条该标签的向量再写新向量；取消就停下，不回滚。 */
+    private void executeRebuild(EmbeddingMigrationJob job) {
+        Long jobId = job.getId();
+        Long appId = job.getAppId();
+        AiModelConfig model = resolver.active(appId);
+        if (!model.getId().equals(job.getToModelId())) {
+            transition(jobId, ACTIVE, EmbeddingMigrationStatus.CANCELLED, "向量模型已变更，重建已停止", true);
+            return;
+        }
+        List<Long> docIds = documentRepository.findCompletedIdsByAppId(appId);
+        List<Long> qaIds = qaPairRepository.findEmbeddedIdsByAppId(appId);
+        int total = docIds.size() + qaIds.size();
+        int done = 0;
+        int failed = 0;
+        progress(jobId, total, 0, 0);
+        for (int i = 0; i < total; i++) {
+            if (cancelRequested(jobId)) {
+                transition(jobId, ACTIVE, EmbeddingMigrationStatus.CANCELLED, "已取消，已重建的部分保留", true);
+                return;
+            }
+            try {
+                if (i < docIds.size()) {
+                    // 被文档锁挡下说明另一轮处理正在进行，它写出的同样是新口径的向量，不算失败
+                    knowledgeService.reembedDocumentFor(docIds.get(i), model);
+                } else {
+                    qaPairService.reembedFor(qaIds.get(i - docIds.size()), model);
+                }
+                done++;
+            } catch (Exception e) {
+                failed++;
+                log.warn("重建向量失败 jobId={} 第 {} 项: {}", jobId, i, e.getMessage());
+            }
+            progress(jobId, total, done, failed);
+        }
+        if (failed > 0) {
+            transition(jobId, ACTIVE, EmbeddingMigrationStatus.FAILED,
+                    failed + " 项重建失败（它们仍保留旧向量、照常可检索），可重试", true);
+        } else {
+            transition(jobId, ACTIVE, EmbeddingMigrationStatus.COMPLETED, null, true);
+        }
+    }
+
+    /** 同一应用同一时间只跑一个向量任务：切换与重建交错，会在翻转后又写回旧标签的向量。 */
+    private void requireNoRunningJob(Long appId) {
+        EmbeddingMigrationJob latest = latestJob(appId);
+        if (latest != null && latest.getStatus().isActive()) {
+            throw new InvalidOperationException("本应用有向量任务正在进行，请等它完成或先取消");
+        }
     }
 
     /**

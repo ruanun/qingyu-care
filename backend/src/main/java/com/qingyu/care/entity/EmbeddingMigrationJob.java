@@ -33,6 +33,11 @@ public class EmbeddingMigrationJob {
     @Column(name = "app_id", nullable = false)
     private Long appId;
 
+    /** 任务种类；NULL 按 SWITCH 理解（列是后加的） */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private com.qingyu.care.enums.EmbeddingJobKind kind;
+
     /** 切换前的模型（id 与标签都记下：旧模型行之后可能被删，标签用于收尾清理与排查） */
     private Long fromModelId;
 

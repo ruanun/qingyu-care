@@ -74,6 +74,13 @@ public class EmbeddingController {
         return ApiResponse.success(message, result);
     }
 
+    @PostMapping("/rebuild")
+    @AuditLog(action = "EMBEDDING_REBUILD", targetType = "Application")
+    @Operation(summary = "用当前向量模型重建全部向量", description = "模型不变、向量化方式升级后使用；逐篇原子替换，检索不中断")
+    public ApiResponse<Map<String, Long>> rebuild() {
+        return ApiResponse.success("已开始重建向量", Map.of("jobId", migrationService.rebuild()));
+    }
+
     @PostMapping("/jobs/{jobId}/cancel")
     @AuditLog(action = "EMBEDDING_MIGRATION_CANCEL", targetType = "Application")
     @Operation(summary = "取消切换")

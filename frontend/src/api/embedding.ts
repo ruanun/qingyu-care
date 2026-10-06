@@ -16,6 +16,8 @@ export type EmbeddingMigrationStatus =
 
 export interface EmbeddingMigrationJob {
     id: number;
+    /** SWITCH = 切换到另一个模型（影子重建）；REBUILD = 用当前模型原地重建 */
+    kind: 'SWITCH' | 'REBUILD';
     status: EmbeddingMigrationStatus;
     fromTag: string | null;
     toTag: string;
@@ -57,6 +59,10 @@ export const embeddingService = {
 
     switchModel: (modelId: number): Promise<ApiResponse<{ outcome: SwitchOutcome; jobId: number | null }>> =>
         api.post('/embedding/switch', { modelId }),
+
+    /** 用当前模型重建本应用全部向量（模型不变、向量化方式升级后用） */
+    rebuild: (): Promise<ApiResponse<{ jobId: number }>> =>
+        api.post('/embedding/rebuild'),
 
     cancelJob: (jobId: number): Promise<ApiResponse<void>> =>
         api.post(`/embedding/jobs/${jobId}/cancel`),

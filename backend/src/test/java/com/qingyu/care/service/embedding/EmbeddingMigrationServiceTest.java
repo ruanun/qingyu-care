@@ -3,6 +3,7 @@ package com.qingyu.care.service.embedding;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.entity.EmbeddingMigrationJob;
+import com.qingyu.care.enums.EmbeddingJobKind;
 import com.qingyu.care.enums.EmbeddingMigrationStatus;
 import com.qingyu.care.enums.ModelType;
 import com.qingyu.care.exception.InvalidOperationException;
@@ -95,7 +96,8 @@ class EmbeddingMigrationServiceTest {
         var result = service.switchModel(3L);
 
         assertThat(result.outcome()).isEqualTo(EmbeddingMigrationService.SwitchOutcome.SWITCHED);
-        verifyNoInteractions(limiter, jobRepository);
+        verifyNoInteractions(limiter);
+        verify(jobRepository, never()).save(any());
         verify(applicationRepository, never()).startPendingEmbeddingModel(any(), any());
     }
 
@@ -139,7 +141,8 @@ class EmbeddingMigrationServiceTest {
         when(resolver.active(5L)).thenReturn(a);
 
         assertThat(service.switchModel(1L).outcome()).isEqualTo(EmbeddingMigrationService.SwitchOutcome.UNCHANGED);
-        verifyNoInteractions(jobRepository, limiter);
+        verifyNoInteractions(limiter);
+        verify(jobRepository, never()).save(any());
     }
 
     // ===== 执行 =====
@@ -224,6 +227,96 @@ class EmbeddingMigrationServiceTest {
 
         verifyNoInteractions(knowledgeService, qaPairService);
         verify(jobRepository).transition(eq(30L), anySet(), eq(EmbeddingMigrationStatus.CANCELLED), any(), any());
+    }
+
+    // ===== 用当前模型原地重建 =====
+
+    private EmbeddingMigrationJob rebuildJob() {
+        return EmbeddingMigrationJob.builder().id(40L).tenantId(10L).appId(5L).kind(EmbeddingJobKind.REBUILD)
+                .fromModelId(1L).fromTag("qwen3.7-text-embedding").toModelId(1L).toTag("qwen3.7-text-embedding")
+                .status(EmbeddingMigrationStatus.RUNNING).build();
+    }
+
+    @Test
+    void 发起重建_任务指向当前模型_不碰指针() {
+        when(resolver.active(5L)).thenReturn(a);
+        when(limiter.acquire()).thenReturn(permit);
+        when(jobRepository.save(any())).thenAnswer(inv -> {
+            EmbeddingMigrationJob j = inv.getArgument(0);
+            j.setId(40L);
+            return j;
+        });
+
+        assertThat(service.rebuild()).isEqualTo(40L);
+
+        ArgumentCaptor<EmbeddingMigrationJob> cap = ArgumentCaptor.forClass(EmbeddingMigrationJob.class);
+        verify(jobRepository).save(cap.capture());
+        assertThat(cap.getValue().getKind()).isEqualTo(EmbeddingJobKind.REBUILD);
+        assertThat(cap.getValue().getToModelId()).isEqualTo(1L);
+        verify(applicationRepository, never()).startPendingEmbeddingModel(any(), any());
+        verify(permit).launch(any());
+    }
+
+    @Test
+    void 切换挂起或有任务在跑时_拒绝重建() {
+        when(resolver.active(5L)).thenReturn(a);
+        when(jobRepository.findFirstByAppIdOrderByIdDesc(5L)).thenReturn(Optional.of(runningJob()));
+
+        assertThatThrownBy(() -> service.rebuild()).isInstanceOf(InvalidOperationException.class);
+        verify(jobRepository, never()).save(any());
+    }
+
+    @Test
+    void 重建运行中_拒绝切换_避免翻转后又写回旧标签() {
+        when(resolver.requireSelectable(5L, 2L)).thenReturn(b);
+        when(resolver.active(5L)).thenReturn(a);
+        when(jobRepository.findFirstByAppIdOrderByIdDesc(5L)).thenReturn(Optional.of(rebuildJob()));
+
+        assertThatThrownBy(() -> service.switchModel(2L)).isInstanceOf(InvalidOperationException.class);
+        verify(applicationRepository, never()).startPendingEmbeddingModel(any(), any());
+    }
+
+    @Test
+    void 执行重建_用当前模型逐条重嵌_不翻转不清理() throws Exception {
+        when(jobRepository.findById(40L)).thenReturn(Optional.of(rebuildJob()));
+        when(resolver.active(5L)).thenReturn(a);
+        when(documentRepository.findCompletedIdsByAppId(5L)).thenReturn(List.of(100L));
+        when(qaPairRepository.findEmbeddedIdsByAppId(5L)).thenReturn(List.of(200L));
+
+        service.run(40L);
+
+        verify(knowledgeService).reembedDocumentFor(100L, a);
+        verify(qaPairService).reembedFor(200L, a);
+        verify(applicationRepository, never()).promotePendingEmbeddingModel(any(), any());
+        verify(vectorStoreRepository, never()).deleteByAppIdExceptTag(any(), any());
+        verify(vectorStoreRepository, never()).deleteByAppIdAndTag(any(), any());
+        verify(jobRepository).transition(eq(40L), anySet(), eq(EmbeddingMigrationStatus.COMPLETED), any(), any());
+    }
+
+    @Test
+    void 重建有失败项_停在FAILED可重试() throws Exception {
+        when(jobRepository.findById(40L)).thenReturn(Optional.of(rebuildJob()));
+        when(resolver.active(5L)).thenReturn(a);
+        when(documentRepository.findCompletedIdsByAppId(5L)).thenReturn(List.of(100L));
+        when(qaPairRepository.findEmbeddedIdsByAppId(5L)).thenReturn(List.of());
+        when(knowledgeService.reembedDocumentFor(100L, a)).thenThrow(new RuntimeException("上游 500"));
+
+        service.run(40L);
+
+        verify(jobRepository).transition(eq(40L), anySet(), eq(EmbeddingMigrationStatus.FAILED), contains("1 项"), any());
+    }
+
+    @Test
+    void 取消已失败的重建_只改状态_不碰指针与向量() {
+        EmbeddingMigrationJob failed = rebuildJob();
+        failed.setStatus(EmbeddingMigrationStatus.FAILED);
+        when(jobRepository.findById(40L)).thenReturn(Optional.of(failed));
+
+        service.cancel(40L);
+
+        verify(jobRepository).transition(eq(40L), anySet(), eq(EmbeddingMigrationStatus.CANCELLED), any(), any());
+        verifyNoInteractions(vectorStoreRepository);
+        verify(applicationRepository, never()).clearPendingEmbeddingModel(any(), any());
     }
 
     // ===== 取消 / 归属 =====

@@ -170,6 +170,7 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 - **对话路由的两条查询都必须排除向量模型**（向量行的 scenario 同为 default），`EmbeddingModelConfigIT` 守着。
 - 维度全平台统一（`qingyu.care.embedding.dimensions`），表结构由 `VectorStoreSchemaInitializer` 维护并在启动时校验列维度；添加向量模型时 `EmbeddingModelProbe` 真实调用一次、按**实际返回长度**判（有的模型忽略 `dimensions` 参数）。
 - 问答策略的相似度阈值默认跟随应用当前向量模型的推荐值（`ChatStrategy.followModelThreshold`，null 视为跟随）。
+- **向量化只嵌入正文**（`EmbeddingModelRegistry` 的 `MetadataMode.NONE`）：Spring AI 默认 EMBED 会把全部 metadata 拼进正文一起嵌入。改动向量化输入（切分、拼接方式）后用「重建向量」（`EmbeddingMigrationService.rebuild`，任务 kind=REBUILD）：标签不变所以不走影子重建，靠 `reembedDocumentFor` 单事务「删本篇该标签 + 写新向量」做原子替换，检索不中断。同一应用同时只跑一个向量任务（切换与重建交错会在翻转后写回旧标签）。
 
 ### 异步执行器分两个池（`config/AsyncConfig`）
 `@Async` 任务按时长分池，**新增 `@Async` 方法必须显式归类**：

@@ -104,9 +104,11 @@ public class EmbeddingModelRegistry {
         ModelEndpointGuardInterceptor guard = modelRouterService.endpointGuardInterceptor();
         return OpenAiEmbeddingModel.builder()
                 .options(options)
-                // EMBED 与此前 Spring AI 自动装配的默认值一致：metadata 一起参与向量化。改成 NONE 会让新旧向量
-                // 的输入文本不同，存量向量与新写入的向量不再严格同口径。
-                .metadataMode(MetadataMode.EMBED)
+                // 只嵌入正文。Spring AI 的默认值 EMBED 会把全部 metadata 以「键: 值」拼在正文前一起向量化——
+                // documentId、tenantId、appId、docEnabled、embeddingModel 这些对语义毫无意义的键也在里面，
+                // 稀释了正文的语义，同一段正文仅因文档编号不同就得到不同的向量。
+                // 2026-10-06 起改为 NONE；此前写入的向量是 EMBED 口径，升级后用「重建向量」统一一遍。
+                .metadataMode(MetadataMode.NONE)
                 .httpClientBuilderCustomizer(b -> b.interceptor(guard))
                 .build();
     }

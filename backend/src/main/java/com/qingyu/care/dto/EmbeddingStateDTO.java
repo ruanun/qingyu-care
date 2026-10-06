@@ -30,11 +30,14 @@ public record EmbeddingStateDTO(ModelSummary active,
         }
     }
 
-    public record JobView(Long id, String status, String fromTag, String toTag, Integer total, Integer done,
+    /** kind：SWITCH = 切换模型（影子重建），REBUILD = 用当前模型原地重建 */
+    public record JobView(Long id, String kind, String status, String fromTag, String toTag, Integer total, Integer done,
                           Integer failed, String message, LocalDateTime startedAt, LocalDateTime finishedAt) {
         public static JobView of(EmbeddingMigrationJob j) {
-            return j == null ? null : new JobView(j.getId(), j.getStatus().name(), j.getFromTag(), j.getToTag(),
-                    j.getTotal(), j.getDone(), j.getFailed(), j.getMessage(), j.getStartedAt(), j.getFinishedAt());
+            return j == null ? null : new JobView(j.getId(),
+                    com.qingyu.care.enums.EmbeddingJobKind.orDefault(j.getKind()).name(), j.getStatus().name(),
+                    j.getFromTag(), j.getToTag(), j.getTotal(), j.getDone(), j.getFailed(), j.getMessage(),
+                    j.getStartedAt(), j.getFinishedAt());
         }
     }
 

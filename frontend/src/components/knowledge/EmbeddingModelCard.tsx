@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRightLeft, Boxes, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, Boxes, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { embeddingService, isJobPending } from '@/api/embedding';
 import type { EmbeddingModelSummary, EmbeddingState } from '@/api/embedding';
 import { useToast } from '@/hooks/use-toast';
+import { useConfirm } from '@/hooks/use-confirm';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
 
 /** 迁移进行中时的轮询间隔 */
@@ -39,6 +40,7 @@ export function EmbeddingModelCard() {
     const isMountedRef = useRef(true);
     const timerRef = useRef<number | null>(null);
     const { toast } = useToast();
+    const { confirm, confirmDialog } = useConfirm();
 
     const load = useCallback(async () => {
         try {
@@ -97,11 +99,30 @@ export function EmbeddingModelCard() {
         }
     };
 
+    const handleRebuild = async () => {
+        const ok = await confirm({
+            title: '用当前模型重建全部向量？',
+            description: '会用当前向量模型把本应用全部文档与问答重新向量化（按内容量消耗 embedding 调用）。'
+                + '逐篇替换，重建期间检索不受影响；中途可以取消，已重建的部分保留。'
+                + '一般只在平台升级了向量化方式后才需要。',
+            confirmText: '开始重建',
+        });
+        if (!ok) return;
+        try {
+            const res = await embeddingService.rebuild();
+            throwIfFailed(res);
+            toast({ title: '已开始重建向量' });
+            await load();
+        } catch (error: unknown) {
+            toast({ variant: 'destructive', title: '重建失败', description: getErrorMessage(error) });
+        }
+    };
+
     const handleCancel = async (jobId: number) => {
         try {
             const res = await embeddingService.cancelJob(jobId);
             throwIfFailed(res);
-            toast({ title: '已取消切换', description: '应用继续使用原来的向量模型' });
+            toast({ title: '已取消', description: state?.job?.kind === 'REBUILD' ? '已重建的部分保留' : '应用继续使用原来的向量模型' });
             await load();
         } catch (error: unknown) {
             toast({ variant: 'destructive', title: '取消失败', description: getErrorMessage(error) });
@@ -135,6 +156,7 @@ export function EmbeddingModelCard() {
     }
 
     const { active, pending, job, options, dimensions, manualThresholdStrategies } = state;
+    const isRebuild = job?.kind === 'REBUILD';
     const migrating = isJobPending(job);
     const choices = options.filter((o) => o.id !== active?.id);
     const target = choices.find((o) => String(o.id) === targetId) ?? null;
@@ -164,18 +186,26 @@ export function EmbeddingModelCard() {
                         <p className="mt-1 text-[11px] text-muted-foreground">本应用所有知识库共用这一个模型。换模型会在后台重建向量，期间检索不受影响。</p>
                     </div>
                 </div>
-                <Button variant="outline" size="sm" className="gap-1 shrink-0" onClick={openDialog}
-                        disabled={migrating || choices.length === 0}
-                        title={choices.length === 0 ? '没有其他可选的向量模型，可在「模型配置 → 向量模型」中添加' : undefined}>
-                    <ArrowRightLeft className="w-3.5 h-3.5" /> 更换
-                </Button>
+                <div className="flex gap-2 shrink-0">
+                    <Button variant="ghost" size="sm" className="gap-1" onClick={handleRebuild}
+                            disabled={migrating || !active}
+                            title="用当前模型重新向量化全部内容（平台升级向量化方式后使用）">
+                        <RefreshCw className="w-3.5 h-3.5" /> 重建向量
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1" onClick={openDialog}
+                            disabled={migrating || choices.length === 0}
+                            title={choices.length === 0 ? '没有其他可选的向量模型，可在「模型配置 → 向量模型」中添加' : undefined}>
+                        <ArrowRightLeft className="w-3.5 h-3.5" /> 更换
+                    </Button>
+                </div>
             </div>
 
             {migrating && job && (
                 <div className="rounded-lg bg-muted/40 p-3 space-y-2" data-testid="embedding-migration">
                     <div className="flex items-center justify-between gap-2 text-xs">
                         <span>
-                            {job.status === 'RUNNING' && <>正在为 <b>{pending?.name ?? job.toTag}</b> 重建向量（{(job.done ?? 0) + (job.failed ?? 0)} / {job.total ?? '…'}），检索仍使用当前模型</>}
+                            {job.status === 'RUNNING' && isRebuild && <>正在用当前模型重建向量（{(job.done ?? 0) + (job.failed ?? 0)} / {job.total ?? '…'}），检索不受影响</>}
+                            {job.status === 'RUNNING' && !isRebuild && <>正在为 <b>{pending?.name ?? job.toTag}</b> 重建向量（{(job.done ?? 0) + (job.failed ?? 0)} / {job.total ?? '…'}），检索仍使用当前模型</>}
                             {job.status === 'CANCELLING' && '正在取消…'}
                             {(job.status === 'FAILED' || job.status === 'INTERRUPTED') && (job.message ?? '切换未完成')}
                         </span>
@@ -184,13 +214,13 @@ export function EmbeddingModelCard() {
                                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleResume(job.id)}>继续</Button>
                             )}
                             {job.status !== 'CANCELLING' && (
-                                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleCancel(job.id)}>取消切换</Button>
+                                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleCancel(job.id)}>{isRebuild ? '取消重建' : '取消切换'}</Button>
                             )}
                         </div>
                     </div>
                     {job.status === 'RUNNING' && <Progress value={percent} className="h-1.5" />}
                     {(job.failed ?? 0) > 0 && (
-                        <p className="text-[11px] text-amber-600">{job.failed} 项暂未写入新模型，收尾时会自动重试</p>
+                        <p className="text-[11px] text-amber-600">{isRebuild ? `${job.failed} 项重建失败，仍保留旧向量` : `${job.failed} 项暂未写入新模型，收尾时会自动重试`}</p>
                     )}
                 </div>
             )}
@@ -248,6 +278,7 @@ export function EmbeddingModelCard() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            {confirmDialog}
         </div>
     );
 }
