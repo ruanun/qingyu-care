@@ -5,6 +5,8 @@ import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.entity.ModelProvider;
+import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.enums.ModelType;
 import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.service.embedding.EmbeddingModelAdminService;
@@ -29,6 +31,7 @@ public class AiModelController {
     private final ModelRouterService modelRouterService;
     private final EmbeddingModelAdminService embeddingModelAdminService;
     private final EmbeddingModelProbe embeddingModelProbe;
+    private final com.qingyu.care.service.provider.ModelProviderService modelProviderService;
 
     /**
      * 获取所有模型配置
@@ -67,14 +70,16 @@ public class AiModelController {
     @AuditLog(action = "MODEL_CREATE", targetType = "AiModelConfig")
     @PostMapping
     public ApiResponse<AiModelConfig> createModel(@RequestBody AiModelConfig config) {
-        config.setId(null); // 确保是新建
-        modelRouterService.requireValidEndpoint(config.getEndpoint());   // 出站地址落库前过 SSRF 守卫（安全审查 M4）
+        // 模型必须挂在本租户的供应商连接下：端点与 Key 从连接复制（请求体里给的一律不用），
+        // 端点在建连接时已过 SSRF 守卫（安全审查 M4）。
         // 租户侧建的模型一律是租户级：scope 是客户端可控字段，不清掉的话租户可以在请求体里
-        // 自封 PLATFORM，把所有租户的对话流量导向自己的 endpoint。
+        // 自封 PLATFORM，把所有租户的对话流量导向自己的 endpoint——createModel 内部强制 TENANT。
         // 平台共享模型只能走 /v1/platform/models（那边强制 tenantId=null）。
-        config.setScope(OwnerScope.TENANT);
-        embeddingModelAdminService.prepareCreate(config);   // 向量模型：保存前真实探测维度
-        AiModelConfig saved = modelRouterService.saveModel(config);
+        if (config.getProviderId() == null) {
+            throw new InvalidOperationException("请先选择供应商连接");
+        }
+        ModelProvider provider = modelProviderService.requireOwned(config.getProviderId(), OwnerScope.TENANT);
+        AiModelConfig saved = modelProviderService.createModel(config, provider, OwnerScope.TENANT);
         return ApiResponse.success("模型配置已创建", saved);
     }
 
@@ -85,21 +90,11 @@ public class AiModelController {
     @PutMapping("/{id}")
     public ApiResponse<AiModelConfig> updateModel(@PathVariable Long id, @RequestBody AiModelConfigUpdateRequest config) {
         AiModelConfig existing = modelRouterService.getById(id);
-        if (config.getEndpoint() != null) {
-            modelRouterService.requireValidEndpoint(config.getEndpoint());   // 先过守卫，再拿它去探测
-        }
         embeddingModelAdminService.beforeUpdate(existing, config);
-        
-        // 更新字段
+
+        // 更新字段（端点 / Key / 厂商属于供应商连接，在连接上改，见 ModelProviderController）
         if (config.getName() != null) existing.setName(config.getName());
-        if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
-        if (config.getEndpoint() != null) {
-            modelRouterService.requireValidEndpoint(config.getEndpoint());
-            existing.setEndpoint(config.getEndpoint());
-        }
-        // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
-        if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());
         if (config.getScenario() != null) existing.setScenario(config.getScenario());
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());

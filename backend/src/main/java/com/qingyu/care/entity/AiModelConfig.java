@@ -104,6 +104,16 @@ public class AiModelConfig extends BaseTenantEntity {
     private OwnerScope scope = OwnerScope.TENANT;
 
     /**
+     * 所属供应商连接（{@code model_provider.id}）。创建后不可改。
+     *
+     * <p>{@link #endpoint} / {@link #apiKey} / {@link #provider} 三列是该连接的<b>同步副本</b>：只由
+     * {@code ModelProviderService} 在建模型与改连接时写入，模型自己的更新请求不再接受它们。
+     * 列可空只因为是后加的：启动时 {@code ModelProviderBackfillRunner} 会把没有连接的行归组补齐。
+     */
+    @Column(name = "provider_id")
+    private Long providerId;
+
+    /**
      * 模型类型：对话 / 向量。创建后不可改（不在 {@code AiModelConfigUpdateRequest} 里）。
      *
      * <p>列可空：列是后加的，{@code ddl-auto: update} 给已有数据的表加 NOT NULL 列会直接失败。

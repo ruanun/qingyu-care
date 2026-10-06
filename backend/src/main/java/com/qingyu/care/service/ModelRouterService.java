@@ -72,7 +72,7 @@ public class ModelRouterService {
             // 创建默认模型配置（平台共享模型）
             repository.save(AiModelConfig.builder()
                     .name("默认模型")
-                    .provider("openai")
+                    .provider(ModelProviderCatalog.keyForEndpoint(defaultBaseUrl).orElse("openai"))
                     .modelId(defaultModel)
                     .endpoint(defaultBaseUrl)
                     .apiKey(defaultApiKey)
@@ -99,10 +99,7 @@ public class ModelRouterService {
         }
         String baseUrl = seedEmbeddingBaseUrl == null || seedEmbeddingBaseUrl.isBlank() ? defaultBaseUrl : seedEmbeddingBaseUrl;
         String apiKey = seedEmbeddingApiKey == null || seedEmbeddingApiKey.isBlank() ? defaultApiKey : seedEmbeddingApiKey;
-        String provider = ModelProviderCatalog.presets().stream()
-                .filter(p -> p.defaultEndpoint().equals(baseUrl))
-                .map(ModelProviderCatalog.ProviderPreset::key)
-                .findFirst().orElse("openai");
+        String provider = ModelProviderCatalog.keyForEndpoint(baseUrl).orElse("openai");
         repository.save(AiModelConfig.builder()
                 .name("默认向量模型")
                 .provider(provider)

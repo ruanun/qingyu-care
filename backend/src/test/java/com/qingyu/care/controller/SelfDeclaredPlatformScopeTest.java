@@ -14,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +41,9 @@ class SelfDeclaredPlatformScopeTest {
     com.qingyu.care.service.embedding.EmbeddingModelProbe embeddingModelProbe;
 
 
+    @Mock
+    com.qingyu.care.service.provider.ModelProviderService modelProviderService;
+
     @InjectMocks
     private AiToolController aiToolController;
     @InjectMocks
@@ -61,16 +65,18 @@ class SelfDeclaredPlatformScopeTest {
     }
 
     @Test
-    void 租户侧建模型时请求体自封PLATFORM会被强制改回TENANT() {
+    void 租户侧建模型时请求体自封PLATFORM不起作用_一律按租户侧处理() {
         AiModelConfig evil = new AiModelConfig();
         evil.setName("evil");
+        evil.setProviderId(5L);
         evil.setScope(OwnerScope.PLATFORM);      // 攻击者在请求体里自封
-        when(modelRouterService.saveModel(any(AiModelConfig.class))).thenAnswer(inv -> inv.getArgument(0));
+        com.qingyu.care.entity.ModelProvider provider = com.qingyu.care.entity.ModelProvider.builder().id(5L).build();
+        when(modelProviderService.requireOwned(5L, OwnerScope.TENANT)).thenReturn(provider);
 
         aiModelController.createModel(evil);
 
-        ArgumentCaptor<AiModelConfig> captor = ArgumentCaptor.forClass(AiModelConfig.class);
-        verify(modelRouterService).saveModel(captor.capture());
-        assertThat(captor.getValue().getScope()).isEqualTo(OwnerScope.TENANT);
+        // 连接按租户侧归属校验、模型按租户侧创建（createModel 内部强制 scope=TENANT，见 ModelProviderServiceTest）
+        verify(modelProviderService).createModel(evil, provider, OwnerScope.TENANT);
+        verify(modelProviderService, never()).createModel(any(), any(), org.mockito.ArgumentMatchers.eq(OwnerScope.PLATFORM));
     }
 }

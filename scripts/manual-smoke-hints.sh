@@ -42,7 +42,7 @@ readonly RULES=(
   # score > 0）」正是它们共同决定的东西。相似度阈值改错的症状与换模型没标定完全一样——
   # 知识库有内容却问什么都答不知道，且检索返回空是 fail-soft 正常路径，日志里什么都没有。
   'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml|ChatStrategy|HybridRetrieval|RetrievalScope|KeywordSearchDao::MANUAL::## 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
-  'service/embedding/|EmbeddingMigration|EmbeddingModel|KnowledgeVectorWriter|VectorStoreSchemaInitializer|api/embedding\.ts|ModelConfigPage|SharedModelPage::MANUAL::## 改动向量模型配置 / 切换链路后必须手工验证'
+  'service/embedding/|service/provider/|ModelProvider|EmbeddingMigration|EmbeddingModel|KnowledgeVectorWriter|VectorStoreSchemaInitializer|api/embedding\.ts|api/modelProvider\.ts|components/model/|ModelConfigPage|SharedModelPage::MANUAL::## 改动向量模型配置 / 切换链路后必须手工验证'
   'AiTool|ChatToolService|SharedCredentialMasker|AiToolRepository::SUBSYS::## 平台共享工具（`AiTool.scope`）'
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::MANUAL::## 改动已读回执链路后必须手工验证'
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::MANUAL::## 改动 MCP 接入链路后必须手工验证'
@@ -53,7 +53,7 @@ readonly RULES=(
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::MANUAL::## 改动工具商店 / 能力包链路后必须手工验证'
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::SUBSYS::## 工具商店（能力包，`service/pkg/` + `dto/pkg/`）'
   # 安全基线：鉴权 / 守卫 / 五条出站路径 / 上传 / CORS / 异常处理 / 限流额度
-  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|ModelEndpointGuard|service/embedding/|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|Captcha|Turnstile|PlatformConfigController|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
+  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|ModelEndpointGuard|service/embedding/|service/provider/|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|Captcha|Turnstile|PlatformConfigController|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
 )
 
 resolve_file() {

@@ -2,6 +2,8 @@ package com.qingyu.care.controller;
 
 import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.entity.ModelProvider;
+import com.qingyu.care.enums.OwnerScope;
 import com.qingyu.care.exception.InvalidOperationException;
 import com.qingyu.care.service.ModelRouterService;
 import org.junit.jupiter.api.Test;
@@ -39,6 +41,9 @@ class AiModelControllerTest {
     @Mock
     com.qingyu.care.service.embedding.EmbeddingModelProbe embeddingModelProbe;
 
+    @Mock
+    com.qingyu.care.service.provider.ModelProviderService modelProviderService;
+
     @InjectMocks
     AiModelController controller;
 
@@ -48,33 +53,21 @@ class AiModelControllerTest {
     }
 
     @Test
-    void 创建模型先校验端点再落库() {
-        when(modelRouterService.saveModel(any())).thenAnswer(i -> i.getArgument(0));
+    void 创建模型必须挂在本租户的连接下_凭据由连接复制() {
+        ModelProvider provider = ModelProvider.builder().id(5L).tenantId(10L).providerKey("dashscope").build();
+        when(modelProviderService.requireOwned(5L, OwnerScope.TENANT)).thenReturn(provider);
+        AiModelConfig req = config("https://evil.example/v1");   // 请求体里的端点不算数
+        req.setProviderId(5L);
 
-        controller.createModel(config("https://8.8.8.8/v1"));
+        controller.createModel(req);
 
-        InOrder order = inOrder(modelRouterService);
-        order.verify(modelRouterService).requireValidEndpoint("https://8.8.8.8/v1");
-        order.verify(modelRouterService).saveModel(any());
+        verify(modelProviderService).createModel(req, provider, OwnerScope.TENANT);
+        verify(modelRouterService, never()).saveModel(any());   // 不再绕过连接直接落库
     }
 
     @Test
-    void 创建模型端点非法则不落库() {
-        doThrow(new InvalidOperationException("模型端点无效")).when(modelRouterService).requireValidEndpoint(INTERNAL);
-
-        assertThatThrownBy(() -> controller.createModel(config(INTERNAL)))
-                .isInstanceOf(InvalidOperationException.class);
-        verify(modelRouterService, never()).saveModel(any());
-    }
-
-    @Test
-    void 更新模型改了端点才校验且非法则不落库() {
-        when(modelRouterService.getById(1L)).thenReturn(config("https://8.8.8.8/v1"));
-        doThrow(new InvalidOperationException("模型端点无效")).when(modelRouterService).requireValidEndpoint(INTERNAL);
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setEndpoint(INTERNAL);
-
-        assertThatThrownBy(() -> controller.updateModel(1L, req))
+    void 创建模型不指定连接_拒绝() {
+        assertThatThrownBy(() -> controller.createModel(config("https://8.8.8.8/v1")))
                 .isInstanceOf(InvalidOperationException.class);
         verify(modelRouterService, never()).saveModel(any());
     }

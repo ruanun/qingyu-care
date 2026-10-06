@@ -172,6 +172,14 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 - 问答策略的相似度阈值默认跟随应用当前向量模型的推荐值（`ChatStrategy.followModelThreshold`，null 视为跟随）。
 - **向量化只嵌入正文**（`EmbeddingModelRegistry` 的 `MetadataMode.NONE`）：Spring AI 默认 EMBED 会把全部 metadata 拼进正文一起嵌入。改动向量化输入（切分、拼接方式）后用「重建向量」（`EmbeddingMigrationService.rebuild`，任务 kind=REBUILD）：标签不变所以不走影子重建，靠 `reembedDocumentFor` 单事务「删本篇该标签 + 写新向量」做原子替换，检索不中断。同一应用同时只跑一个向量任务（切换与重建交错会在翻转后写回旧标签）。
 
+### 供应商连接（`service/provider/`）
+模型挂在供应商连接（`model_provider`）下：一套端点 + Key，对话模型与向量模型共用。连接是**租户级**（平台连接 tenant_id IS NULL），模型仍是应用级。
+- ⚠️ **`ModelProvider` 刻意不继承 `BaseTenantEntity`**：那上面的 appFilter 是 `app_id = :appId`，带着 X-App-Id 查询会把没有 app_id 的连接全部滤掉。隔离靠 `ModelProviderService` 显式按有效租户收窄（平台管理员经 `ConfigScopeResolver` 按当前应用反查），按 id 取一律 `requireOwned`。租户侧拿不到平台连接——否则租户能用平台的 Key 调任意模型。
+- **模型行上的 provider / endpoint / apiKey 是连接的同步副本**，运行时（对话路由、向量模型注册表、出站守卫）照旧读模型行、一行没改。只有 `ModelProviderService` 写它们：建模型时复制、改连接时 `syncFromProvider` 一条 SQL 刷到其下全部模型并**刷新 updated_at**（`EmbeddingModelRegistry` 按 (id, updatedAt) 缓存客户端，时间戳不动就继续用旧 Key）。模型自己的更新请求不再接受这三个字段。
+- 改连接的端点或 Key 前，先用新凭据把其下全部向量模型真实探测一遍（跨应用），不过就整体拒绝。
+- 启动时 `ModelProviderBackfillRunner` 把没挂连接的模型（存量 + yml 播种）按（归属、厂商、端点、Key）归组，可重复执行；厂商按端点纠正（`ModelProviderCatalog.keyForEndpoint`）。
+- 拉远端模型列表（`RemoteModelLister`，`GET {base}/models`）挂与模型调用同一个 `ModelEndpointGuardInterceptor`，另有总时长与 1MB 响应体上限。
+
 ### 异步执行器分两个池（`config/AsyncConfig`）
 `@Async` 任务按时长分池，**新增 `@Async` 方法必须显式归类**：
 - **短任务 → Boot 默认 `applicationTaskExecutor`**（不写 qualifier）：用量计量、审计日志落库、webhook 入队与直投。毫秒到秒级、要求低延迟。

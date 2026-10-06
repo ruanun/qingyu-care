@@ -187,6 +187,12 @@ class UpdateRequestPropagationTest {
     @InjectMocks KnowledgeServiceImpl knowledgeService;
     @InjectMocks McpServerController mcpServerController;
     @InjectMocks ToolPackageService toolPackageService;
+    // 连接的映射代码只有一份（租户侧与平台侧控制器都委托给它），登记服务层这一条即可
+    @InjectMocks com.qingyu.care.service.provider.ModelProviderService modelProviderService;
+    @Mock com.qingyu.care.repository.ModelProviderRepository modelProviderRepository;
+    @Mock com.qingyu.care.repository.AiModelConfigRepository aiModelConfigRepository;
+    @Mock com.qingyu.care.service.provider.RemoteModelLister remoteModelLister;
+    @Mock com.qingyu.care.service.ConfigScopeResolver configScopeResolver;
 
     @AfterEach
     void clear() {
@@ -249,6 +255,17 @@ class UpdateRequestPropagationTest {
                     try (MockedStatic<StpUtil> ignored = stubRole(UserRole.PLATFORM_ADMIN.name())) {
                         platformController.updateSharedModel(ID, (AiModelConfigUpdateRequest) dto);
                     }
+                }));
+
+        cases.add(new UpdateCase(com.qingyu.care.dto.ModelProviderUpdateRequest.class, "ModelProviderService.update",
+                () -> com.qingyu.care.entity.ModelProvider.builder().id(ID).tenantId(7L).scope(OwnerScope.TENANT)
+                        .name("旧连接").providerKey("openai").build(),
+                (entity, dto) -> {
+                    when(modelProviderRepository.findById(ID))
+                            .thenReturn(java.util.Optional.of((com.qingyu.care.entity.ModelProvider) entity));
+                    when(configScopeResolver.resolve()).thenReturn(new com.qingyu.care.service.ConfigScopeResolver.Scope(7L, null));
+                    when(modelProviderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+                    modelProviderService.update(ID, (com.qingyu.care.dto.ModelProviderUpdateRequest) dto, OwnerScope.TENANT);
                 }));
 
         cases.add(new UpdateCase(ChatStrategyUpdateRequest.class, "ChatStrategyController.update",

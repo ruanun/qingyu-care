@@ -29,11 +29,7 @@ export const platformService = {
   testTurnstile: (data: { token: string; secretKey?: string }): Promise<ApiResponse<TurnstileTestResult>> =>
     api.post('/platform/config/turnstile/test', data),
 
-  // 共享模型池
-  listSharedModels: (): Promise<ApiResponse<AiModelConfig[]>> =>
-    api.get('/platform/models'),
-  createSharedModel: (data: Partial<AiModelConfig>): Promise<ApiResponse<AiModelConfig>> =>
-    api.post('/platform/models', data),
+  // 共享模型（列表与新建走平台供应商连接，见 api/modelProvider.ts）
   updateSharedModel: (id: number, data: Partial<AiModelConfig>): Promise<ApiResponse<AiModelConfig>> =>
     api.put(`/platform/models/${id}`, data),
   deleteSharedModel: (id: number): Promise<ApiResponse<void>> =>

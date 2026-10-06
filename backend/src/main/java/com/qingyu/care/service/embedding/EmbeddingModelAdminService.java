@@ -9,7 +9,6 @@ import com.qingyu.care.service.ModelProviderCatalog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.Objects;
 
 /**
  * 向量模型在「模型管理」各入口（租户侧 / 平台共享侧的建、改、删）上的额外约束。对话模型直接放行。
@@ -46,7 +45,7 @@ public class EmbeddingModelAdminService {
     /**
      * 更新前校验（在把请求字段写进实体<b>之前</b>调用，需要比较新旧值）。
      * 被应用引用的向量模型：不能改 modelId（标签会变，检索一条都对不上）、不能停用。
-     * 端点 / Key / modelId 任一变化都重新探测（Key 换成别家的、端点换成另一种模型，维度可能就变了）。
+     * modelId 变了就用模型现有的凭据重新探测；端点 / Key 的变化在供应商连接上发生，由 ModelProviderService 探测。
      */
     public void beforeUpdate(AiModelConfig existing, AiModelConfigUpdateRequest req) {
         if (ModelType.orDefault(existing.getModelType()) != ModelType.EMBEDDING) {
@@ -64,14 +63,12 @@ public class EmbeddingModelAdminService {
         if (req.getSimilarityThreshold() != null) {
             requireValidThreshold(req.getSimilarityThreshold());
         }
-        boolean keyChanged = req.getApiKey() != null && !req.getApiKey().isBlank();
-        boolean endpointChanged = req.getEndpoint() != null && !Objects.equals(req.getEndpoint(), existing.getEndpoint());
-        if (modelIdChanged || keyChanged || endpointChanged) {
+        if (modelIdChanged) {
             AiModelConfig candidate = AiModelConfig.builder()
-                    .provider(req.getProvider() != null ? req.getProvider() : existing.getProvider())
-                    .modelId(modelIdChanged ? req.getModelId() : existing.getModelId())
-                    .endpoint(req.getEndpoint() != null ? req.getEndpoint() : existing.getEndpoint())
-                    .apiKey(keyChanged ? req.getApiKey() : existing.getApiKey())
+                    .provider(existing.getProvider())
+                    .modelId(req.getModelId())
+                    .endpoint(existing.getEndpoint())
+                    .apiKey(existing.getApiKey())
                     .modelType(ModelType.EMBEDDING)
                     .build();
             probe.requireCompatible(candidate);

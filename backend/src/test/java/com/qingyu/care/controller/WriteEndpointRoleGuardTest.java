@@ -43,6 +43,7 @@ class WriteEndpointRoleGuardTest {
             Map.entry("TenantController", "平台级，方法内 checkPlatformAdmin"),
             Map.entry("TenantConfigController", "方法内 requireTenantAdmin"),
             Map.entry("PlatformController", "平台级，方法内 requirePlatformAdmin"),
+            Map.entry("PlatformModelProviderController", "平台级，方法内 requirePlatformAdmin"),
             Map.entry("PlatformConfigController", "平台级，方法内 requirePlatformAdmin"),
             Map.entry("PlatformPackageController", "平台级，方法内 requirePlatformAdmin"),
             Map.entry("ToolPackageController", "方法内 requireTenantAdmin")

@@ -215,47 +215,6 @@ class PartialUpdateSemanticsTest {
     }
 
     @Test
-    void 编辑AI模型配置时传空串apiKey不改动凭据() {
-        AiModelConfig existing = AiModelConfig.builder()
-                .id(1L).name("通义千问").provider("dashscope").modelId("qwen-max").build();
-        existing.setApiKey("sk-OLD_KEY_PLACEHOLDER");
-
-        when(modelRouterService.getById(1L)).thenReturn(existing);
-        when(modelRouterService.saveModel(any(AiModelConfig.class))).thenReturn(existing);
-
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setEnabled(false);   // 前端点停用开关只发这一个字段
-        req.setApiKey("");       // 前端不回显凭据，编辑弹窗把它初始化为空串并照样提交
-
-        aiModelController.updateModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
-
-        assertThat(existing.getApiKey()).isEqualTo("sk-OLD_KEY_PLACEHOLDER");
-        assertThat(existing.getEnabled()).isFalse();
-    }
-
-    // 反向断言：上一条只钉「空串不覆盖」是空转的——若有人把整个 if 连同赋值一起删掉，
-    // 上面那条测试照样绿（apiKey 本来就没变过）。本条钉住另一半：传真实新凭据必须真的
-    // 被写入，两个方向合起来才是完整的判空语义（同下方平台共享模型那一对的形状）。
-    @Test
-    void 编辑AI模型配置时传真实apiKey会写入新凭据() {
-        AiModelConfig existing = AiModelConfig.builder()
-                .id(1L).name("通义千问").provider("dashscope").modelId("qwen-max").build();
-        existing.setApiKey("sk-OLD_KEY_PLACEHOLDER");
-
-        when(modelRouterService.getById(1L)).thenReturn(existing);
-        when(modelRouterService.saveModel(any(AiModelConfig.class))).thenReturn(existing);
-
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setApiKey("sk-tenant-rotated-key");   // 真实轮换凭据，而非空串
-
-        aiModelController.updateModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
-
-        assertThat(existing.getApiKey())
-                .as("传入真实新凭据必须真的被写入，否则「空串不覆盖」的判空退化成「永不写入」")
-                .isEqualTo("sk-tenant-rotated-key");
-    }
-
-    @Test
     void 应用局部更新不把主题色打回默认值() {
         Application existing = Application.builder().id(1L).name("云舟商城客服").build();
         existing.setThemeColor("#ff0000");
@@ -349,33 +308,6 @@ class PartialUpdateSemanticsTest {
     }
 
     @Test
-    void 平台共享模型_传空白apiKey不覆盖既有凭据() {
-        AiModelConfig existing = AiModelConfig.builder()
-                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
-                .scope(OwnerScope.PLATFORM).build();
-        existing.setApiKey("sk-platform-real-key");
-
-        when(modelRouterService.getById(1L)).thenReturn(existing);
-        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
-
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setName("改个名字");
-        req.setApiKey("   ");   // 前端不回显凭据，编辑弹窗初始化为空串；粘贴还可能带来全空格
-
-        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
-            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
-
-            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
-        }
-
-        assertThat(existing.getApiKey())
-                .as("空白 apiKey 必须被当作「不修改」，否则平台共享模型的凭据被抹掉，"
-                        + "所有绑定它的租户静默失效——第三方返 401，模型拿着错误响应继续编答案")
-                .isEqualTo("sk-platform-real-key");
-        assertThat(existing.getName()).isEqualTo("改个名字");
-    }
-
-    @Test
     void 平台共享工具_传空白authHeader不覆盖既有凭据() {
         AiTool existing = AiTool.builder()
                 .id(1L).name("shared_tool").scope(OwnerScope.PLATFORM).build();
@@ -401,32 +333,9 @@ class PartialUpdateSemanticsTest {
     }
 
     // 反向断言：只钉「空白不覆盖」是空转的——若有人把整个 if 连同赋值一起删掉，
-    // 上面两条测试照样绿（apiKey/authHeader 本来就没变过）。下面两条钉住另一半：
+    // 上面那条测试照样绿（authHeader 本来就没变过）。下面这条钉住另一半：
     // 传真实新凭据必须真的被写入，两个方向合起来才是完整的判空语义。
-
-    @Test
-    void 平台共享模型_传真实apiKey会写入新凭据() {
-        AiModelConfig existing = AiModelConfig.builder()
-                .id(1L).name("共享模型").provider("dashscope").modelId("qwen-max")
-                .scope(OwnerScope.PLATFORM).build();
-        existing.setApiKey("sk-platform-real-key");
-
-        when(modelRouterService.getById(1L)).thenReturn(existing);
-        when(modelRouterService.saveSharedModel(any(AiModelConfig.class))).thenReturn(existing);
-
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setApiKey("sk-platform-rotated-key");   // 真实轮换凭据，而非空白
-
-        try (MockedStatic<SecurityUtil> ms = mockStatic(SecurityUtil.class)) {
-            ms.when(SecurityUtil::requirePlatformAdmin).thenAnswer(inv -> null);
-
-            platformController.updateSharedModel(1L, req);   // 直调真实控制器，而非复刻映射逻辑
-        }
-
-        assertThat(existing.getApiKey())
-                .as("传入真实新凭据必须真的被写入，否则「空白不覆盖」的判空退化成「永不写入」")
-                .isEqualTo("sk-platform-rotated-key");
-    }
+    // （模型的 apiKey 已移到供应商连接上，对应的两个方向见 ModelProviderServiceTest。）
 
     @Test
     void 平台共享工具_传真实authHeader会写入新凭据() {
