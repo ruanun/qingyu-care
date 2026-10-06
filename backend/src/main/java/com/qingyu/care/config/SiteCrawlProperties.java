@@ -27,14 +27,14 @@ public class SiteCrawlProperties {
      * robots.txt {@code Crawl-delay} 的上限（毫秒）。这是第三方（被爬站点）可控的值，
      * 不设上限时对方写一句 {@code Crawl-delay: 300} 就能让每页睡 5 分钟——乘以 500 页
      * 硬顶就是 40 多小时，全程占着 {@code AsyncConfig.LONG_TASK_EXECUTOR} 的一个线程
-     * （固定 6 个，与文档摄取、QA 生成、批量重嵌、网页同步共用）和全局并发额度的一格。
+     * （固定 6 个，与文档摄取、QA 生成、向量模型迁移、网页同步共用）和全局并发额度的一格。
      */
     private long maxDelayMs = 10_000;
 
     /**
      * 全局并发爬取任务上限，<b>不区分租户</b>。既是对目标站点礼貌，也是对执行器的保护：
      * 爬取跑在 {@code AsyncConfig.LONG_TASK_EXECUTOR} 这个<b>固定 6 线程</b>的长任务池上，
-     * 与文档摄取、QA 生成、批量重嵌、网页同步共用它。不设上限时几个爬取就能把 6 个线程
+     * 与文档摄取、QA 生成、向量模型迁移、网页同步共用它。不设上限时几个爬取就能把 6 个线程
      * 全占满，同池的摄取与重嵌只能排队，等待时长最坏可达 {@code maxPagesLimit} ×
      * {@code maxDelayMs}（500 页 × 10s ≈ 83 分钟）。
      *

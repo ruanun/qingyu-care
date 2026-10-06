@@ -45,7 +45,7 @@ const MODEL: AiModelConfig = {
 };
 
 const PRESETS: ProviderPreset[] = [
-    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7' },
+    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7', sampleEmbeddingModelId: null },
 ];
 
 const ok = <T,>(data: T) => ({ code: 200, message: 'ok', data, timestamp: '2026-09-08T00:00:00' });

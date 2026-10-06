@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 站点爬取编排：BFS 发现页面、逐页建档摄取、内存进度、站点级互斥。
  *
- * <p>范式照 {@code ReembedService}：请求线程同步做归属校验与参数钳制、建 {@code Progress}
+ * <p>范式照当年的批量重嵌（现为 {@code EmbeddingMigrationService}）：请求线程同步做归属校验与参数钳制、建 {@code Progress}
  * 并返回 {@code jobId}，{@code self.@Async} 跑批，前端轮询进度。进程重启则进度丢失，
  * 但已建文档都在（每页建档即提交）——运营重新点爬取时已存在的 URL 会被跳过，
  * <b>幂等重跑即是恢复</b>，故不设 {@code CrawlJob} 表。
@@ -97,7 +97,7 @@ public class SiteCrawlService {
     private final WebPageFetcher webPageFetcher;
     private final SiteCrawlProperties props;
 
-    // 自注入解决 @Async 同类调用不生效问题（同 ReembedService/WebPageSyncService 范式）
+    // 自注入解决 @Async 同类调用不生效问题（同 EmbeddingMigrationService/WebPageSyncService 范式）
     private SiteCrawlService self;
 
     private final ConcurrentHashMap<String, Progress> jobs = new ConcurrentHashMap<>();
@@ -142,7 +142,7 @@ public class SiteCrawlService {
      * FAILED（时序纯属运气：异步线程只需被调度 + 四次 ThreadLocal set + 一次 SELECT，
      * 请求线程却要等 launch 返回、startCrawl 返回、再等 TransactionInterceptor 提交，
      * 热池下异步侧完全可能先到）。{@code crawlSiteRepository.save()} 自带迷你事务立即
-     * 提交，与 {@code ReembedService.startReembed}（同样投递 {@code @Async} 前不建
+     * 提交，与 {@code EmbeddingMigrationService.switchModel}（同样投递 {@code @Async} 前不建
      * 需要被异步读的行）一致。{@code updateSite}/{@code deleteSite} 不投递异步任务，
      * {@code @Transactional} 保留。
      *

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.ByteArrayInputStream;
@@ -41,16 +41,15 @@ class KnowledgeIngestLimitsTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock QaPairRepository qaPairRepository;
     @Mock CrawlSiteRepository crawlSiteRepository;
 
     private KnowledgeServiceImpl service(int maxExtractedChars, int maxChunks) {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                vectorWriter, fileService, vectorStoreRepository,
                 qaPairRepository, crawlSiteRepository);
         ReflectionTestUtils.setField(service, "chunkSize", 50);
         ReflectionTestUtils.setField(service, "chunkOverlap", 10);
@@ -68,7 +67,6 @@ class KnowledgeIngestLimitsTest {
         when(documentRepository.tryLockDocumentProcessing(5L)).thenReturn(true);
         when(documentRepository.findById(5L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         when(fileService.openStream("kb/说明书.txt"))
                 .thenReturn(new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
         return doc;
@@ -77,7 +75,7 @@ class KnowledgeIngestLimitsTest {
     @SuppressWarnings("unchecked")
     private List<org.springframework.ai.document.Document> addedChunks() {
         ArgumentCaptor<List<org.springframework.ai.document.Document>> captor = ArgumentCaptor.forClass(List.class);
-        verify(vectorStore).add(captor.capture());
+        verify(vectorWriter).write(any(), captor.capture());
         return captor.getValue();
     }
 

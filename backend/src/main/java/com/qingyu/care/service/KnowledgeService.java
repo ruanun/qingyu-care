@@ -69,6 +69,13 @@ public interface KnowledgeService {
      */
     void processDocument(Long documentId);
 
+    /**
+     * 切换向量模型时，给目标模型补一份该文档的向量（不改文档状态、不动当前模型的向量）。
+     *
+     * @return false 表示文档正被别的处理占用、本轮跳过
+     */
+    boolean reembedDocumentFor(Long documentId, com.qingyu.care.entity.AiModelConfig target) throws java.io.IOException;
+
     // ===== 新增方法 =====
     
     /**

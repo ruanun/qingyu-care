@@ -12,7 +12,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 
 import java.util.List;
 
@@ -25,13 +25,11 @@ class QaPairServiceTest {
 
     @Mock QaPairRepository qaPairRepository;
     @Mock KnowledgeService knowledgeService;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
 
     private QaPairService service() {
-        return new QaPairService(qaPairRepository, knowledgeService, vectorStore, vectorStoreRepository,
-                embeddingModelProvider);
+        return new QaPairService(qaPairRepository, knowledgeService, vectorWriter, vectorStoreRepository);
     }
 
     private KnowledgeBase kb() {
@@ -51,7 +49,6 @@ class QaPairServiceTest {
     @Test
     void create_savesActiveAndEmbedsSingleUnsplitVectorWithRequiredKeys() {
         when(knowledgeService.getKnowledgeBase(7L)).thenReturn(kb());
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         when(qaPairRepository.save(any())).thenAnswer(inv -> {
             QaPair q = inv.getArgument(0);
             q.setId(5L);
@@ -63,7 +60,7 @@ class QaPairServiceTest {
         service().create(7L, "如何退货", "7天内订单页申请");
 
         ArgumentCaptor<List<Document>> cap = ArgumentCaptor.forClass(List.class);
-        verify(vectorStore).add(cap.capture());
+        verify(vectorWriter).write(org.mockito.ArgumentMatchers.eq(22L), cap.capture());   // 按 QA 行上的 appId 写
         assertThat(cap.getValue()).hasSize(1); // 不切分：单条
         Document d = cap.getValue().get(0);
         assertThat(d.getText()).isEqualTo("问：如何退货\n答：7天内订单页申请");
@@ -83,12 +80,11 @@ class QaPairServiceTest {
         draft.setStatus(QaPairStatus.DRAFT);
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(draft));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         QaPair result = service().approve(5L);
 
         assertThat(result.getStatus()).isEqualTo(QaPairStatus.ACTIVE);
-        verify(vectorStore).add(any());
+        verify(vectorWriter).write(any(), any());
     }
 
     @Test
@@ -99,7 +95,7 @@ class QaPairServiceTest {
         service().setEnabled(5L, false);
 
         verify(vectorStoreRepository).updateDocEnabledByQaPairId("5", "false");
-        verify(vectorStore, never()).add(any()); // 停用不重嵌
+        verify(vectorWriter, never()).write(any(), any()); // 停用不重嵌
     }
 
     @Test
@@ -118,12 +114,11 @@ class QaPairServiceTest {
     void update_activeContentChanged_reEmbeds() {
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(active(5L)));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         service().update(5L, "怎么退货", "改后的答案");
 
         verify(vectorStoreRepository).deleteByQaPairId("5");
-        verify(vectorStore).add(any());
+        verify(vectorWriter).write(any(), any());
     }
 
     @Test
@@ -132,14 +127,15 @@ class QaPairServiceTest {
         disabled.setStatus(QaPairStatus.DISABLED);
         when(qaPairRepository.findById(5L)).thenReturn(java.util.Optional.of(disabled));
         when(qaPairRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         service().update(5L, "改后的问", "改后的答");
 
-        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(vectorStoreRepository, vectorStore);
+        org.mockito.InOrder ord = org.mockito.Mockito.inOrder(vectorStoreRepository, vectorWriter);
         ord.verify(vectorStoreRepository).deleteByQaPairId("5");
-        ord.verify(vectorStore).add(any());
-        ord.verify(vectorStoreRepository).updateDocEnabledByQaPairId("5", "false");
+        ArgumentCaptor<List<Document>> cap = ArgumentCaptor.forClass(List.class);
+        ord.verify(vectorWriter).write(org.mockito.ArgumentMatchers.eq(22L), cap.capture());
+        // 重嵌时直接按状态写 docEnabled=false（切换向量模型的迁移也走同一条组装路径），不再事后补一次翻转
+        assertThat(cap.getValue().get(0).getMetadata()).containsEntry("docEnabled", "false");
     }
 
     @Test

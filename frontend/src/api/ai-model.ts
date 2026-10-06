@@ -1,6 +1,9 @@
 import api from './client';
 import type { ApiResponse } from '../types';
 
+/** 模型类型：对话模型参与场景路由；向量模型只给知识库用，由应用钉住一条。存量行可能缺省（按 CHAT 理解） */
+export type ModelType = 'CHAT' | 'EMBEDDING';
+
 export interface AiModelConfig {
     id: number;
     name: string;
@@ -13,6 +16,10 @@ export interface AiModelConfig {
     enabled: boolean;
     remark: string | null;
     scope?: 'PLATFORM' | 'TENANT';
+    /** 创建后不可改；缺省视为 CHAT */
+    modelType?: ModelType | null;
+    /** 向量模型的推荐相似度阈值（问答策略默认跟随它） */
+    similarityThreshold?: number | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -30,6 +37,8 @@ export interface ProviderPreset {
     defaultEndpoint: string;
     /** 界面占位示例，不是校验白名单——各家模型 id 漂移很快 */
     sampleModelId: string;
+    /** 向量模型占位示例；null 表示该厂商没有已核实可用的向量模型（保存时的真实探测才是最终判据） */
+    sampleEmbeddingModelId: string | null;
 }
 
 export const aiModelService = {

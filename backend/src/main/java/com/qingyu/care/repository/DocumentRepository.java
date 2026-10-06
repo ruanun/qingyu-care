@@ -60,8 +60,8 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      * 跑全量重嵌批任务时调度器恰好也在同步同一篇。
      *
      * <p>⚠️ 真正的临界区是 {@link com.qingyu.care.service.KnowledgeService#processDocument}
-     * （先删旧向量、再插新向量），它有<b>三个</b>入口：网页同步、重嵌批任务
-     * （{@code ReembedService}）、手动重新处理（{@code reprocessDocument}）。所以锁抢在
+     * （先删旧向量、再插新向量），它有<b>三个</b>入口：网页同步、切换向量模型的迁移任务
+     * （{@code EmbeddingMigrationService}，经 {@code reembedDocumentFor}）、手动重新处理（{@code reprocessDocument}）。所以锁抢在
      * 它自己的首行，而不是只在某一个调用方那里——只锁住其中一条，另外两条照样能并发进入。
      * {@code WebPageSyncService.syncDocument} 在外层另抢一次，把「抓取 + 比对 hash + 重嵌 +
      * 落 contentHash」整段一起互斥；咨询锁对同一事务可重入，内外两次不会自锁。
@@ -147,4 +147,12 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     /** 某爬取站点下的全部文档，供删除站点时连带处理。 */
     List<Document> findByCrawlSiteId(Long crawlSiteId);
+
+    /**
+     * 某应用下已完成的文档 id（切换向量模型的迁移任务用）。原生 SQL 显式按 app_id：迁移跑在没有
+     * TenantContext 的 @Async 线程里，派生查询在那里不加过滤器，必须自己收窄。
+     */
+    @Query(value = "SELECT id FROM document WHERE app_id = :appId AND status = 'COMPLETED' ORDER BY id",
+            nativeQuery = true)
+    List<Long> findCompletedIdsByAppId(@Param("appId") Long appId);
 }

@@ -75,39 +75,31 @@ spring:
         size: 4
     # 注意：spring.task.execution.* 刻意不配——那是 Boot 默认的 applicationTaskExecutor，
     # 现在只承载短任务（用量计量/审计日志/webhook 入队与直投），保持默认即可。
-    # 长任务（文档摄取/QA 生成/批量重嵌/网页同步/站点爬取）走独立的有界池，
+    # 长任务（文档摄取/QA 生成/向量模型迁移/网页同步/站点爬取）走独立的有界池，
     # 见 AsyncConfig 与下方 qingyu.care.async.long-task.*
 
   # Spring AI 配置 (使用 OpenAI 兼容模式)
+  #
+  # ⚠️ 这里的对话模型与向量模型配置都只用于首次启动播种：首次启动时各播一条平台共享模型
+  # （ModelRouterService.init），之后一律以后台「共享模型 / 模型配置」为准，改这里不会影响已有数据。
+  # 运行时的模型客户端全部按库里的配置行动态构建，所以下面关掉了 Spring AI 的向量模型与向量库自动装配。
   ai:
+    model:
+      embedding: none
+    vectorstore:
+      type: none
     openai:
       # 通义千问 DashScope OpenAI 兼容端点
       api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}
       # base-url 必须自带 /v1：Spring AI 2.0 起改用官方 openai-java SDK，只拼 chat/completions
       # 与 embeddings，不再补 /v1（1.x 的 OpenAiApi 拼的是 /v1/xxx，故当年要求不带，契约已翻转）。
-      # 本项同时喂给自动装配的 ChatModel 与 EmbeddingModel，缺 /v1 会让对话/摄取/检索全线 404。
-      # 用 AI_BASE_URL 覆盖时同样必须带 /v1。
+      # 缺 /v1 会让播种出来的平台默认模型全线 404。用 AI_BASE_URL 覆盖时同样必须带 /v1
+      # （仅对 DashScope 这类厂商成立，各家后缀见 ModelProviderCatalog）。
       base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       # Spring AI 2.0 起配置属性去掉 .options 中缀（chat.options.model → chat.model）
       chat:
         model: ${AI_CHAT_MODEL:qwen3.7-flash-2026-07-15}  # 通义千问 flash（2026-07-15 快照）；可用环境变量 AI_CHAT_MODEL 覆盖
         temperature: 0.7
-      embedding:
-        model: ${AI_EMBEDDING_MODEL:qwen3.7-text-embedding}
-        # 显式钉死输出维度，不再依赖模型默认值——必须与下方 pgvector.dimensions 完全一致。
-        # 两处共用 AI_EMBEDDING_DIMENSIONS，绑定同一变量以防各自漂移导致向量写入维度不匹配。
-        # 注意：dimensions 仅 text-embedding-3 及以后 / DashScope text-embedding-v3+ 支持；
-        # 若换用不支持该参数的模型，需先移除本项。
-        dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}
-
-    # PgVector 向量存储配置
-    vectorstore:
-      pgvector:
-        index-type: HNSW
-        distance-type: COSINE_DISTANCE
-        # 必须与上方 embedding.dimensions 一致（共用 AI_EMBEDDING_DIMENSIONS）。
-        # 改动此值需重建向量表、历史向量作废——不可对已有库热切换。
-        dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}  # 钉 1024；须与 embedding 模型实际输出维度一致（换模型后确认）
 
 # Sa-Token 配置
 sa-token:
@@ -157,6 +149,17 @@ qingyu:
       # 是否允许 MCP server 指向内网/环回（本地自建 server 时打开；生产保持 false）。
       # 与 model / webhook 的同名开关语义一致：放行私网，但云元数据段永不放行。
       allow-private-servers: ${MCP_ALLOW_PRIVATE_SERVERS:false}
+    embedding:
+      # 向量维度：vector_store 列维度、探测校验、embeddings 请求的 dimensions 参数共用这一个值。
+      # ⚠️ 不能对已有数据的库热切换（列维度建表时定死，启动时 VectorStoreSchemaInitializer 校验不符即拒绝启动）。
+      # 后台添加向量模型时会真实调用一次，返回维度不等于它就拒绝保存。
+      dimensions: ${AI_EMBEDDING_DIMENSIONS:1024}
+      # 平台默认向量模型的播种来源：只在平台还没有任何向量模型时用一次，之后以后台「共享模型」为准。
+      # 端点与 Key 缺省沿用上面对话那一份；向量用别家时单独设 AI_EMBEDDING_BASE_URL / AI_EMBEDDING_API_KEY。
+      seed:
+        model: ${AI_EMBEDDING_MODEL:qwen3.7-text-embedding}
+        base-url: ${AI_EMBEDDING_BASE_URL:${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}}
+        api-key: ${AI_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:your-dashscope-api-key}}
     model:
       # 是否允许模型 endpoint 指向内网/环回（本地跑 Ollama 等自托管模型时打开；生产保持 false）
       allow-private-endpoints: ${MODEL_ALLOW_PRIVATE_ENDPOINTS:false}

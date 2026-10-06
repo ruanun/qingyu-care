@@ -27,7 +27,10 @@ import com.qingyu.care.service.PromptTemplateService;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.ChatStrategyService;
-import com.qingyu.care.service.EmbeddingModelProvider;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
+import com.qingyu.care.service.embedding.EmbeddingTag;
+import com.qingyu.care.entity.AiModelConfig;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ReadReceiptService;
 import com.qingyu.care.service.RetrievalScope;
@@ -49,7 +52,6 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -73,7 +75,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     
-    private final VectorStore vectorStore;
+    private final EmbeddingModelRegistry embeddingModelRegistry;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final PromptTemplateService promptTemplateService;
@@ -88,7 +90,7 @@ public class ChatServiceImpl implements ChatService {
     private final ConfigService configService;
     private final ChatToolService chatToolService;
     private final RealtimeNotifier realtimeNotifier;
-    private final EmbeddingModelProvider embeddingModelProvider;
+    private final EmbeddingModelResolver embeddingModelResolver;
     private final UiSpecService uiSpecService;
     private final ObjectMapper objectMapper;
     // 附件关联（MM-6）：本类 → ChatAttachmentService 单方向依赖，反向会构造器循环依赖
@@ -1041,24 +1043,23 @@ public class ChatServiceImpl implements ChatService {
                 return List.of();
             }
 
+            // 用应用当前的向量模型给查询做向量化，护栏只认它的标签；切换进行中时检索仍读当前模型
+            AiModelConfig embeddingModel = embeddingModelResolver.active(scope.appId());
+
             // null 视为开启：特性默认开，且免去既有部署（旧数据行 hybridEnabled 为 null）的 backfill 迁移
             boolean hybrid = !Boolean.FALSE.equals(strategy.getHybridEnabled());
             if (hybrid) {
-                return hybridRetrievalService.search(query, scope, strategy);
+                return hybridRetrievalService.search(query, scope, strategy, embeddingModel);
             }
 
-            int topK = strategy.effectiveTopK();
-            // 0.45：与本类顶部及 ChatStrategyService 的实测标定一致（0.7 已被证实几乎滤掉全部
-            // 真实相关命中）。列 similarity_threshold 是 nullable=false，这条兜底实际不可达，
-            // 但留着一个用已推翻的值做的哑弹只会误导下一个读代码的人。
-            double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.45;
             SearchRequest searchRequest = SearchRequest.builder()
                     .query(query)
-                    .topK(topK)
-                    .similarityThreshold(threshold)
-                    .filterExpression(scope.toFilterExpression(embeddingModelProvider.getModel()))
+                    .topK(strategy.effectiveTopK())
+                    // 默认跟随向量模型的推荐阈值（相似度刻度随模型平移，见 ChatStrategy.effectiveSimilarityThreshold）
+                    .similarityThreshold(strategy.effectiveSimilarityThreshold(embeddingModel.getSimilarityThreshold()))
+                    .filterExpression(scope.toFilterExpression(EmbeddingTag.of(embeddingModel)))
                     .build();
-            return vectorStore.similaritySearch(searchRequest);
+            return embeddingModelRegistry.vectorStore(embeddingModel).similaritySearch(searchRequest);
         } catch (Exception e) {
             log.warn("Knowledge search failed: {}", e.getMessage());
             return List.of();

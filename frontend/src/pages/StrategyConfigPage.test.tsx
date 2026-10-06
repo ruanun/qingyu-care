@@ -40,6 +40,13 @@ vi.mock('@/api/strategy', () => ({
     },
 }));
 
+// 页面挂载时拉一次本应用向量模型的推荐阈值（跟随模式显示用），与本文件要测的字段绑定无关
+vi.mock('@/api/embedding', () => ({
+    embeddingService: {
+        getState: vi.fn().mockResolvedValue({ code: 200, message: 'ok', data: { active: { similarityThreshold: 0.45 } } }),
+    },
+}));
+
 vi.mock('@/api/prompt', () => ({
     promptService: {
         getAllVersions: vi.fn(),

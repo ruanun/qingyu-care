@@ -16,6 +16,8 @@ export interface ChatStrategy {
     hybridEnabled?: boolean;
     keywordTopK?: number;
     rrfK?: number;
+    /** 阈值是否跟随应用的向量模型；null/缺省视为跟随（与后端 ChatStrategy.effectiveSimilarityThreshold 一致） */
+    followModelThreshold?: boolean | null;
     createdAt: string;
     updatedAt: string;
 }

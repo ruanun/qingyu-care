@@ -57,7 +57,7 @@ public class WebPageSyncService {
     private final KnowledgeService knowledgeService;
     private final WebPageFetcher webPageFetcher;
 
-    // 自注入解决 @Async 同类调用不生效问题（同 KnowledgeServiceImpl/ReembedService 范式）
+    // 自注入解决 @Async 同类调用不生效问题（同 KnowledgeServiceImpl/EmbeddingMigrationService 范式）
     private WebPageSyncService self;
 
     public WebPageSyncService(DocumentRepository documentRepository,
@@ -204,7 +204,7 @@ public class WebPageSyncService {
             // 与直接读 doc.getStatus() 等价，并不能真正独立于"同一托管实例"这个前提。
             // ⚠️ 訂正：若未来给 processDocument 加 REQUIRES_NEW，identity map 会挡在前面
             // 不查库，这次显式回读同样看不见内层提交的状态——到时候判据要换别的机制，不是
-            // 靠这次显式查询就自动兜底。写成显式回读单纯是为了与 ReembedService.runReembed
+            // 靠这次显式查询就自动兜底。写成显式回读单纯是为了与（已移除的）批量重嵌 runReembed
             // 的既有写法（它本身没有环绕事务，回读是真的查库）保持同一种表达方式，便于统一
             // 理解，不是这里真的多一层保护
             knowledgeService.processDocument(documentId);

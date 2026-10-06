@@ -141,7 +141,7 @@ class HandoverRuleFallbackIT extends AbstractPostgresIT {
 
         // ConfigScopeResolver.resolve() 新增了 SecurityUtil.isPlatformAdmin() 守卫，只有真正
         // 平台管理员登录（Sa-Token 会话）才会触发按 X-App-Id 反查归属租户；本用例未真实登录，
-        // 用 mockStatic 忠实模拟"平台管理员"这一前提，让反查得以发生（与 ReembedServiceTest 同款用法）。
+        // 用 mockStatic 忠实模拟"平台管理员"这一前提，让反查得以发生。
         try (MockedStatic<SecurityUtil> secMock = mockStatic(SecurityUtil.class)) {
             secMock.when(SecurityUtil::isPlatformAdmin).thenReturn(true);
 

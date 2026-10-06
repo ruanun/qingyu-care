@@ -51,6 +51,17 @@ public class ModelRouterService {
     @Value("${spring.ai.openai.chat.model:gpt-4o-mini}")
     private String defaultModel;
 
+    // 平台默认向量模型的播种来源（只在平台还没有任何向量模型时用一次，之后以后台配置为准）。
+    // 端点与 Key 缺省回落对话那一份（yml 里用占位符嵌套表达），想分开就设 AI_EMBEDDING_BASE_URL / AI_EMBEDDING_API_KEY。
+    @Value("${qingyu.care.embedding.seed.model:}")
+    private String seedEmbeddingModel;
+
+    @Value("${qingyu.care.embedding.seed.base-url:}")
+    private String seedEmbeddingBaseUrl;
+
+    @Value("${qingyu.care.embedding.seed.api-key:}")
+    private String seedEmbeddingApiKey;
+
     /**
      * 初始化默认模型配置
      */
@@ -72,6 +83,41 @@ public class ModelRouterService {
                     .remark("从 application.yml 初始化的平台共享默认模型")
                     .build());
         });
+        seedPlatformEmbeddingModel();
+    }
+
+    /**
+     * 平台还没有任何向量模型时，按 yml 播种一条平台共享向量模型——新应用都钉它。
+     *
+     * <p>与对话模型分开判断（不能复用上面「表为空才播种」）：存量库里早有对话模型行，按表计数就永远不会播。
+     * 不在这里探测连通性：启动时网络不通不该阻止服务起来，后台的「测试」按钮与摄取失败会把问题暴露出来。
+     */
+    void seedPlatformEmbeddingModel() {
+        if (seedEmbeddingModel == null || seedEmbeddingModel.isBlank()
+                || repository.countPlatformEmbeddingModels() > 0) {
+            return;
+        }
+        String baseUrl = seedEmbeddingBaseUrl == null || seedEmbeddingBaseUrl.isBlank() ? defaultBaseUrl : seedEmbeddingBaseUrl;
+        String apiKey = seedEmbeddingApiKey == null || seedEmbeddingApiKey.isBlank() ? defaultApiKey : seedEmbeddingApiKey;
+        String provider = ModelProviderCatalog.presets().stream()
+                .filter(p -> p.defaultEndpoint().equals(baseUrl))
+                .map(ModelProviderCatalog.ProviderPreset::key)
+                .findFirst().orElse("openai");
+        repository.save(AiModelConfig.builder()
+                .name("默认向量模型")
+                .provider(provider)
+                .modelId(seedEmbeddingModel.trim())
+                .endpoint(baseUrl)
+                .apiKey(apiKey)
+                .scenario("default")
+                .priority(1)
+                .enabled(true)
+                .scope(OwnerScope.PLATFORM)
+                .modelType(com.qingyu.care.enums.ModelType.EMBEDDING)
+                .similarityThreshold(ModelProviderCatalog.recommendedEmbeddingThreshold(seedEmbeddingModel))
+                .remark("从 application.yml 初始化的平台默认向量模型")
+                .build());
+        log.info("已播种平台默认向量模型 {}（{}）", seedEmbeddingModel, baseUrl);
     }
 
     /**
@@ -147,8 +193,11 @@ public class ModelRouterService {
 
     private ModelEndpointGuardInterceptor endpointGuard;
 
-    /** 懒建：它内部持有一个 OkHttp 连接池，所有模型客户端共用一份；放 @PostConstruct 会让手工 new 的单测拿到 null。 */
-    private synchronized ModelEndpointGuardInterceptor endpointGuard() {
+    /**
+     * 懒建：它内部持有一个 OkHttp 连接池，所有模型客户端共用一份；放 @PostConstruct 会让手工 new 的单测拿到 null。
+     * 向量模型客户端（{@code EmbeddingModelRegistry}）也挂这同一个实例。
+     */
+    public synchronized ModelEndpointGuardInterceptor endpointGuardInterceptor() {
         if (endpointGuard == null) {
             endpointGuard = new ModelEndpointGuardInterceptor(allowPrivateEndpoints);
         }
@@ -298,7 +347,7 @@ public class ModelRouterService {
         OpenAiChatOptions options = optionsBuilder.build();
 
         // 出站防线：禁重定向 + 连接期 DNS 校验（2026-09-30 安全审查 M1，见 ModelEndpointGuardInterceptor）
-        ModelEndpointGuardInterceptor guard = endpointGuard();
+        ModelEndpointGuardInterceptor guard = endpointGuardInterceptor();
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
                 .options(options)
                 .httpClientBuilderCustomizer(b -> b.interceptor(guard))

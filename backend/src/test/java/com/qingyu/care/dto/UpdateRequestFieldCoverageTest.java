@@ -176,6 +176,11 @@ class UpdateRequestFieldCoverageTest {
                 "凭据，专用端点 POST /{id}/regenerate-webhook-secret 重置（ApplicationController:158-159）"));
         application.put("tenant", ex(ExclusionCategory.OWNERSHIP,
                 "归属关系，客户端可设=跨租户写入（技术债第14项刚堵掉的那类洞）"));
+        application.put("embeddingModelId", ex(ExclusionCategory.LIFECYCLE_DEDICATED_ENDPOINT,
+                "应用当前的向量模型，由 POST /v1/embedding/switch 驱动（同标签直接换指针 / 否则影子重建后翻转）；"
+                        + "经 update 改会绕过可选性校验（借别人的 Key）与重建（检索一条都对不上）。列本身 insertable/updatable=false"));
+        application.put("pendingEmbeddingModelId", ex(ExclusionCategory.LIFECYCLE_DEDICATED_ENDPOINT,
+                "切换进行中的目标向量模型，只由 EmbeddingMigrationService 经原生 SQL CAS 写入与清空"));
         whitelist.put("ApplicationUpdateRequest", application);
 
         Map<String, Exclusion> tenant = new HashMap<>();
@@ -206,6 +211,9 @@ class UpdateRequestFieldCoverageTest {
         aiModelConfig.put("scope", ex(ExclusionCategory.PRIVILEGE_SCOPE,
                 "客户端可控字段，租户曾可在请求体里自封 PLATFORM 让自己的模型（连同"
                         + "自己的 apiKey）出现在所有租户列表里；平台共享模型只能走 /v1/platform/models"));
+        aiModelConfig.put("modelType", ex(ExclusionCategory.IDENTITY_KEY,
+                "对话 / 向量类型创建后不可改：向量改成对话会进对话路由、请求打到 embeddings 端点；"
+                        + "应用钉着的向量模型改成对话则摄取与检索全部失败（EmbeddingModelResolver.load 会拒）"));
         whitelist.put("AiModelConfigUpdateRequest", aiModelConfig);
 
         Map<String, Exclusion> aiTool = new HashMap<>();

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -44,16 +44,15 @@ class KnowledgeUploadValidationTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock QaPairRepository qaPairRepository;
     @Mock CrawlSiteRepository crawlSiteRepository;
 
     private KnowledgeServiceImpl service() {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                vectorWriter, fileService, vectorStoreRepository,
                 qaPairRepository, crawlSiteRepository);
         ReflectionTestUtils.setField(service, "chunkSize", 800);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);

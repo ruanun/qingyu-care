@@ -63,4 +63,7 @@ public class ChatStrategyUpdateRequest {
 
     /** RRF 融合常数 k */
     private Integer rrfK;
+
+    /** 阈值是否跟随向量模型（false = 用本策略的 similarityThreshold） */
+    private Boolean followModelThreshold;
 }

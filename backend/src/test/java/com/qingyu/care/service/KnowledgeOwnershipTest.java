@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,10 +39,9 @@ class KnowledgeOwnershipTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock com.qingyu.care.repository.QaPairRepository qaPairRepository;
     @Mock com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
@@ -53,7 +52,7 @@ class KnowledgeOwnershipTest {
 
     private KnowledgeServiceImpl service() {
         return new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                vectorWriter, fileService, vectorStoreRepository,
                 qaPairRepository, crawlSiteRepository);
     }
 

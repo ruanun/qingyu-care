@@ -2,7 +2,6 @@ package com.qingyu.care.it;
 
 import com.qingyu.care.enums.DocumentVisibility;
 import com.qingyu.care.repository.KeywordSearchDao;
-import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.support.AbstractPostgresIT;
 import org.junit.jupiter.api.AfterEach;
@@ -28,7 +27,6 @@ class KeywordSearchEmbeddingModelFilterIT extends AbstractPostgresIT {
 
     @Autowired KeywordSearchDao keywordSearchDao;
     @Autowired JdbcTemplate jdbcTemplate;
-    @Autowired EmbeddingModelProvider embeddingModelProvider;
 
     /** embeddingModel 为 null 时不写该键（模拟历史未打标行）；非 null 则写入等值键。 */
     private void seedChunk(String content, String embeddingModel) {
@@ -49,7 +47,7 @@ class KeywordSearchEmbeddingModelFilterIT extends AbstractPostgresIT {
 
     @Test
     void 只命中当前embeddingModel标的向量_跨模型与未标向量被排除() {
-        String currentModel = embeddingModelProvider.getModel();
+        String currentModel = "qwen3.7-text-embedding";
         seedChunk("护栏产品型号XE-9000 当前模型说明", currentModel);
         seedChunk("护栏产品型号XE-9000 旧模型说明", "old-model");
         seedChunk("护栏产品型号XE-9000 未标模型说明", null);
@@ -57,7 +55,7 @@ class KeywordSearchEmbeddingModelFilterIT extends AbstractPostgresIT {
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "护栏产品型号",
                 new RetrievalScope(70003L, 80003L, List.of(903L), DocumentVisibility.INTERNAL),
-                10);
+                currentModel, 10);
 
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).content()).contains("当前模型说明");

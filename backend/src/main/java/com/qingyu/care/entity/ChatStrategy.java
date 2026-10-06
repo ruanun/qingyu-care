@@ -37,6 +37,21 @@ public class ChatStrategy extends BaseTenantEntity {
         return Math.max(1, Math.min(keywordTopK != null ? keywordTopK : 10, MAX_KEYWORD_TOP_K));
     }
 
+    /**
+     * 实际生效的相似度阈值：默认跟随应用当前向量模型的推荐值，显式关掉跟随才用本策略自己的值。
+     *
+     * <p>相似度刻度随 embedding 模型整体平移，阈值写死在策略上的话，换完向量模型而忘了改策略，
+     * 结果要么全部判为「未命中」、要么噪声当命中——都不报错。模型没给推荐值时退回本策略的值。
+     *
+     * @param modelThreshold 应用当前向量模型的推荐阈值，可为 null
+     */
+    public double effectiveSimilarityThreshold(Double modelThreshold) {
+        if (!Boolean.FALSE.equals(followModelThreshold) && modelThreshold != null) {
+            return modelThreshold;
+        }
+        return similarityThreshold != null ? similarityThreshold : 0.45;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -129,4 +144,12 @@ public class ChatStrategy extends BaseTenantEntity {
      * RRF 融合常数 k。默认 60。
      */
     private Integer rrfK;
+
+    /**
+     * 相似度阈值是否跟随应用的向量模型（{@link #effectiveSimilarityThreshold}）。
+     *
+     * <p>null 视为跟随（同 {@link #hybridEnabled} 的约定）：新建策略与存量行都不用回填就默认跟随；
+     * 只有显式置 false 时 {@link #similarityThreshold} 才生效。
+     */
+    private Boolean followModelThreshold;
 }

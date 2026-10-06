@@ -14,16 +14,13 @@ spring:
   ai:
     openai:
       api-key: test-key
-    vectorstore:
-      pgvector:
-        initialize-schema: true          # 让 Spring AI 自建 vector_store 表 + 扩展
-        dimensions: 1536
-        # 先 DROP 再重建向量表：绕过 VectorStoreEntity(JPA create-drop 先建的无 embedding 列的表)
-        # 与 Spring AI 建表(IF NOT EXISTS 跳过→建 HNSW 索引时 embedding 列缺失)的顺序冲突。
-        remove-existing-vector-store-table: true
 
 qingyu:
   care:
+    embedding:
+      # IT 种子数据直接 INSERT 1536 维零向量（array_fill(0::real, ARRAY[1536])）。vector_store 的向量列由
+      # VectorStoreSchemaInitializer 在 JPA create-drop 建出无 embedding 列的表之后补上
+      dimensions: 1536
     platform:
       admin-initial-password: admin123   # 多条 IT 以 admin/admin123 登录平台管理员
     auth:

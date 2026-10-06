@@ -106,6 +106,13 @@ class PartialUpdateSemanticsTest {
 
     @Mock
     ModelRouterService modelRouterService;
+
+    @Mock
+    com.qingyu.care.service.embedding.EmbeddingModelAdminService embeddingModelAdminService;
+
+    @Mock
+    com.qingyu.care.service.embedding.EmbeddingModelProbe embeddingModelProbe;
+
     @InjectMocks
     AiModelController aiModelController;
 

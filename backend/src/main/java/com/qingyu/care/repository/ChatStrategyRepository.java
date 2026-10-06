@@ -64,4 +64,12 @@ public interface ChatStrategyRepository extends JpaRepository<ChatStrategy, Long
      * 取消该场景下所有策略的默认状态（用于切换默认策略）
      */
     void deleteByScenario(String scenario); // 暂不直接使用，通过 Service 处理
+
+    /**
+     * 对某应用生效、且<b>没有</b>跟随向量模型阈值的策略（应用自有 + 平台默认）。切换向量模型时点名提醒：
+     * 它们的阈值是按旧模型的刻度定的，换完模型不改就会失准。
+     */
+    @Query(value = "SELECT * FROM chat_strategy WHERE enabled = true AND follow_model_threshold = false "
+            + "AND (app_id = :appId OR tenant_id IS NULL) ORDER BY id", nativeQuery = true)
+    List<ChatStrategy> findManualThresholdStrategies(@Param("appId") Long appId);
 }

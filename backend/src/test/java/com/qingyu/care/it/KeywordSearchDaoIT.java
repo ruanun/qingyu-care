@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KeywordSearchDaoIT extends AbstractPostgresIT {
 
     private static final String T1 = "70001", T2 = "70002";
-    /** 与 test profile 的 spring.ai.openai.embedding.model 一致（application.yml 默认值），
+    /** 与平台默认向量模型的 modelId 一致（启动时按 qingyu.care.embedding.seed.model 播种），
      * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
     private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 
@@ -58,7 +58,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
                 new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
-                10);
+                EMBEDDING_MODEL, 10);
 
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).content()).contains("XZ-9000");
@@ -70,7 +70,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         assertThat(keywordSearchDao.search(
                 "量子纠缠",
                 new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
-                10)).isEmpty();
+                EMBEDDING_MODEL, 10)).isEmpty();
     }
 
     @Test
@@ -82,7 +82,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
                 new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
-                10);
+                EMBEDDING_MODEL, 10);
 
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).content()).contains("库一");
@@ -96,7 +96,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
                 new RetrievalScope(70001L, 80001L, List.of(901L, 902L), DocumentVisibility.INTERNAL),
-                10);
+                EMBEDDING_MODEL, 10);
 
         assertThat(hits).hasSize(2);
     }
@@ -109,7 +109,7 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         List<KeywordSearchDao.KeywordHit> hits = keywordSearchDao.search(
                 "产品型号",
                 new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.PUBLIC),
-                10);
+                EMBEDDING_MODEL, 10);
 
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).content()).contains("公开知识");
@@ -122,6 +122,6 @@ class KeywordSearchDaoIT extends AbstractPostgresIT {
         assertThat(keywordSearchDao.search(
                 "产品型号",
                 new RetrievalScope(70001L, 80001L, List.of(901L), DocumentVisibility.INTERNAL),
-                10)).isEmpty();
+                EMBEDDING_MODEL, 10)).isEmpty();
     }
 }

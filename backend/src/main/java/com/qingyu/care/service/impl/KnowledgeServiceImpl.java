@@ -18,7 +18,6 @@ import com.qingyu.care.service.KnowledgeService;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import com.qingyu.care.config.AsyncConfig;
 import org.springframework.scheduling.annotation.Async;
@@ -38,10 +37,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final DocumentRepository documentRepository;
-    private final VectorStore vectorStore;
+    private final com.qingyu.care.service.embedding.KnowledgeVectorWriter vectorWriter;
     private final FileService fileService;
     private final com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository;
-    private final com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider;
     private final com.qingyu.care.repository.QaPairRepository qaPairRepository;
     private final com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
@@ -73,18 +71,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public KnowledgeServiceImpl(
             KnowledgeBaseRepository knowledgeBaseRepository,
             DocumentRepository documentRepository,
-            VectorStore vectorStore,
+            com.qingyu.care.service.embedding.KnowledgeVectorWriter vectorWriter,
             FileService fileService,
             com.qingyu.care.repository.VectorStoreRepository vectorStoreRepository,
-            com.qingyu.care.service.EmbeddingModelProvider embeddingModelProvider,
             com.qingyu.care.repository.QaPairRepository qaPairRepository,
             com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository) {
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.documentRepository = documentRepository;
-        this.vectorStore = vectorStore;
+        this.vectorWriter = vectorWriter;
         this.fileService = fileService;
         this.vectorStoreRepository = vectorStoreRepository;
-        this.embeddingModelProvider = embeddingModelProvider;
         this.qaPairRepository = qaPairRepository;
         this.crawlSiteRepository = crawlSiteRepository;
     }
@@ -341,7 +337,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public void processDocument(Long documentId) {
         // 互斥：下面的「先删旧向量、再插新向量」是本项目唯一会产出重复向量的临界区，而本方法
-        // 有三个入口——网页同步、重嵌批任务(ReembedService)、手动重新处理(reprocessDocument)。
+        // 有三个入口——网页同步、切换向量模型的迁移任务(EmbeddingMigrationService，经 reembedDocumentFor)、手动重新处理(reprocessDocument)。
         // 锁必须抢在这里而不是某个调用方：只锁住一条时，另外两条照样能并发进入。典型事故是
         // 换 embedding 模型后跑全量重嵌，批任务正处理某篇网页，调度器同一分钟命中同一篇且
         // 正文已变——两个事务各删各插，vector_store 落 2N 行而 chunk_count 记 N，检索时同一
@@ -368,68 +364,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             doc.setStatus(DocumentStatus.PROCESSING);
             documentRepository.save(doc);
 
-            List<org.springframework.ai.document.Document> documents;
-            if (doc.getDocumentType() == DocumentType.URL) {
-                // 网页文档没有 S3 文件（filePath 恒为 null），正文已由 WebPageSyncService 抓取
-                // 存入 doc.content；跳过下载与 Tika 解析，直接把已有正文包一份 Document 送入切分
-                documents = List.of(org.springframework.ai.document.Document.builder()
-                        .text(doc.getContent() != null ? doc.getContent() : "")
-                        .build());
-            } else {
-                // 从 S3 流式读取并用 Tika 抽正文，带字符上限（安全审查 M8）：不再整个文件读成 byte[]，
-                // 也不再无上限抽文本——抽出多少就切多少块、嵌多少次，费用与堆内存都要封顶
-                TikaTextExtractor.ExtractedText extracted;
-                try (java.io.InputStream in = fileService.openStream(doc.getFilePath())) {
-                    extracted = textExtractor.extract(in, maxExtractedChars);
-                }
-                if (extracted.truncated()) {
-                    log.warn("文档正文超过 {} 字符已截断，只摄取前半段 id={} name={}",
-                            maxExtractedChars, documentId, doc.getName());
-                }
-                documents = List.of(org.springframework.ai.document.Document.builder()
-                        .text(extracted.text())
-                        .build());
-            }
+            ExtractedChunks extracted = extractChunks(doc);
+            List<org.springframework.ai.document.Document> documents = extracted.documents();
+            List<org.springframework.ai.document.Document> chunks = extracted.chunks();
 
-            // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
-            TokenTextSplitter splitter = TokenTextSplitter.builder()
-                    .withChunkSize(chunkSize)
-                    .withMinChunkSizeChars(chunkOverlap)
-                    .withMinChunkLengthToEmbed(5)
-                    .withMaxNumChunks(maxChunksPerDocument)   // 单文档 chunk 封顶（安全审查 M8）
-                    .withKeepSeparator(true)
-                    .build();
-            List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
-            // ⚠️ TokenTextSplitter 到达 maxNumChunks 后会把剩余全部文本追加成最后一块（一块可能极大），
-            // 所以上限必须在这里再截一次，否则封顶形同虚设
-            if (chunks.size() > maxChunksPerDocument) {
-                log.warn("文档切块数 {} 超过上限 {}，丢弃超出部分 id={} name={}",
-                        chunks.size(), maxChunksPerDocument, documentId, doc.getName());
-                chunks = new java.util.ArrayList<>(chunks.subList(0, maxChunksPerDocument));
-            }
-            
-            // 添加元数据（包含租户隔离信息）——
-            // 租户/应用取自 document 行自身（@PrePersist 在请求线程已回填）：
-            // processDocument 跑在 @Async 线程，无 TenantContext，直接读上下文会写出 appId 空串（历史债根因）
-            Long tenantId = doc.getTenantId() != null ? doc.getTenantId() : com.qingyu.care.config.TenantContext.getTenantId();
-            Long appId = doc.getAppId() != null ? doc.getAppId() : com.qingyu.care.config.TenantContext.getAppId();
-            for (org.springframework.ai.document.Document chunk : chunks) {
-                chunk.getMetadata().putAll(Map.of(
-                        "documentId", documentId.toString(),
-                        "knowledgeBaseId", doc.getKnowledgeBase().getId().toString(),
-                        "tenantId", tenantId != null ? tenantId.toString() : "",
-                        "appId", appId != null ? appId.toString() : "",
-                        "source", doc.getName(),
-                        // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）；
-                        // docEnabled 取文档实际状态（硬编码 true 会让重新处理已禁用文档时静默重新启用）
-                        "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
-                        "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true",
-                        "embeddingModel", embeddingModelProvider.getModel()
-                ));
-            }
-            
-            // 存入向量库
-            vectorStore.add(chunks);
+            // 存入向量库：按应用当前的写入目标（切换向量模型进行中时双写，见 EmbeddingModelResolver.writeTargets）
+            vectorWriter.write(extracted.appId(), chunks);
             
             // 更新文档状态
             doc.setStatus(DocumentStatus.COMPLETED);
@@ -453,6 +393,103 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
     
+    /**
+     * 只给一个目标向量模型补一份向量（切换向量模型的影子重建用）：先删该文档在目标标签下的旧向量，再写。
+     *
+     * <p>与 {@link #processDocument} 的区别是<b>不碰文档状态、不碰当前模型的向量</b>——迁移期间文档保持
+     * COMPLETED、检索照常读当前模型那份。持同一把文档咨询锁，与重新处理 / 网页同步互斥。
+     *
+     * @return false 表示被锁挡下（别的处理正在进行），调用方稍后由补漏扫描兜底
+     */
+    @Override
+    @Transactional
+    public boolean reembedDocumentFor(Long documentId, com.qingyu.care.entity.AiModelConfig target) throws java.io.IOException {
+        if (!documentRepository.tryLockDocumentProcessing(documentId)) {
+            log.info("迁移重嵌跳过：同一文档已有处理在进行 id={}", documentId);
+            return false;
+        }
+        Document doc = documentRepository.findById(documentId).orElse(null);
+        if (doc == null || doc.getStatus() != DocumentStatus.COMPLETED) {
+            // 删了，或正在被重新处理（那一轮会按写入目标双写，不用这里管）
+            return true;
+        }
+        ExtractedChunks extracted = extractChunks(doc);
+        vectorStoreRepository.deleteByDocumentIdAndTag(documentId.toString(),
+                com.qingyu.care.service.embedding.EmbeddingTag.of(target));
+        vectorWriter.writeFor(target, extracted.chunks());
+        return true;
+    }
+
+    /** 抽取正文 + 切分 + 写好除模型标签外的全部 metadata。处理与迁移重嵌共用，保证两边切出来的块一致。 */
+    private record ExtractedChunks(Long appId,
+                                   List<org.springframework.ai.document.Document> documents,
+                                   List<org.springframework.ai.document.Document> chunks) {
+    }
+
+    private ExtractedChunks extractChunks(Document doc) throws java.io.IOException {
+        Long documentId = doc.getId();
+        List<org.springframework.ai.document.Document> documents;
+        if (doc.getDocumentType() == DocumentType.URL) {
+            // 网页文档没有 S3 文件（filePath 恒为 null），正文已由 WebPageSyncService 抓取
+            // 存入 doc.content；跳过下载与 Tika 解析，直接把已有正文包一份 Document 送入切分
+            documents = List.of(org.springframework.ai.document.Document.builder()
+                    .text(doc.getContent() != null ? doc.getContent() : "")
+                    .build());
+        } else {
+            // 从 S3 流式读取并用 Tika 抽正文，带字符上限（安全审查 M8）：不再整个文件读成 byte[]，
+            // 也不再无上限抽文本——抽出多少就切多少块、嵌多少次，费用与堆内存都要封顶
+            TikaTextExtractor.ExtractedText extracted;
+            try (java.io.InputStream in = fileService.openStream(doc.getFilePath())) {
+                extracted = textExtractor.extract(in, maxExtractedChars);
+            }
+            if (extracted.truncated()) {
+                log.warn("文档正文超过 {} 字符已截断，只摄取前半段 id={} name={}",
+                        maxExtractedChars, documentId, doc.getName());
+            }
+            documents = List.of(org.springframework.ai.document.Document.builder()
+                    .text(extracted.text())
+                    .build());
+        }
+
+        // 切分文档（1.x GA 起 5 参构造被移除，改用 builder，punctuationMarks 走默认）
+        TokenTextSplitter splitter = TokenTextSplitter.builder()
+                .withChunkSize(chunkSize)
+                .withMinChunkSizeChars(chunkOverlap)
+                .withMinChunkLengthToEmbed(5)
+                .withMaxNumChunks(maxChunksPerDocument)   // 单文档 chunk 封顶（安全审查 M8）
+                .withKeepSeparator(true)
+                .build();
+        List<org.springframework.ai.document.Document> chunks = splitter.split(documents);
+        // ⚠️ TokenTextSplitter 到达 maxNumChunks 后会把剩余全部文本追加成最后一块（一块可能极大），
+        // 所以上限必须在这里再截一次，否则封顶形同虚设
+        if (chunks.size() > maxChunksPerDocument) {
+            log.warn("文档切块数 {} 超过上限 {}，丢弃超出部分 id={} name={}",
+                    chunks.size(), maxChunksPerDocument, documentId, doc.getName());
+            chunks = new java.util.ArrayList<>(chunks.subList(0, maxChunksPerDocument));
+        }
+        
+        // 添加元数据（包含租户隔离信息）——
+        // 租户/应用取自 document 行自身（@PrePersist 在请求线程已回填）：
+        // processDocument 跑在 @Async 线程，无 TenantContext，直接读上下文会写出 appId 空串（历史债根因）
+        Long tenantId = doc.getTenantId() != null ? doc.getTenantId() : com.qingyu.care.config.TenantContext.getTenantId();
+        Long appId = doc.getAppId() != null ? doc.getAppId() : com.qingyu.care.config.TenantContext.getAppId();
+        for (org.springframework.ai.document.Document chunk : chunks) {
+            chunk.getMetadata().putAll(Map.of(
+                    "documentId", documentId.toString(),
+                    "knowledgeBaseId", doc.getKnowledgeBase().getId().toString(),
+                    "tenantId", tenantId != null ? tenantId.toString() : "",
+                    "appId", appId != null ? appId.toString() : "",
+                    "source", doc.getName(),
+                    // 检索条件为等值判断，摄取必写全键（缺键行会被静默筛掉）；
+                    // docEnabled 取文档实际状态（硬编码 true 会让重新处理已禁用文档时静默重新启用）
+                    "visibility", doc.getVisibility() != null ? doc.getVisibility().name() : "PUBLIC",
+                    "docEnabled", doc.getEnabled() != null ? doc.getEnabled().toString() : "true"
+                    // embeddingModel 标签由 KnowledgeVectorWriter 按写入目标逐份打上，这里不写
+            ));
+        }
+        return new ExtractedChunks(appId, documents, chunks);
+    }
+
     /** 大小（先于任何读字节的操作）→ 非空 → 扩展名白名单。 */
     private void validateUpload(MultipartFile file) {
         if (file == null || file.isEmpty()) {
