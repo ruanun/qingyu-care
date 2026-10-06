@@ -71,6 +71,30 @@ public abstract class AbstractPostgresIT {
     @Autowired
     protected ApplicationRepository applicationRepository;
 
+    @Autowired
+    protected org.springframework.jdbc.core.JdbcTemplate baseJdbcTemplate;
+
+    /**
+     * 按<b>固定 id</b> 确保租户与应用行存在（已存在则不动）。
+     *
+     * <p>检索与摄取链路会按 appId 读应用钉住的向量模型（{@code EmbeddingModelResolver}）——应用行不存在时
+     * 检索 fail-soft 返回空。很多检索类 IT 用写死的 appId 往 vector_store 直接播种，从前应用行存不存在都无所谓，
+     * 现在必须真实存在，否则正向断言会红、反向断言（「检索不到」）会变成永真。
+     */
+    protected void ensureAppRow(Long tenantId, Long appId) {
+        baseJdbcTemplate.update("INSERT INTO sys_tenant(id, code, name, plan, status, created_at, updated_at) "
+                + "VALUES (?, ?, ?, 'FREE', 'ACTIVE', now(), now()) ON CONFLICT (id) DO NOTHING",
+                tenantId, "IT_FIXED_" + tenantId, "IT固定租户-" + tenantId);
+        baseJdbcTemplate.update("INSERT INTO sys_application(id, tenant_id, name, app_key, app_secret, enabled, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, 'sec', true, now(), now()) ON CONFLICT (id) DO NOTHING",
+                appId, tenantId, "IT固定应用-" + appId, "app_fixed_" + appId);
+        // 直接钉成平台默认向量模型：不走解析器的「首用时钉」——那是 REQUIRES_NEW 事务，看不见外层测试事务里
+        // 刚插入、尚未提交的应用行，会让用例走一条与生产不同的路径
+        baseJdbcTemplate.update("UPDATE sys_application SET embedding_model_id = (SELECT id FROM ai_model_config "
+                + "WHERE model_type = 'EMBEDDING' AND tenant_id IS NULL ORDER BY priority, id LIMIT 1) "
+                + "WHERE id = ? AND embedding_model_id IS NULL", appId);
+    }
+
     /** 播种一个租户 + 应用（Application 未继承 BaseTenantEntity，tenant_id 走关系映射，无需 TenantContext）。 */
     protected Application seedApp(String suffix, String allowedOrigins) {
         Tenant tenant = tenantRepository.save(Tenant.builder()

@@ -1,5 +1,6 @@
 package com.qingyu.care.service.impl;
 
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.dto.ChatRequest;
@@ -22,7 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -46,7 +47,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ChatAttachmentWiringTest {
 
-    @Mock VectorStore vectorStore;
+    @Mock EmbeddingModelRegistry embeddingModelRegistry;
     @Mock ChatSessionRepository sessionRepository;
     @Mock ChatMessageRepository messageRepository;
     @Mock PromptTemplateService promptTemplateService;
@@ -61,7 +62,7 @@ class ChatAttachmentWiringTest {
     @Mock ConfigService configService;
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelResolver embeddingModelResolver;
     @Mock ChatAttachmentService chatAttachmentService;
     @Spy UiSpecService uiSpecService = new UiSpecService(new ObjectMapper());
     @Spy ObjectMapper objectMapper = new ObjectMapper();

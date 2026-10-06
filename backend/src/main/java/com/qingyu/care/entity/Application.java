@@ -1,6 +1,7 @@
 package com.qingyu.care.entity;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -124,6 +125,23 @@ public class Application {
      */
     @Column(name = "webhook_events", columnDefinition = "TEXT")
     private String webhookEvents;
+
+    /**
+     * 本应用当前生效的向量模型（{@code ai_model_config.id}）。知识库的写入与检索都用它。
+     *
+     * <p>⚠️ {@code insertable/updatable = false}：这两列<b>只经原生 SQL 读写</b>（{@code ApplicationRepository}
+     * 的向量指针方法）。应用编辑走的是「整行 load → 改字段 → save」，而迁移任务在另一个线程里翻转指针——
+     * 让 JPA 也写这两列的话，管理员在迁移收尾那一刻点一下保存应用，就会用读入时的旧值把翻转静默覆盖回去。
+     * 请求体里给的值同理绑不上库。为 NULL 时由 {@code EmbeddingModelResolver} 首次使用时钉成平台默认。
+     */
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    @Column(name = "embedding_model_id", insertable = false, updatable = false)
+    private Long embeddingModelId;
+
+    /** 切换向量模型时的目标模型：非空表示影子重建进行中，写入双写、检索仍读当前模型。读写约束同上。 */
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    @Column(name = "pending_embedding_model_id", insertable = false, updatable = false)
+    private Long pendingEmbeddingModelId;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

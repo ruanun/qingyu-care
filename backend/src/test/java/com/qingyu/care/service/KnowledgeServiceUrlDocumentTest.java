@@ -13,7 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -42,16 +42,15 @@ class KnowledgeServiceUrlDocumentTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock com.qingyu.care.repository.QaPairRepository qaPairRepository;
     @Mock com.qingyu.care.repository.CrawlSiteRepository crawlSiteRepository;
 
     private KnowledgeServiceImpl service() {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                vectorWriter, fileService, vectorStoreRepository,
                 qaPairRepository, crawlSiteRepository);
         ReflectionTestUtils.setField(service, "chunkSize", 800);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);
@@ -76,7 +75,6 @@ class KnowledgeServiceUrlDocumentTest {
         when(documentRepository.tryLockDocumentProcessing(6L)).thenReturn(true);
         when(documentRepository.findById(6L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
 
         service().processDocument(6L);
 
@@ -88,7 +86,7 @@ class KnowledgeServiceUrlDocumentTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<org.springframework.ai.document.Document>> captor = ArgumentCaptor.forClass(List.class);
-        verify(vectorStore).add(captor.capture());
+        verify(vectorWriter).write(any(), captor.capture());
         List<org.springframework.ai.document.Document> chunks = captor.getValue();
         assertThat(chunks).isNotEmpty();
         // 切片文本拼回后必须包含原文标记——证明切分输入确实是 doc.getContent()，不是空文本
@@ -96,11 +94,11 @@ class KnowledgeServiceUrlDocumentTest {
                 .map(org.springframework.ai.document.Document::getText)
                 .reduce("", (a, b) -> a + b);
         assertThat(rejoined).contains(marker);
-        // embeddingModel 是检索护栏用来排除"跨模型/未打标"向量的关键键（见 vector-reembed 特性），
-        // 缺这一个键该文档会被检索静默排除——本次改动最容易漏掉、也最该守住的一条
+        // embeddingModel 标签改由 KnowledgeVectorWriter 按写入目标逐份打上（见 KnowledgeVectorWriterTest），
+        // 这里只守「检索过滤要用的键由摄取写全」
         for (org.springframework.ai.document.Document chunk : chunks) {
             assertThat(chunk.getMetadata()).containsEntry("documentId", "6");
-            assertThat(chunk.getMetadata()).containsEntry("embeddingModel", "qwen3.7-text-embedding");
+            assertThat(chunk.getMetadata()).containsKeys("knowledgeBaseId", "docEnabled", "visibility");
         }
     }
 
@@ -118,7 +116,6 @@ class KnowledgeServiceUrlDocumentTest {
         when(documentRepository.tryLockDocumentProcessing(7L)).thenReturn(true);
         when(documentRepository.findById(7L)).thenReturn(Optional.of(doc));
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(embeddingModelProvider.getModel()).thenReturn("qwen3.7-text-embedding");
         String content = "轻语客服知识内容，用于验证非 URL 分支未被本次改动波及。".repeat(30);
         when(fileService.openStream(any())).thenReturn(new java.io.ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
 
@@ -127,6 +124,6 @@ class KnowledgeServiceUrlDocumentTest {
         // 核心断言：非 URL 类型必须仍然走 S3 流式读取 + Tika（这是本次改动最容易悄悄破坏的既有主路）
         verify(fileService).openStream("kb/说明书.txt");
         assertThat(doc.getStatus()).isEqualTo(DocumentStatus.COMPLETED);
-        verify(vectorStore).add(any());
+        verify(vectorWriter).write(any(), any());
     }
 }

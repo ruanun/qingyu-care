@@ -271,11 +271,13 @@ docker compose -f docker/docker-compose.prod.yml --env-file .env up -d --build
 | `qingyu.care.session.max-history-messages` | 20 | 上下文最大历史消息数 |
 | `qingyu.care.knowledge.chunking.default-chunk-size` | 1000 | 文档切分长度（token） |
 | `qingyu.care.knowledge.chunking.default-overlap` | 200 | 切分重叠长度 |
-| `AI_EMBEDDING_DIMENSIONS` | 1024 | 向量维度，须与 embedding 模型输出一致 |
+| `AI_EMBEDDING_DIMENSIONS` | 1024 | 平台统一的向量维度，后台添加的向量模型必须输出这个维度（保存时真实探测） |
 
 > TopK 与相似度阈值等检索参数不在配置文件里，走数据库动态配置（`chat_strategy` 表 / 问答策略页面），支持租户覆盖平台默认。
 >
-> ⚠️ **相似度阈值是按 embedding 模型标定的**。当前默认 0.45 对应 `qwen3.7-text-embedding` 实测的分数分布（真实命中 0.57~0.73，无关噪声 0.25~0.30）。换 embedding 模型后这个刻度会整体平移，必须重新测量——测法见[使用手册](./docs/使用手册.md)。
+> ⚠️ **相似度阈值是按 embedding 模型标定的**。当前默认 0.45 对应 `qwen3.7-text-embedding` 实测的分数分布（真实命中 0.57~0.73，无关噪声 0.25~0.30）。换 embedding 模型后这个刻度会整体平移——所以阈值默认跟着向量模型走（每个向量模型带推荐阈值，策略默认跟随），添加别家向量模型后用真实问题测一遍再填，测法见[使用手册](./docs/使用手册.md)。
+>
+> 向量模型与对话模型一样在后台配置，按应用绑定：每个应用可在知识库页切换，后台影子重建、检索不中断。环境变量里的模型只用于首次启动播种。
 
 ## 📚 文档
 

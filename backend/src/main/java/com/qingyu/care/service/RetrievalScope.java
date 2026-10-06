@@ -31,8 +31,8 @@ public record RetrievalScope(Long tenantId, Long appId, List<Long> kbIds, Docume
      * 一律等值条件（metadata 缺键行做 != 判断时 SQL 为 NULL→false 会静默筛掉，故靠摄取写全键+启动回填保证键存在）。
      * 仅在非空范围下调用，空范围抛 IllegalStateException。
      *
-     * @param embeddingModel 当前 {@code EmbeddingModelProvider.getModel()}，用于护栏过滤——只匹配当前
-     *                       embedding 模型嵌的向量，跨模型/未标向量静默排除（防换模型后新旧向量混空间检索出垃圾）。
+     * @param embeddingModel 应用当前向量模型的标签（{@code EmbeddingTag.of}），用于护栏过滤——只匹配当前
+     *                       embedding 模型嵌的向量，跨模型/未标向量静默排除（防切换期间新旧向量混空间检索出垃圾）。
      */
     public String toFilterExpression(String embeddingModel) {
         if (isEmpty()) {

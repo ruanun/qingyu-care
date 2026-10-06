@@ -18,7 +18,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  * 要求低延迟，且失败基本无声（审计日志丢一条不影响业务）。
  *
  * <p><b>长任务 → {@link #LONG_TASK_EXECUTOR}</b>（本类定义的有界池，必须写
- * {@code @Async(AsyncConfig.LONG_TASK_EXECUTOR)}）：文档摄取、QA 生成、批量重嵌、
+ * {@code @Async(AsyncConfig.LONG_TASK_EXECUTOR)}）：文档摄取、QA 生成、向量模型迁移、
  * 网页同步、站点爬取。它们是分钟到小时级（站点爬取按 500 页硬顶 × 最长 10s/页可达 80 多分钟）。
  *
  * <p>⚠️ <b>为什么必须分池</b>：Boot 默认的 {@code applicationTaskExecutor} 是 core 8 +

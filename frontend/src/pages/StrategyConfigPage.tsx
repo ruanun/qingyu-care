@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { embeddingService } from '@/api/embedding';
 import {
     Plus,
     Edit2,
@@ -45,6 +46,8 @@ const StrategyConfigPage: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingStrategy, setEditingStrategy] = useState<Partial<ChatStrategy> | null>(null);
+    // 本应用当前向量模型的推荐阈值（跟随模式下实际生效的值）
+    const [modelThreshold, setModelThreshold] = useState<number | null>(null);
     const { toast } = useToast();
     const { confirm, confirmDialog } = useConfirm();
 
@@ -100,6 +103,22 @@ const StrategyConfigPage: React.FC = () => {
             toast({ variant: "destructive", title: "删除失败", description: getErrorMessage(error) });
         }
     };
+
+    // 阈值跟随的那个值来自本应用当前的向量模型；拉不到只是少显示一个数字，不影响编辑
+    useEffect(() => {
+        let alive = true;
+        embeddingService.getState()
+            .then((res) => {
+                if (alive && res.code === 200) setModelThreshold(res.data.active?.similarityThreshold ?? null);
+            })
+            .catch(() => undefined);
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    /** 与后端 ChatStrategy.effectiveSimilarityThreshold 同一套语义：只有显式 false 才不跟随 */
+    const follows = (s: Partial<ChatStrategy> | null | undefined) => s?.followModelThreshold !== false;
 
     const openCreateDialog = () => {
         setEditingStrategy({
@@ -181,7 +200,14 @@ const StrategyConfigPage: React.FC = () => {
                                                 <Sliders className="w-3 h-3" />
                                                 相似度阈值
                                             </div>
-                                            <div className="text-2xl font-bold text-slate-700">{(strat.similarityThreshold * 100).toFixed(0)}%</div>
+                                            {follows(strat) ? (
+                                                <div className="text-2xl font-bold text-slate-700">
+                                                    {modelThreshold != null ? `${(modelThreshold * 100).toFixed(0)}%` : '—'}
+                                                    <span className="ml-1 text-xs font-normal text-slate-500">跟随向量模型</span>
+                                                </div>
+                                            ) : (
+                                                <div className="text-2xl font-bold text-slate-700">{(strat.similarityThreshold * 100).toFixed(0)}%</div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -268,15 +294,29 @@ const StrategyConfigPage: React.FC = () => {
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-bold flex items-center gap-2">
                                     <Sliders className="w-4 h-4 text-primary" />
-                                    相似度阈值: {((editingStrategy?.similarityThreshold || 0.45) * 100).toFixed(0)}%
+                                    相似度阈值: {follows(editingStrategy)
+                                        ? (modelThreshold != null ? `${(modelThreshold * 100).toFixed(0)}%（跟随向量模型）` : '跟随向量模型')
+                                        : `${((editingStrategy?.similarityThreshold || 0.45) * 100).toFixed(0)}%`}
                                 </label>
                                 <span className="text-xs text-muted-foreground">调高可减少误报，调低可扩大回答范围</span>
                             </div>
-                            <Slider
-                                value={[(editingStrategy?.similarityThreshold || 0.45) * 100]}
-                                min={0} max={100} step={1}
-                                onValueChange={([val]) => setEditingStrategy({ ...editingStrategy, similarityThreshold: val / 100 })}
-                            />
+                            <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">
+                                    不同向量模型的分数刻度不同。跟随时用模型的推荐值，换模型后无需回来改
+                                </p>
+                                <Switch
+                                    aria-label="阈值跟随向量模型"
+                                    checked={follows(editingStrategy)}
+                                    onCheckedChange={c => setEditingStrategy({ ...editingStrategy, followModelThreshold: c })}
+                                />
+                            </div>
+                            {!follows(editingStrategy) && (
+                                <Slider
+                                    value={[(editingStrategy?.similarityThreshold || 0.45) * 100]}
+                                    min={0} max={100} step={1}
+                                    onValueChange={([val]) => setEditingStrategy({ ...editingStrategy, similarityThreshold: val / 100 })}
+                                />
+                            )}
                         </div>
 
                         <div className="flex items-center justify-between p-4 border rounded-lg">

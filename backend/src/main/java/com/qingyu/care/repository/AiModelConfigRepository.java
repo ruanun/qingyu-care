@@ -12,9 +12,16 @@ import java.util.List;
 public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Long> {
 
     /**
-     * 获取指定场景的启用模型，按优先级排序
+     * 获取指定场景的启用<b>对话</b>模型，按优先级排序。
+     *
+     * <p>⚠️ 必须排除向量模型：向量模型行的 scenario 列同样是 default，不排除就会被当成对话模型
+     * 选中，对话请求打到 embeddings 端点上（只报「所有 AI 模型调用失败」，看不出原因）。
+     * 存量行 model_type 为 NULL，按 CHAT 算。
      */
-    List<AiModelConfig> findByScenarioAndEnabledTrueOrderByPriorityAsc(String scenario);
+    @Query("SELECT m FROM AiModelConfig m WHERE m.scenario = :scenario AND m.enabled = true "
+            + "AND (m.modelType IS NULL OR m.modelType = com.qingyu.care.enums.ModelType.CHAT) "
+            + "ORDER BY m.priority ASC")
+    List<AiModelConfig> findByScenarioAndEnabledTrueOrderByPriorityAsc(@Param("scenario") String scenario);
 
     /**
      * 获取所有启用的模型，按优先级排序
@@ -46,6 +53,8 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
     @Query(
         value = "SELECT * FROM ai_model_config " +
                 "WHERE scope = 'PLATFORM' AND tenant_id IS NULL AND enabled = true AND scenario = :scenario " +
+                // 只取对话模型（理由同 findByScenarioAndEnabledTrueOrderByPriorityAsc）
+                "AND (model_type IS NULL OR model_type = 'CHAT') " +
                 "ORDER BY priority ASC",
         nativeQuery = true)
     List<AiModelConfig> findSharedModelsByScenario(@Param("scenario") String scenario);
@@ -61,4 +70,33 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
               + "ORDER BY scenario ASC, priority ASC",
         nativeQuery = true)
     List<AiModelConfig> findAllSharedModels();
+
+    // ===== 向量模型 =====
+
+    /**
+     * 启用的平台共享向量模型，按优先级排序——第一条即「平台默认向量模型」，新应用钉它。
+     * 原生 SQL 绕过租户过滤器；{@code tenant_id IS NULL} 不能去掉，理由同 {@link #findSharedModelsByScenario}。
+     */
+    @Query(value = "SELECT * FROM ai_model_config WHERE scope = 'PLATFORM' AND tenant_id IS NULL "
+            + "AND enabled = true AND model_type = 'EMBEDDING' ORDER BY priority ASC, id ASC",
+            nativeQuery = true)
+    List<AiModelConfig> findSharedEmbeddingModels();
+
+    /** 某应用自有的启用向量模型（请求线程用，appId 显式收窄，不依赖过滤器）。 */
+    @Query("SELECT m FROM AiModelConfig m WHERE m.appId = :appId AND m.enabled = true "
+            + "AND m.modelType = com.qingyu.care.enums.ModelType.EMBEDDING ORDER BY m.priority ASC, m.id ASC")
+    List<AiModelConfig> findAppEmbeddingModels(@Param("appId") Long appId);
+
+    /**
+     * 按 id 读，<b>绕过租户过滤器</b>。只给「已经由应用钉住的向量模型」这种 id 来源可信的场景用：
+     * 应用钉的可能是平台共享行（tenant_id IS NULL，过滤器下租户看不到），而摄取跑在没有上下文的
+     * {@code @Async} 线程里。别拿它处理客户端传来的 id——那必须走 {@code ModelRouterService.getById} 的归属校验。
+     */
+    @Query(value = "SELECT * FROM ai_model_config WHERE id = :id", nativeQuery = true)
+    java.util.Optional<AiModelConfig> findByIdAcrossTenants(@Param("id") Long id);
+
+    /** 平台是否已有向量模型行（不论启停），播种用。 */
+    @Query(value = "SELECT COUNT(*) FROM ai_model_config WHERE model_type = 'EMBEDDING' AND tenant_id IS NULL",
+            nativeQuery = true)
+    long countPlatformEmbeddingModels();
 }

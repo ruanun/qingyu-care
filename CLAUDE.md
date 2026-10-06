@@ -46,8 +46,8 @@ mvn test -Dtest=OpenApiExceptionHandlerTest#mapsGenericTo500   # 单个方法
 mvn verify                                            # 单测 + 集成测试（Failsafe，需 Docker Desktop）
 mvn verify -Dit.test=OpenApiAuthIT                     # 单个 IT（Failsafe 用 it.test 而非 test）
 ```
-- JDK 25。后端启动需注入环境变量 `DASHSCOPE_API_KEY`（通义千问）。可选覆盖 `AI_BASE_URL` / `AI_CHAT_MODEL` / `AI_EMBEDDING_MODEL` 切换任意 OpenAI 兼容端点。
-- ⚠️ **`AI_BASE_URL` 必须自带 `/v1`**（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`）。Spring AI 2.0 起改用官方 openai-java SDK，只往 baseUrl 后拼 `chat/completions` / `embeddings`，**不再补 `/v1`**（1.x 的 `OpenAiApi` 拼的是 `/v1/xxx`，故当年要求不带，契约已翻转）。该项同时喂给 ChatModel 与 EmbeddingModel，缺 `/v1` 会让对话/摄取/检索全线 404。
+- JDK 25。后端启动需注入环境变量 `DASHSCOPE_API_KEY`（通义千问）。`AI_BASE_URL` / `AI_CHAT_MODEL` / `AI_EMBEDDING_MODEL`（及 `AI_EMBEDDING_BASE_URL` / `AI_EMBEDDING_API_KEY`）**只用于首次启动播种**平台默认的对话模型与向量模型，之后一律以后台「共享模型 / 模型配置」为准——运行时没有任何从 yml 自动装配的模型客户端。
+- ⚠️ **`AI_BASE_URL` 必须自带 `/v1`**（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`）。Spring AI 2.0 起改用官方 openai-java SDK，只往 baseUrl 后拼 `chat/completions` / `embeddings`，**不再补 `/v1`**（1.x 的 `OpenAiApi` 拼的是 `/v1/xxx`，故当年要求不带，契约已翻转）。缺 `/v1` 会让播种出来的平台默认模型全线 404。
   ⚠️ **但「一律带 `/v1`」只对 DashScope 这类厂商成立，不是通则**：库里 `ai_model_config.endpoint` 是租户逐个模型填的，各家 OpenAI 兼容模式的 base 路径后缀并不统一（智谱 `/api/paas/v4`、火山方舟 `/api/v3`、Gemini `/v1beta/openai`），给它们补 `/v1` 就是 404。判据是「拼上 `chat/completions` 是否恰好等于该厂商的真实请求地址」，不是「有没有 `/v1`」。各家的正确值见 `ModelProviderCatalog`，那是全仓唯一一份厂商清单，前端经 `GET /v1/ai-models/providers` 拉同一份渲染下拉与徽章——**别在前端另起一份**。
 - 服务上下文路径是 `/api`，Swagger 在 `http://localhost:8080/api/swagger-ui.html`。
 
@@ -161,10 +161,20 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 4. 兜底静态对象（`ChatStrategy` 语义允许无配置安全默认，故不抛异常；`PromptTemplate` 缺失则抛异常）。
 `enums/OwnerScope`（`PLATFORM` vs `TENANT`）标记归属。新增「平台可共享 + 租户可覆盖」的配置实体时必须复刻这套回退，否则平台默认对租户不可见。
 
+### 向量模型：后台配置、按应用绑定（`service/embedding/`）
+向量模型与对话模型同在 `ai_model_config`，以 `modelType`（CHAT / EMBEDDING，存量 NULL 按 CHAT）区分。**应用**钉一条向量模型（`sys_application.embedding_model_id`，首用时钉成平台默认），该应用全部知识库共用——检索本就是「本应用全部启用的库」一起查。
+- **唯一入口 `EmbeddingModelResolver`**：写入、检索、迁移都从它拿模型，按 id 原生查询、**不依赖 TenantContext**（摄取与迁移在 `@Async` 线程，钉的又多是 `tenant_id IS NULL` 的平台行）。客户端传来的模型 id 必须先过 `requireSelectable`（应用自有 ∪ 平台共享），否则就是借别人的 Key 出站。
+- **向量标签 = modelId**（`EmbeddingTag`），检索护栏只认应用当前模型的标签。所以**被应用引用的向量模型不能改 modelId / 停用 / 删除**（`EmbeddingModelAdminService`），同 modelId 的两行之间切换只换指针。
+- **两个指针列在实体上 `insertable/updatable=false`，只经 `ApplicationRepository` 的原生 SQL CAS 读写**：应用编辑是「load → 改 → save」整行写，让 JPA 管这两列，迁移收尾那一刻点一下保存就会把翻转静默覆盖回去。
+- **切换走影子重建**（`EmbeddingMigrationService`）：置 pending → 期间一切写入双写（`KnowledgeVectorWriter` 按 `writeTargets`）、检索仍读当前模型 → 逐篇只写目标标签（`reembedDocumentFor` 不碰文档状态）→ 补漏扫描有缺口就停在 FAILED 不翻转 → CAS 翻转后清非当前标签的向量。
+- **对话路由的两条查询都必须排除向量模型**（向量行的 scenario 同为 default），`EmbeddingModelConfigIT` 守着。
+- 维度全平台统一（`qingyu.care.embedding.dimensions`），表结构由 `VectorStoreSchemaInitializer` 维护并在启动时校验列维度；添加向量模型时 `EmbeddingModelProbe` 真实调用一次、按**实际返回长度**判（有的模型忽略 `dimensions` 参数）。
+- 问答策略的相似度阈值默认跟随应用当前向量模型的推荐值（`ChatStrategy.followModelThreshold`，null 视为跟随）。
+
 ### 异步执行器分两个池（`config/AsyncConfig`）
 `@Async` 任务按时长分池，**新增 `@Async` 方法必须显式归类**：
 - **短任务 → Boot 默认 `applicationTaskExecutor`**（不写 qualifier）：用量计量、审计日志落库、webhook 入队与直投。毫秒到秒级、要求低延迟。
-- **长任务 → `@Async(AsyncConfig.LONG_TASK_EXECUTOR)`**（固定 6 线程 + 500 有界队列 + `AbortPolicy`）：文档摄取、QA 生成、批量重嵌、网页同步、站点爬取。分钟到小时级。
+- **长任务 → `@Async(AsyncConfig.LONG_TASK_EXECUTOR)`**（固定 6 线程 + 500 有界队列 + `AbortPolicy`）：文档摄取、QA 生成、向量模型迁移、网页同步、站点爬取。分钟到小时级。
 
 ⚠️ **为什么必须分**：Boot 默认池是 core 8 + **无界队列**，而无界队列下 core 占满后 `maxPoolSize` 永不扩容（它只在队列也满时才生效）。所以只要 8 个长任务同时在跑，之后**每一次**审计日志落库与 webhook 投递都排在它们后面，等待时长等于最慢那个长任务的剩余时间。漏加 qualifier 的长任务会掉回默认池把这个问题带回来，**且没有任何报错**——只在生产上表现为审计与 webhook 莫名延迟。`AsyncExecutorRoutingTest` 扫描全部 `@Async` 方法强制这条约定：不在短任务白名单里的一律必须带长任务 qualifier，新增时忘了归类就红。
 

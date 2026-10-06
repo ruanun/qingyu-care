@@ -9,7 +9,7 @@ import { ProviderBadge } from './ProviderBadge';
  * 后者是本次改造放开自定义厂商之后的新常态，退化成显示空白就等于列表里那一列没了。
  */
 const PRESETS: ProviderPreset[] = [
-    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7' },
+    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7', sampleEmbeddingModelId: null },
 ];
 
 describe('ProviderBadge', () => {

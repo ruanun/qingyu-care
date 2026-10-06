@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, Play } from 'lucide-react';
 import { platformService } from '@/api/platform';
 import { aiModelService } from '@/api/ai-model';
-import type { AiModelConfig, ProviderPreset } from '@/api/ai-model';
+import { isEmbeddingModel } from '@/lib/modelType';
+import type { AiModelConfig, ModelType, ProviderPreset } from '@/api/ai-model';
 import { ProviderField } from '@/components/model/ProviderField';
 import { ProviderBadge } from '@/components/model/ProviderBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -41,6 +43,9 @@ const SharedModelPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   // 厂商预设清单。唯一事实源在后端 ModelProviderCatalog，两个模型页共用同一份。
   const [providers, setProviders] = useState<ProviderPreset[]>([]);
+  // 对话模型与向量模型同表存放，按类型分两个标签页管理
+  const [tab, setTab] = useState<ModelType>('CHAT');
+  const [testingId, setTestingId] = useState<number | null>(null);
 
   const reload = async () => {
     try {
@@ -92,9 +97,27 @@ const SharedModelPage: React.FC = () => {
     ));
 
   const openCreate = () => {
-    setForm(empty);
+    setForm({ ...empty, modelType: tab, similarityThreshold: null });
     setOpen(true);
   };
+
+  // 平台管理员按 id 测试平台共享模型（向量模型测 embeddings 与维度）
+  const test = async (id: number) => {
+    setTestingId(id);
+    try {
+      const res = await aiModelService.testModel(id);
+      if (res.code !== 200) throw new Error(res.message);
+      toast({ title: '连接测试成功', description: res.data });
+    } catch (e: unknown) {
+      toast({ title: '连接测试失败', description: getErrorMessage(e), variant: 'destructive' });
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const isEmbeddingForm = form.modelType === 'EMBEDDING';
+  const visible = list.filter((m) => (tab === 'EMBEDDING') === isEmbeddingModel(m));
+  const preset = providers.find((p) => p.key === form.provider);
 
   const openEdit = (m: AiModelConfig) => {
     // API Key 不回显
@@ -157,9 +180,22 @@ const SharedModelPage: React.FC = () => {
           </div>
           <Button onClick={openCreate}>
             <Plus className="w-4 h-4 mr-2" />
-            新增共享模型
+            {tab === 'EMBEDDING' ? '新增向量模型' : '新增共享模型'}
           </Button>
         </div>
+
+        <Tabs value={tab} onValueChange={(v) => setTab(v as ModelType)}>
+          <TabsList>
+            <TabsTrigger value="CHAT">对话模型</TabsTrigger>
+            <TabsTrigger value="EMBEDDING">向量模型</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {tab === 'EMBEDDING' && (
+          <p className="text-xs text-muted-foreground -mt-2">
+            优先级数字最小的启用向量模型即「平台默认」，新建的应用会钉住它；之后改平台默认不影响已有应用（各应用在知识库页自行切换）。
+            正被应用使用的向量模型不能删除、停用或修改模型 ID。
+          </p>
+        )}
 
         {/* 表格 */}
         {isLoading ? (
@@ -174,19 +210,19 @@ const SharedModelPage: React.FC = () => {
                   <th className="text-left p-3">名称</th>
                   <th className="text-left p-3">提供商</th>
                   <th className="text-left p-3">模型 ID</th>
-                  <th className="text-left p-3">场景</th>
+                  <th className="text-left p-3">{tab === 'EMBEDDING' ? '推荐阈值' : '场景'}</th>
                   <th className="text-left p-3">优先级</th>
                   <th className="text-left p-3">状态</th>
                   <th className="text-right p-3">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {list.map((m) => (
+                {visible.map((m) => (
                   <tr key={m.id} className="border-t hover:bg-muted/20 transition-colors">
                     <td className="p-3 font-medium">{m.name}</td>
                     <td className="p-3"><ProviderBadge provider={m.provider} presets={providers} /></td>
                     <td className="p-3 font-mono text-xs">{m.modelId}</td>
-                    <td className="p-3">{m.scenario}</td>
+                    <td className="p-3">{isEmbeddingModel(m) ? (m.similarityThreshold ?? '—') : m.scenario}</td>
                     <td className="p-3">{m.priority}</td>
                     <td className="p-3">
                       {m.enabled
@@ -194,6 +230,10 @@ const SharedModelPage: React.FC = () => {
                         : <Badge variant="outline" className="text-muted-foreground">停用</Badge>}
                     </td>
                     <td className="p-3 text-right space-x-2">
+                      <Button variant="outline" size="sm" onClick={() => test(m.id)} disabled={testingId === m.id}>
+                        <Play className="w-3 h-3 mr-1" />
+                        {testingId === m.id ? '测试中…' : '测试'}
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => openEdit(m)}>
                         <Edit2 className="w-3 h-3 mr-1" />
                         编辑
@@ -210,7 +250,7 @@ const SharedModelPage: React.FC = () => {
                     </td>
                   </tr>
                 ))}
-                {list.length === 0 && (
+                {visible.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-muted-foreground">
                       暂无共享模型，请点击右上角新增
@@ -227,7 +267,7 @@ const SharedModelPage: React.FC = () => {
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>{form.id ? '编辑共享模型' : '新增共享模型'}</DialogTitle>
+            <DialogTitle>{form.id ? '编辑共享模型' : isEmbeddingForm ? '新增向量模型' : '新增共享模型'}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             {renderTextFields([['name', '名称', '如：通义千问默认']])}
@@ -242,10 +282,28 @@ const SharedModelPage: React.FC = () => {
               }}
             />
             {renderTextFields([
-              ['modelId', '模型 ID', '如：qwen-plus'],
+              ['modelId', '模型 ID', isEmbeddingForm
+                ? (preset?.sampleEmbeddingModelId ? `如：${preset.sampleEmbeddingModelId}` : '该厂商暂无已核实的向量模型，可自行填写')
+                : (preset?.sampleModelId ? `如：${preset.sampleModelId}` : '如：qwen-plus')],
               ['endpoint', '端点（选填）', '留空使用厂商官方端点'],
-              ['scenario', '场景', 'default / complaint / faq'],
+              ...(isEmbeddingForm ? [] : [['scenario', '场景', 'default / complaint / faq'] as [keyof AiModelConfig, string, string]]),
             ])}
+            {isEmbeddingForm && (
+              <div className="grid grid-cols-4 items-center gap-4">
+                <label htmlFor="similarityThreshold" className="text-right text-sm font-medium">推荐阈值</label>
+                <Input
+                  id="similarityThreshold"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  className="col-span-3"
+                  value={form.similarityThreshold ?? ''}
+                  onChange={(e) => setField('similarityThreshold', e.target.value === '' ? null : Number(e.target.value))}
+                  placeholder="留空用默认 0.45；不同模型分数刻度不同，建议实测后再调"
+                />
+              </div>
+            )}
             <div className="grid grid-cols-4 items-center gap-4">
               <label htmlFor="apiKey" className="text-right text-sm font-medium">API Key</label>
               <Input
@@ -281,7 +339,7 @@ const SharedModelPage: React.FC = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>取消</Button>
             <Button onClick={submit} disabled={isSaving}>
-              {isSaving ? '保存中…' : '保存配置'}
+              {isSaving ? (isEmbeddingForm ? '正在校验连通性与维度…' : '保存中…') : '保存配置'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getErrorMessage, throwIfFailed } from '@/lib/apiResult';
-import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2, Globe } from 'lucide-react';
+import { Upload, Trash2, FileText, CheckCircle2, XCircle, Clock, RefreshCw, Plus, Database, Loader2, Globe, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -13,10 +13,12 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import QaPairPanel from '@/components/QaPairPanel';
 import { CrawlSiteList } from '@/components/knowledge/CrawlSiteList';
+import { EmbeddingModelCard } from '@/components/knowledge/EmbeddingModelCard';
 import {
     Dialog,
     DialogContent,
     DialogDescription,
+    DialogFooter,
     DialogHeader,
     DialogTitle,
     DialogTrigger,
@@ -41,6 +43,9 @@ const KnowledgePage: React.FC = () => {
     const [isUploading, setIsUploading] = useState(false);
     const [deleteDocId, setDeleteDocId] = useState<number | null>(null);
     const [activeTab, setActiveTab] = useState<'docs' | 'qa'>('docs');
+    // 新建 / 编辑知识库共用一个对话框：id 为空即新建
+    const [kbForm, setKbForm] = useState<{ id: number | null; name: string; description: string } | null>(null);
+    const [isSavingKb, setIsSavingKb] = useState(false);
     const { toast } = useToast();
 
     const fetchDocuments = useCallback(async (kbId: number) => {
@@ -80,6 +85,35 @@ const KnowledgePage: React.FC = () => {
         fetchKnowledgeBases();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const handleSaveKb = async () => {
+        if (!kbForm || !kbForm.name.trim()) return;
+        const isEdit = kbForm.id !== null;
+        setIsSavingKb(true);
+        try {
+            const payload = { name: kbForm.name.trim(), description: kbForm.description.trim() };
+            const response = kbForm.id !== null
+                ? await knowledgeService.updateKnowledgeBase(kbForm.id, payload)
+                : await knowledgeService.createKnowledgeBase(payload);
+            throwIfFailed(response);
+            toast({ title: isEdit ? '知识库已更新' : '知识库已创建' });
+            const savedId = response.data.id;
+            setKbForm(null);
+            const list = await knowledgeService.getKnowledgeBases();
+            throwIfFailed(list);
+            setKnowledgeBases(list.data);
+            // 新建后直接选中它，编辑后刷新当前选中项的名称与描述
+            const next = list.data.find((kb) => kb.id === savedId);
+            if (next) {
+                setSelectedKb(next);
+                if (!isEdit) fetchDocuments(next.id);
+            }
+        } catch (error: unknown) {
+            toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
+        } finally {
+            setIsSavingKb(false);
+        }
+    };
 
     const handleSelectKb = (kb: KnowledgeBase) => {
         setSelectedKb(kb);
@@ -207,33 +241,50 @@ const KnowledgePage: React.FC = () => {
                     <h1 className="text-3xl font-bold tracking-tight">知识库管理</h1>
                     <p className="text-muted-foreground mt-2">创建并管理您的 AI 知识资源，上传文档以增强机器人回答能力。</p>
                 </div>
-                <Dialog>
-                    <DialogTrigger asChild>
-                        <Button className="gap-2">
-                            <Plus className="w-4 h-4" /> 创建知识库
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <DialogHeader>
-                            <DialogTitle>新建知识库</DialogTitle>
-                            <DialogDescription>
-                                为您的知识库起一个直观的名字并添加描述。
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">名称</label>
-                                <Input placeholder="例如：算法导论" />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">描述</label>
-                                <Input placeholder="关于基础算法的经典教材" />
-                            </div>
-                            <Button className="w-full">创建</Button>
-                        </div>
-                    </DialogContent>
-                </Dialog>
+                <Button className="gap-2" onClick={() => setKbForm({ id: null, name: '', description: '' })}>
+                    <Plus className="w-4 h-4" /> 创建知识库
+                </Button>
             </div>
+
+            <EmbeddingModelCard />
+
+            <Dialog open={kbForm !== null} onOpenChange={(open) => !open && setKbForm(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{kbForm?.id ? '编辑知识库' : '新建知识库'}</DialogTitle>
+                        <DialogDescription>
+                            为您的知识库起一个直观的名字并添加描述。
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium" htmlFor="kb-name">名称</label>
+                            <Input
+                                id="kb-name"
+                                placeholder="例如：售后政策"
+                                value={kbForm?.name ?? ''}
+                                onChange={(e) => kbForm && setKbForm({ ...kbForm, name: e.target.value })}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium" htmlFor="kb-desc">描述</label>
+                            <Input
+                                id="kb-desc"
+                                placeholder="退换货、保修与运费说明"
+                                value={kbForm?.description ?? ''}
+                                onChange={(e) => kbForm && setKbForm({ ...kbForm, description: e.target.value })}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setKbForm(null)}>取消</Button>
+                        <Button onClick={handleSaveKb} disabled={!kbForm?.name.trim() || isSavingKb}>
+                            {isSavingKb && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            {kbForm?.id ? '保存' : '创建'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="md:col-span-1 space-y-3">
@@ -273,7 +324,18 @@ const KnowledgePage: React.FC = () => {
                         <Card className="shadow-xs">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0">
                                 <div>
-                                    <CardTitle>{selectedKb.name}</CardTitle>
+                                    <CardTitle className="flex items-center gap-2">
+                                        {selectedKb.name}
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            title="编辑名称与描述"
+                                            onClick={() => setKbForm({ id: selectedKb.id, name: selectedKb.name, description: selectedKb.description ?? '' })}
+                                        >
+                                            <Pencil className="w-3.5 h-3.5" />
+                                        </Button>
+                                    </CardTitle>
                                     <CardDescription>{selectedKb.description}</CardDescription>
                                 </div>
                                 <div className="flex gap-2">

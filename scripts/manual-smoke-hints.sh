@@ -7,8 +7,8 @@
 # 只弹哪几节」。CLAUDE.md 在 2026-09-20 拆分后，它同时负责把人指到正确的**文件**——
 # 拆出去的内容默认不进上下文，没有这层路由就会静默漏读。
 #
-# 为什么不判红：这些条目自动化测试<b>永远</b>覆盖不到（IT 里 ChatClient 与 VectorStore
-# 全被 mock，真实 SSE 时序、embedding 计费、robots 遵守都看不见）。判红只会逼人
+# 为什么不判红：这些条目自动化测试<b>永远</b>覆盖不到（IT 里 ChatClient 全被 mock、
+# 向量路没有真实 Key，真实 SSE 时序、embedding 计费、robots 遵守都看不见）。判红只会逼人
 # 为了绿而空跑流程，反而让「验过了」这句话失去含义。
 #
 # 用法：
@@ -42,6 +42,7 @@ readonly RULES=(
   # score > 0）」正是它们共同决定的东西。相似度阈值改错的症状与换模型没标定完全一样——
   # 知识库有内容却问什么都答不知道，且检索返回空是 fail-soft 正常路径，日志里什么都没有。
   'pom\.xml|AiModelConfig|ModelRouterService|EmbeddingModel|application.*\.ya?ml|ChatStrategy|HybridRetrieval|RetrievalScope|KeywordSearchDao::MANUAL::## 升级 Spring AI / Spring Boot / 更换 embedding 模型后必须手工验证的三件事'
+  'service/embedding/|EmbeddingMigration|EmbeddingModel|KnowledgeVectorWriter|VectorStoreSchemaInitializer|api/embedding\.ts|ModelConfigPage|SharedModelPage::MANUAL::## 改动向量模型配置 / 切换链路后必须手工验证'
   'AiTool|ChatToolService|SharedCredentialMasker|AiToolRepository::SUBSYS::## 平台共享工具（`AiTool.scope`）'
   'ReadReceipt|read_receipt|AgentPage|widget/src/main\.ts::MANUAL::## 改动已读回执链路后必须手工验证'
   'service/mcp/|McpServer|McpTool|McpServerPage\.tsx::MANUAL::## 改动 MCP 接入链路后必须手工验证'
@@ -52,7 +53,7 @@ readonly RULES=(
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::MANUAL::## 改动工具商店 / 能力包链路后必须手工验证'
   'service/pkg/|dto/pkg/|ToolPackage|PackageManifest|PackageInstall|PackageStorePage|PlatformPackagePage|api/toolPackage\.ts::SUBSYS::## 工具商店（能力包，`service/pkg/` + `dto/pkg/`）'
   # 安全基线：鉴权 / 守卫 / 五条出站路径 / 上传 / CORS / 异常处理 / 限流额度
-  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|Captcha|Turnstile|PlatformConfigController|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
+  'SsrfGuard|Pinned.*Factory|PinnedAddressResolverGroup|ModelEndpointGuard|service/embedding/|TenantInterceptor|TenantDataAspect|TenantOwnershipGuard|AuthService|Captcha|Turnstile|PlatformConfigController|UserController|ApplicationController|SaTokenConfig|WebConfig|GlobalExceptionHandler|RateLimit|Quota|KnowledgeServiceImpl|TikaTextExtractor|WebhookSignature::BASELINE::# 安全基线'
 )
 
 resolve_file() {

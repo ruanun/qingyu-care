@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatSession;
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -41,7 +42,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class WaitingQueueAppScopeTest {
 
-    @Mock VectorStore vectorStore;
+    @Mock EmbeddingModelRegistry embeddingModelRegistry;
     @Mock ChatSessionRepository sessionRepository;
     @Mock ChatMessageRepository messageRepository;
     @Mock PromptTemplateService promptTemplateService;
@@ -56,7 +57,7 @@ class WaitingQueueAppScopeTest {
     @Mock ConfigService configService;
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelResolver embeddingModelResolver;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;

@@ -42,6 +42,7 @@ public class PlatformController {
     private final ChatSessionRepository chatSessionRepository;
     private final HealthEndpoint healthEndpoint;
     private final ChatToolService chatToolService;
+    private final com.qingyu.care.service.embedding.EmbeddingModelAdminService embeddingModelAdminService;
 
     @GetMapping("/models")
     public ApiResponse<List<AiModelConfig>> listSharedModels() {
@@ -55,6 +56,7 @@ public class PlatformController {
         SecurityUtil.requirePlatformAdmin();
         config.setId(null);
         modelRouterService.requireValidEndpoint(config.getEndpoint());   // 出站地址落库前过 SSRF 守卫（安全审查 M4）
+        embeddingModelAdminService.prepareCreate(config);   // 向量模型：保存前真实探测维度
         return ApiResponse.success("共享模型已创建", modelRouterService.saveSharedModel(config));
     }
 
@@ -67,6 +69,10 @@ public class PlatformController {
         if (existing.getScope() != OwnerScope.PLATFORM) {
             throw new BusinessException(404, "共享模型不存在");
         }
+        if (config.getEndpoint() != null) {
+            modelRouterService.requireValidEndpoint(config.getEndpoint());   // 先过守卫，再拿它去探测
+        }
+        embeddingModelAdminService.beforeUpdate(existing, config);
         if (config.getName() != null) existing.setName(config.getName());
         if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
@@ -81,6 +87,7 @@ public class PlatformController {
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());
         if (config.getRemark() != null) existing.setRemark(config.getRemark());
+        if (config.getSimilarityThreshold() != null) existing.setSimilarityThreshold(config.getSimilarityThreshold());
         return ApiResponse.success("共享模型已更新", modelRouterService.saveSharedModel(existing));
     }
 
@@ -93,6 +100,7 @@ public class PlatformController {
         if (existing.getScope() != OwnerScope.PLATFORM) {
             throw new BusinessException(404, "共享模型不存在");
         }
+        embeddingModelAdminService.beforeDelete(existing);
         modelRouterService.deleteModel(id);
         return ApiResponse.success("共享模型已删除", null);
     }

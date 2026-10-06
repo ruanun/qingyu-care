@@ -37,8 +37,8 @@ vi.mock('@/components/ui/select', () => ({
 }));
 
 const PRESETS: ProviderPreset[] = [
-    { key: 'openai', label: 'OpenAI', defaultEndpoint: 'https://api.openai.com/v1', sampleModelId: 'gpt-4o-mini' },
-    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7' },
+    { key: 'openai', label: 'OpenAI', defaultEndpoint: 'https://api.openai.com/v1', sampleModelId: 'gpt-4o-mini', sampleEmbeddingModelId: null },
+    { key: 'zhipu', label: '智谱 GLM', defaultEndpoint: 'https://open.bigmodel.cn/api/paas/v4', sampleModelId: 'glm-4.7', sampleEmbeddingModelId: null },
 ];
 
 const renderField = (provider: string, presets = PRESETS) => {

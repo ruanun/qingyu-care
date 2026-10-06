@@ -53,6 +53,7 @@ public class ChatStrategyController {
         if (strategy.getHybridEnabled() != null) existing.setHybridEnabled(strategy.getHybridEnabled());
         if (strategy.getKeywordTopK() != null) existing.setKeywordTopK(strategy.getKeywordTopK());
         if (strategy.getRrfK() != null) existing.setRrfK(strategy.getRrfK());
+        if (strategy.getFollowModelThreshold() != null) existing.setFollowModelThreshold(strategy.getFollowModelThreshold());
 
         return ApiResponse.success("策略已更新", strategyService.saveStrategy(existing));
     }

@@ -30,9 +30,15 @@ class DocVisibilityRetrievalIT extends AbstractPostgresIT {
 
     private static final Long TID = 63001L;
     private static final Long APP = 63002L;
-    /** 与 test profile 的 spring.ai.openai.embedding.model 一致（application.yml 默认值），
+    /** 与平台默认向量模型的 modelId 一致（启动时按 qingyu.care.embedding.seed.model 播种），
      * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
     private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
+
+    /** 检索要按应用读它钉住的向量模型：写死的应用 id 必须对应真实的应用行，否则检索 fail-soft 为空、反向断言永真 */
+    @org.junit.jupiter.api.BeforeEach
+    void ensureApps() {
+        ensureAppRow(TID, APP);
+    }
 
     @Autowired ChatService chatService;
     @Autowired KnowledgeBaseRepository knowledgeBaseRepository;

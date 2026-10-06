@@ -50,6 +50,8 @@ public class ChatStrategyService {
             // 干净空档的中央：噪声进不来、真命中不漏掉。
             // 换 embedding 模型后这个刻度会整体平移，必须重新测量而不是沿用本值——
             // 测法见 docs/使用手册.md「问答策略」一节。
+            // 默认策略「跟随向量模型」（followModelThreshold 留空即跟随）：实际生效的是应用当前向量模型的
+            // 推荐阈值，0.45 只在关掉跟随时才用。换模型后不必再回来改策略。
             repository.save(ChatStrategy.builder()
                     .name("通用默认策略")
                     .scenario("default")
@@ -68,11 +70,13 @@ public class ChatStrategyService {
             // 阈值保持「比默认高 0.1」这个相对关系（0.45 + 0.1）：本场景的意图是宁可转人工
             // 也不猜，所以要比默认严一档。原值 0.8 是在旧刻度下的 0.7 + 0.1，重标定后照搬
             // 会变成「任何问题都够不着、永远转人工」——严到失去意义。
+            // 本场景要「比默认严一档」，所以不跟随向量模型、固定用自己的值；换向量模型时界面会点名提醒它。
             repository.save(ChatStrategy.builder()
                     .name("严谨投诉处理")
                     .scenario("complaint")
                     .topK(8)
                     .similarityThreshold(0.55)
+                    .followModelThreshold(false)
                     .allowNoKnowledge(false)
                     .fallbackMessage("抱歉，我无法在知识库中找到关于该投诉的明确处理方案，已为您转接人工处理。")
                     .isDefault(true)

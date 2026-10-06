@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatMessage;
@@ -21,7 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.Optional;
@@ -48,7 +49,7 @@ class VisitorReadReceiptTest {
 
     // 装配与 AgentReadReceiptTest（同一个被测类）完全一致；访客路径不走登录态，无需 StpUtil 桩。
     // ⚠️ ObjectMapper 来自 tools.jackson.databind（Jackson 3），不是 com.fasterxml。
-    @Mock VectorStore vectorStore;
+    @Mock EmbeddingModelRegistry embeddingModelRegistry;
     @Mock ChatSessionRepository sessionRepository;
     @Mock ChatMessageRepository messageRepository;
     @Mock PromptTemplateService promptTemplateService;
@@ -59,7 +60,7 @@ class VisitorReadReceiptTest {
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RealtimeNotifier realtimeNotifier;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelResolver embeddingModelResolver;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
     @Mock ReadReceiptService readReceiptService;

@@ -47,7 +47,6 @@ import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.AuthService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ChatToolService;
-import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.FileService;
 import com.qingyu.care.service.ModelRouterService;
 import com.qingyu.care.service.impl.KnowledgeServiceImpl;
@@ -67,7 +66,9 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
+import com.qingyu.care.service.embedding.EmbeddingModelAdminService;
+import com.qingyu.care.service.embedding.EmbeddingModelProbe;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 
 import java.lang.reflect.Field;
@@ -157,10 +158,11 @@ class UpdateRequestPropagationTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelAdminService embeddingModelAdminService;
+    @Mock EmbeddingModelProbe embeddingModelProbe;
     @Mock QaPairRepository qaPairRepository;
     @Mock CrawlSiteRepository crawlSiteRepository;
     @Mock McpServerService mcpServerService;

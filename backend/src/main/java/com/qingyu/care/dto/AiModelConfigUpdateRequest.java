@@ -35,6 +35,9 @@ import lombok.Data;
  * 出现在所有租户列表里。不放进 DTO 让这条路径在结构上不可能。平台共享模型只能走
  * {@code /v1/platform/models}。
  *
+ * <p>⚠️ <b>同样刻意不含 {@code modelType}</b>：类型创建后不可改。把向量模型改成对话模型，它就会进对话路由、
+ * 对话请求打到 embeddings 端点；反过来，应用钉着的向量模型变成对话模型，摄取与检索全部失败。
+ *
  * @author ruan
  */
 @Data
@@ -49,4 +52,6 @@ public class AiModelConfigUpdateRequest {
     private Integer priority;
     private Boolean enabled;
     private String remark;
+    /** 向量模型的推荐相似度阈值（对话模型忽略） */
+    private Double similarityThreshold;
 }

@@ -3,7 +3,6 @@ package com.qingyu.care.repository;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.enums.DocumentVisibility;
-import com.qingyu.care.service.EmbeddingModelProvider;
 import com.qingyu.care.service.RetrievalScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +30,6 @@ public class KeywordSearchDao {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final EmbeddingModelProvider embeddingModelProvider;
 
     /** 一条命中：id 为 vector_store 主键（与向量路 Document.id 同源，供 RRF 对齐）。 */
     public record KeywordHit(String id, String content, Map<String, Object> metadata) {
@@ -43,7 +41,7 @@ public class KeywordSearchDao {
      * accessLevel 为 PUBLIC 时额外要求 visibility == 'PUBLIC'，INTERNAL/null 不加该子句（全见）。
      * 仅在非空范围下调用（调用方已短路空范围）。
      */
-    public List<KeywordHit> search(String query, RetrievalScope scope, int limit) {
+    public List<KeywordHit> search(String query, RetrievalScope scope, String embeddingTag, int limit) {
         List<Object> params = new ArrayList<>();
         StringBuilder sql = new StringBuilder(
                 "SELECT id::text AS id, content, metadata::text AS metadata_json FROM vector_store " +
@@ -61,7 +59,7 @@ public class KeywordSearchDao {
         sql.append("AND metadata ->> 'docEnabled' = 'true' ");
         // 护栏：只匹配当前 embedding 模型嵌的向量，跨模型/未标向量静默排除（与向量路 toFilterExpression 同源）
         sql.append("AND metadata ->> 'embeddingModel' = ? ");
-        params.add(embeddingModelProvider.getModel());
+        params.add(embeddingTag);
         if (scope.accessLevel() == DocumentVisibility.PUBLIC) {
             sql.append("AND metadata ->> 'visibility' = 'PUBLIC' ");
         }

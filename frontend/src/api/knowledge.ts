@@ -6,6 +6,14 @@ export const knowledgeService = {
     getKnowledgeBases: (): Promise<ApiResponse<KnowledgeBase[]>> =>
         api.get('/knowledge'),
 
+    // 创建知识库
+    createKnowledgeBase: (data: { name: string; description?: string }): Promise<ApiResponse<KnowledgeBase>> =>
+        api.post('/knowledge', data),
+
+    // 更新知识库（只改名称与描述；启停走 toggle）
+    updateKnowledgeBase: (id: number, data: { name?: string; description?: string }): Promise<ApiResponse<KnowledgeBase>> =>
+        api.put(`/knowledge/${id}`, data),
+
     // 获取知识库详情
     getKnowledgeBase: (id: number): Promise<ApiResponse<KnowledgeBase>> =>
         api.get(`/knowledge/${id}`),

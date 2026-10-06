@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 
 /**
  * 爬取进度响应。{@code total} 刻意不存在——BFS 边爬边发现，总数是动态的
- * （这与 {@code ReembedService} 不同，重嵌开始时就知道总数）。前端显示成
+ * （这与向量模型迁移任务不同，重嵌开始时就知道总数）。前端显示成
  * 「已爬 12 / 上限 50 页」。
  *
  * @author ruan

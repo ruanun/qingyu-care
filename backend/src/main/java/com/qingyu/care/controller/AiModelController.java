@@ -1,14 +1,17 @@
 package com.qingyu.care.controller;
 
-import com.qingyu.care.config.ModelEndpointGuardInterceptor;
 import com.qingyu.care.annotation.AdminOnlyWrites;
 import com.qingyu.care.annotation.AuditLog;
 import com.qingyu.care.dto.AiModelConfigUpdateRequest;
 import com.qingyu.care.dto.ApiResponse;
 import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.enums.ModelType;
 import com.qingyu.care.enums.OwnerScope;
+import com.qingyu.care.service.embedding.EmbeddingModelAdminService;
+import com.qingyu.care.service.embedding.EmbeddingModelProbe;
 import com.qingyu.care.service.ModelProviderCatalog;
 import com.qingyu.care.service.ModelRouterService;
+import com.qingyu.care.service.ModelUpstreamErrors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,6 +27,8 @@ import java.util.List;
 public class AiModelController {
 
     private final ModelRouterService modelRouterService;
+    private final EmbeddingModelAdminService embeddingModelAdminService;
+    private final EmbeddingModelProbe embeddingModelProbe;
 
     /**
      * 获取所有模型配置
@@ -68,6 +73,7 @@ public class AiModelController {
         // 自封 PLATFORM，把所有租户的对话流量导向自己的 endpoint。
         // 平台共享模型只能走 /v1/platform/models（那边强制 tenantId=null）。
         config.setScope(OwnerScope.TENANT);
+        embeddingModelAdminService.prepareCreate(config);   // 向量模型：保存前真实探测维度
         AiModelConfig saved = modelRouterService.saveModel(config);
         return ApiResponse.success("模型配置已创建", saved);
     }
@@ -79,6 +85,10 @@ public class AiModelController {
     @PutMapping("/{id}")
     public ApiResponse<AiModelConfig> updateModel(@PathVariable Long id, @RequestBody AiModelConfigUpdateRequest config) {
         AiModelConfig existing = modelRouterService.getById(id);
+        if (config.getEndpoint() != null) {
+            modelRouterService.requireValidEndpoint(config.getEndpoint());   // 先过守卫，再拿它去探测
+        }
+        embeddingModelAdminService.beforeUpdate(existing, config);
         
         // 更新字段
         if (config.getName() != null) existing.setName(config.getName());
@@ -94,6 +104,7 @@ public class AiModelController {
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());
         if (config.getRemark() != null) existing.setRemark(config.getRemark());
+        if (config.getSimilarityThreshold() != null) existing.setSimilarityThreshold(config.getSimilarityThreshold());
         
         AiModelConfig saved = modelRouterService.saveModel(existing);
         return ApiResponse.success("模型配置已更新", saved);
@@ -105,6 +116,7 @@ public class AiModelController {
     @AuditLog(action = "MODEL_DELETE", targetType = "AiModelConfig")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> deleteModel(@PathVariable Long id) {
+        embeddingModelAdminService.beforeDelete(modelRouterService.getById(id));
         modelRouterService.deleteModel(id);
         return ApiResponse.success("模型配置已删除", null);
     }
@@ -117,6 +129,11 @@ public class AiModelController {
         // 存量行也可能带着非法端点（校验是后来加的），出站前再过一次守卫；校验失败直接抛 400，不进下面的 catch
         AiModelConfig config = modelRouterService.getById(id);
         modelRouterService.requireValidEndpoint(config.getEndpoint());
+        if (ModelType.orDefault(config.getModelType()) == ModelType.EMBEDDING) {
+            // 向量模型测 embeddings 而不是对话；连不上或维度不符抛 400，消息已是分类后的人话
+            EmbeddingModelProbe.Result r = embeddingModelProbe.requireCompatible(config);
+            return ApiResponse.success("连接测试成功", "向量维度 " + r.dimensions() + "，耗时 " + r.elapsedMs() + " ms");
+        }
         try {
             var client = modelRouterService.createChatClient(config);
             String response = client.prompt()
@@ -129,25 +146,7 @@ public class AiModelController {
             // 一起且这个 catch-all 区分不了（apiKey/baseUrl 填错、对方服务挂了、超时……），
             // 但有一点是确定的——不是本服务内部出错。502「上游没给出有效响应」不预设是谁的错，
             // 比 500 诚实，也让排查的人一眼看出该去查出站而不是查本服务。
-            return ApiResponse.error(502, "连接测试失败: " + describeUpstreamFailure(e));
+            return ApiResponse.error(502, "连接测试失败: " + ModelUpstreamErrors.describe(e));
         }
-    }
-
-    /**
-     * 测试连接失败的原因，<b>只给分类、不回显上游原文</b>（2026-09-30 安全审查 M1）：此前直接拼
-     * {@code e.getMessage()}，openai-java 的消息是「状态码: 完整错误 JSON」——租户把 endpoint 指向会重定向 /
-     * rebinding 到内网的服务器时，这里就成了读取内网响应的回显通道，各类失败文案的差异还能用来探测端口。
-     * 守卫拒绝的消息只含主机名，可以原样给。
-     */
-    static String describeUpstreamFailure(Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof ModelEndpointGuardInterceptor.EndpointRejectedException) {
-                return t.getMessage();
-            }
-            if (t instanceof com.openai.errors.OpenAIServiceException se) {
-                return "上游返回 HTTP " + se.statusCode() + "（请检查端点地址、模型 ID 与 API Key）";
-            }
-        }
-        return "无法连接上游（" + e.getClass().getSimpleName() + "）";
     }
 }

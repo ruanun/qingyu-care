@@ -132,7 +132,7 @@ class ModelProviderCatalogTest {
     void presets_are_immutable() {
         List<ProviderPreset> list = ModelProviderCatalog.presets();
         try {
-            list.add(new ProviderPreset("x", "X", "https://x.test/v1", "m"));
+            list.add(new ProviderPreset("x", "X", "https://x.test/v1", "m", null));
             org.junit.jupiter.api.Assertions.fail("清单应当是不可变的");
         } catch (UnsupportedOperationException expected) {
             // 预期

@@ -1,5 +1,6 @@
 package com.qingyu.care.service;
 
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
 import tools.jackson.databind.ObjectMapper;
 import com.qingyu.care.config.TenantContext;
 import com.qingyu.care.entity.ChatSession;
@@ -18,7 +19,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageImpl;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
@@ -42,7 +43,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ChatSessionListScopeTest {
 
-    @Mock VectorStore vectorStore;
+    @Mock EmbeddingModelRegistry embeddingModelRegistry;
     @Mock ChatSessionRepository sessionRepository;
     @Mock ChatMessageRepository messageRepository;
     @Mock PromptTemplateService promptTemplateService;
@@ -53,7 +54,7 @@ class ChatSessionListScopeTest {
     @Mock RetrievalScopeResolver retrievalScopeResolver;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock RealtimeNotifier realtimeNotifier;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelResolver embeddingModelResolver;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;

@@ -10,7 +10,7 @@ import com.qingyu.care.service.AbTestService;
 import com.qingyu.care.service.ChatStrategyService;
 import com.qingyu.care.service.ChatToolService;
 import com.qingyu.care.service.ConfigService;
-import com.qingyu.care.service.EmbeddingModelProvider;
+import com.qingyu.care.service.embedding.EmbeddingModelResolver;
 import com.qingyu.care.service.HandoverRuleService;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.ModelRouterService;
@@ -26,7 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Propagation;
@@ -56,7 +56,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ChatServiceRetrievalTxTest {
 
-    @Mock VectorStore vectorStore;
+    @Mock EmbeddingModelRegistry embeddingModelRegistry;
     @Mock ChatSessionRepository sessionRepository;
     @Mock ChatMessageRepository messageRepository;
     @Mock PromptTemplateService promptTemplateService;
@@ -71,7 +71,7 @@ class ChatServiceRetrievalTxTest {
     @Mock ConfigService configService;
     @Mock ChatToolService chatToolService;
     @Mock RealtimeNotifier realtimeNotifier;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
+    @Mock EmbeddingModelResolver embeddingModelResolver;
     @Mock UiSpecService uiSpecService;
     @Mock ObjectMapper objectMapper;
     @InjectMocks ChatServiceImpl chatService;

@@ -51,9 +51,20 @@ public final class ModelProviderCatalog {
      * @param label           界面显示名
      * @param defaultEndpoint OpenAI 兼容 base URL，无尾斜杠
      * @param sampleModelId   界面占位示例，非校验白名单
+     * @param sampleEmbeddingModelId 向量模型的占位示例；null 表示该厂商没有 OpenAI 兼容的 embeddings 接口，
+     *                        或能否输出平台要求的维度未经核实——界面据此在「添加向量模型」时提示
      */
-    public record ProviderPreset(String key, String label, String defaultEndpoint, String sampleModelId) {
+    public record ProviderPreset(String key, String label, String defaultEndpoint, String sampleModelId,
+                                 String sampleEmbeddingModelId) {
     }
+
+    /**
+     * 向量模型的默认推荐阈值。
+     *
+     * <p>0.45 只在 qwen3.7-text-embedding 上实测标定过（2026-08-11：真实命中 0.57~0.73、噪声 0.25~0.30）。
+     * 其它模型的刻度未必相同——这里给的是「起点」而非结论，添加别家向量模型后应当用真实问题测一遍再调。
+     */
+    public static final double DEFAULT_EMBEDDING_THRESHOLD = 0.45;
 
     /** 兜底端点：未知 provider 一律回落这里，与改造前 switch 的 default 分支同义。 */
     private static final String OPENAI_ENDPOINT = "https://api.openai.com/v1";
@@ -64,30 +75,34 @@ public final class ModelProviderCatalog {
      * 改了会让存量的那些行在去重时换组，而这个失效完全静默。
      */
     private static final List<ProviderPreset> PRESETS = List.of(
-            new ProviderPreset("openai", "OpenAI", OPENAI_ENDPOINT, "gpt-4o-mini"),
+            // 向量模型示例只填「有 OpenAI 兼容 embeddings 接口、且能输出 1024 维」的（原生 1024 或支持 dimensions 参数）；
+            // 不确定的宁可留 null，保存时的真实探测才是最终判据
+            new ProviderPreset("openai", "OpenAI", OPENAI_ENDPOINT, "gpt-4o-mini", "text-embedding-3-small"),
             new ProviderPreset("dashscope", "通义千问 百炼",
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.7-flash-2026-07-15"),
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.7-flash-2026-07-15",
+                    "qwen3.7-text-embedding"),
             new ProviderPreset("moonshot", "Kimi 月之暗面",
-                    "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+                    "https://api.moonshot.cn/v1", "moonshot-v1-8k", null),
             new ProviderPreset("deepseek", "DeepSeek",
-                    "https://api.deepseek.com/v1", "deepseek-chat"),
+                    "https://api.deepseek.com/v1", "deepseek-chat", null),
             // ↓ 以下为 2026-09-08 新增，端点均经官方文档核实
             new ProviderPreset("zhipu", "智谱 GLM",
-                    "https://open.bigmodel.cn/api/paas/v4", "glm-4.7"),
+                    "https://open.bigmodel.cn/api/paas/v4", "glm-4.7", "embedding-3"),
             new ProviderPreset("siliconflow", "硅基流动",
-                    "https://api.siliconflow.cn/v1", "Pro/deepseek-ai/DeepSeek-R1"),
+                    "https://api.siliconflow.cn/v1", "Pro/deepseek-ai/DeepSeek-R1", "BAAI/bge-m3"),
+            // 豆包向量模型原生 2048 维以上，能否经 OpenAI 兼容接口降到 1024 未核实
             new ProviderPreset("volcengine", "火山方舟 豆包",
-                    "https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-1-6-251015"),
+                    "https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-1-6-251015", null),
             new ProviderPreset("openrouter", "OpenRouter",
-                    "https://openrouter.ai/api/v1", "openai/gpt-4o"),
+                    "https://openrouter.ai/api/v1", "openai/gpt-4o", null),
             new ProviderPreset("groq", "Groq",
-                    "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
+                    "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", null),
             new ProviderPreset("gemini", "Google Gemini",
-                    "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash"),
+                    "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash", null),
             new ProviderPreset("xai", "xAI Grok",
-                    "https://api.x.ai/v1", "grok-4.6"),
+                    "https://api.x.ai/v1", "grok-4.6", null),
             new ProviderPreset("ollama", "Ollama 本地",
-                    "http://localhost:11434/v1", "qwen3:8b")
+                    "http://localhost:11434/v1", "qwen3:8b", "bge-m3")
     );
 
     private ModelProviderCatalog() {
@@ -96,6 +111,11 @@ public final class ModelProviderCatalog {
     /** 全部预设，不可变。 */
     public static List<ProviderPreset> presets() {
         return PRESETS;
+    }
+
+    /** 某向量模型的推荐阈值起点（目前只有一个实测值，见 {@link #DEFAULT_EMBEDDING_THRESHOLD}）。 */
+    public static double recommendedEmbeddingThreshold(String modelId) {
+        return DEFAULT_EMBEDDING_THRESHOLD;
     }
 
     /**

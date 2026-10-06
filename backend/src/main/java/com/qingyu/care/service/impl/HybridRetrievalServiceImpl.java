@@ -2,7 +2,9 @@ package com.qingyu.care.service.impl;
 
 import com.qingyu.care.entity.ChatStrategy;
 import com.qingyu.care.repository.KeywordSearchDao;
-import com.qingyu.care.service.EmbeddingModelProvider;
+import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.service.embedding.EmbeddingModelRegistry;
+import com.qingyu.care.service.embedding.EmbeddingTag;
 import com.qingyu.care.service.HybridRetrievalService;
 import com.qingyu.care.service.RetrievalScope;
 import com.qingyu.care.service.RrfFuser;
@@ -10,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -28,19 +29,17 @@ import java.util.List;
 @Slf4j
 public class HybridRetrievalServiceImpl implements HybridRetrievalService {
 
-    private final VectorStore vectorStore;
+    private final EmbeddingModelRegistry embeddingModelRegistry;
     private final KeywordSearchDao keywordSearchDao;
-    private final EmbeddingModelProvider embeddingModelProvider;
 
     @Override
-    public List<Document> search(String query, RetrievalScope scope, ChatStrategy strategy) {
+    public List<Document> search(String query, RetrievalScope scope, ChatStrategy strategy, AiModelConfig embeddingModel) {
         int topK = strategy.effectiveTopK();
         int keywordTopK = strategy.effectiveKeywordTopK();
         int rrfK = strategy.getRrfK() != null ? strategy.getRrfK() : 60;
-        // 0.45：与 ChatServiceImpl 的兜底一致（0.7 已被实测标定推翻，见该类注释）。列
-        // similarity_threshold 是 nullable=false，这条兜底实际不可达，同样只是避免留一颗
-        // 用已推翻的值做的哑弹。
-        double threshold = strategy.getSimilarityThreshold() != null ? strategy.getSimilarityThreshold() : 0.45;
+        // 默认跟随向量模型的推荐阈值（相似度刻度随模型平移，见 ChatStrategy.effectiveSimilarityThreshold）
+        double threshold = strategy.effectiveSimilarityThreshold(embeddingModel.getSimilarityThreshold());
+        String tag = EmbeddingTag.of(embeddingModel);
 
         // 向量路（fail-soft：异常则空列表 → 融合退化为关键词/空）
         List<RrfFuser.Item> vectorItems = new ArrayList<>();
@@ -49,9 +48,9 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
                     .query(query)
                     .topK(topK)
                     .similarityThreshold(threshold)
-                    .filterExpression(scope.toFilterExpression(embeddingModelProvider.getModel()))
+                    .filterExpression(scope.toFilterExpression(tag))
                     .build();
-            for (Document d : vectorStore.similaritySearch(searchRequest)) {
+            for (Document d : embeddingModelRegistry.vectorStore(embeddingModel).similaritySearch(searchRequest)) {
                 String content = d.getText() != null ? d.getText() : "";
                 vectorItems.add(new RrfFuser.Item(d.getId(), content, d.getMetadata()));
             }
@@ -62,7 +61,7 @@ public class HybridRetrievalServiceImpl implements HybridRetrievalService {
         // 关键词路（fail-soft：异常则空列表 → 融合退化为纯向量）
         List<RrfFuser.Item> keywordItems = new ArrayList<>();
         try {
-            for (KeywordSearchDao.KeywordHit h : keywordSearchDao.search(query, scope, keywordTopK)) {
+            for (KeywordSearchDao.KeywordHit h : keywordSearchDao.search(query, scope, tag, keywordTopK)) {
                 String keywordContent = h.content() != null ? h.content() : "";
                 keywordItems.add(new RrfFuser.Item(h.id(), keywordContent, h.metadata()));
             }

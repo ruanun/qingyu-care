@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Plus, Edit2, Trash2, Play, Settings2, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Bot, Plus, Edit2, Trash2, Play, Settings2, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     Dialog,
     DialogContent,
@@ -21,7 +22,8 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { aiModelService } from '@/api/ai-model';
-import type { AiModelConfig, ProviderPreset } from '@/api/ai-model';
+import { isEmbeddingModel } from '@/lib/modelType';
+import type { AiModelConfig, ModelType, ProviderPreset } from '@/api/ai-model';
 import { ProviderField } from '@/components/model/ProviderField';
 import { ProviderBadge } from '@/components/model/ProviderBadge';
 import { useToast } from '@/hooks/use-toast';
@@ -37,6 +39,9 @@ const ModelConfigPage: React.FC = () => {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingModel, setEditingModel] = useState<Partial<AiModelConfig> | null>(null);
     const [isTesting, setIsTesting] = useState<number | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
+    // 对话模型与向量模型同表存放，按类型分两个标签页管理
+    const [tab, setTab] = useState<ModelType>('CHAT');
     const { toast } = useToast();
     const { confirm, confirmDialog } = useConfirm();
 
@@ -105,6 +110,8 @@ const ModelConfigPage: React.FC = () => {
             return;
         }
 
+        // 向量模型保存时后端会真实调用一次 embeddings 校验连通性与维度，可能要几秒
+        setIsSaving(true);
         try {
             let response;
             if (editingModel.id) {
@@ -119,6 +126,8 @@ const ModelConfigPage: React.FC = () => {
             fetchModels();
         } catch (error: unknown) {
             toast({ variant: "destructive", title: "保存失败", description: getErrorMessage(error) });
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -144,10 +153,17 @@ const ModelConfigPage: React.FC = () => {
             scenario: 'default',
             priority: 100,
             enabled: true,
-            remark: ''
+            remark: '',
+            modelType: tab,
+            // 留空由后端填推荐值
+            similarityThreshold: null,
         });
         setIsDialogOpen(true);
     };
+
+    const editingIsEmbedding = editingModel?.modelType === 'EMBEDDING';
+    const visibleModels = models.filter((m) => (tab === 'EMBEDDING') === isEmbeddingModel(m));
+    const selectedPreset = providers.find((p) => p.key === editingModel?.provider);
 
     const openEditDialog = (model: AiModelConfig) => {
         setEditingModel({ ...model, apiKey: '' }); // 不回显 API Key
@@ -176,24 +192,37 @@ const ModelConfigPage: React.FC = () => {
                     </div>
                     <Button onClick={openCreateDialog}>
                         <Plus className="w-4 h-4 mr-2" />
-                        添加模型
+                        {tab === 'EMBEDDING' ? '添加向量模型' : '添加模型'}
                     </Button>
                 </div>
+
+                <Tabs value={tab} onValueChange={(v) => setTab(v as ModelType)}>
+                    <TabsList>
+                        <TabsTrigger value="CHAT">对话模型</TabsTrigger>
+                        <TabsTrigger value="EMBEDDING">向量模型</TabsTrigger>
+                    </TabsList>
+                </Tabs>
+                {tab === 'EMBEDDING' && (
+                    <p className="text-xs text-muted-foreground -mt-2">
+                        向量模型用于知识库的向量化与检索，平台已提供默认模型。在这里添加自己的向量模型后，可到「知识库」页把本应用切换过去；
+                        保存时会真实调用一次接口，校验连通性与输出维度。
+                    </p>
+                )}
 
                 {isLoading ? (
                     <div className="flex items-center justify-center py-20">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     </div>
-                ) : models.length === 0 ? (
+                ) : visibleModels.length === 0 ? (
                     <Card className="border-dashed py-12">
                         <CardContent className="flex flex-col items-center justify-center text-muted-foreground">
                             <Settings2 className="w-12 h-12 mb-4 opacity-20" />
-                            <p>尚未配置任何模型，请点击右上角添加</p>
+                            <p>{tab === 'EMBEDDING' ? '本应用还没有自己的向量模型，正在使用平台提供的默认模型' : '尚未配置任何模型，请点击右上角添加'}</p>
                         </CardContent>
                     </Card>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {models.map((model) => (
+                        {visibleModels.map((model) => (
                             <Card key={model.id} className={cn("flex flex-col transition-all hover:shadow-md", !model.enabled && "opacity-60")}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-center justify-between mb-2">
@@ -213,8 +242,16 @@ const ModelConfigPage: React.FC = () => {
                                     </CardTitle>
                                     <div className="flex flex-wrap gap-2 mt-2">
                                         <Badge variant="secondary" className="text-[10px] font-mono">{model.modelId}</Badge>
-                                        {getScenarioBadge(model.scenario)}
-                                        <Badge variant="outline" className="text-[10px]">P{model.priority}</Badge>
+                                        {isEmbeddingModel(model) ? (
+                                            model.similarityThreshold != null && (
+                                                <Badge variant="outline" className="text-[10px]">阈值 {model.similarityThreshold}</Badge>
+                                            )
+                                        ) : (
+                                            <>
+                                                {getScenarioBadge(model.scenario)}
+                                                <Badge variant="outline" className="text-[10px]">P{model.priority}</Badge>
+                                            </>
+                                        )}
                                     </div>
                                 </CardHeader>
                                 <CardContent className="flex-1 py-2">
@@ -254,7 +291,7 @@ const ModelConfigPage: React.FC = () => {
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogContent className="sm:max-w-[500px]">
                     <DialogHeader>
-                        <DialogTitle>{editingModel?.id ? '编辑模型配置' : '添加 AI 模型'}</DialogTitle>
+                        <DialogTitle>{editingModel?.id ? '编辑模型配置' : editingIsEmbedding ? '添加向量模型' : '添加 AI 模型'}</DialogTitle>
                         <DialogDescription>
                             配置 AI 厂商参数，API Key 在保存后将被安全存储且不可回显。
                         </DialogDescription>
@@ -288,7 +325,9 @@ const ModelConfigPage: React.FC = () => {
                                 className="col-span-3"
                                 value={editingModel?.modelId || ''}
                                 onChange={e => setEditingModel({ ...editingModel, modelId: e.target.value })}
-                                placeholder="如：gpt-4o-mini"
+                                placeholder={editingIsEmbedding
+                                    ? (selectedPreset?.sampleEmbeddingModelId ? `如：${selectedPreset.sampleEmbeddingModelId}` : '该厂商暂无已核实的向量模型，可自行填写')
+                                    : (selectedPreset?.sampleModelId ? `如：${selectedPreset.sampleModelId}` : '如：gpt-4o-mini')}
                             />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
@@ -310,6 +349,21 @@ const ModelConfigPage: React.FC = () => {
                                 placeholder={editingModel?.id ? "留空表示不修改" : "请输入 API Key"}
                             />
                         </div>
+                        {editingIsEmbedding ? (
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label className="text-right text-sm font-medium">推荐阈值</label>
+                            <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                max="1"
+                                className="col-span-3"
+                                value={editingModel?.similarityThreshold ?? ''}
+                                onChange={e => setEditingModel({ ...editingModel, similarityThreshold: e.target.value === '' ? null : Number(e.target.value) })}
+                                placeholder="留空用默认 0.45；不同模型分数刻度不同，建议用真实问题测一遍再调"
+                            />
+                        </div>
+                        ) : (<>
                         <div className="grid grid-cols-4 items-center gap-4">
                             <label className="text-right text-sm font-medium">适用场景</label>
                             <Select
@@ -336,6 +390,7 @@ const ModelConfigPage: React.FC = () => {
                                 placeholder="1 为最高优先级"
                             />
                         </div>
+                        </>)}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <label className="text-right text-sm font-medium">备注</label>
                             <Input
@@ -347,7 +402,10 @@ const ModelConfigPage: React.FC = () => {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsDialogOpen(false)}>取消</Button>
-                        <Button onClick={handleSaveModel}>保存配置</Button>
+                        <Button onClick={handleSaveModel} disabled={isSaving}>
+                            {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            {isSaving && editingIsEmbedding ? '正在校验…' : '保存配置'}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

@@ -17,7 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.ai.vectorstore.VectorStore;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 
 import java.util.Optional;
 
@@ -49,10 +49,9 @@ class KnowledgeBaseUpdateSemanticsTest {
 
     @Mock KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock DocumentRepository documentRepository;
-    @Mock VectorStore vectorStore;
+    @Mock KnowledgeVectorWriter vectorWriter;
     @Mock FileService fileService;
     @Mock VectorStoreRepository vectorStoreRepository;
-    @Mock EmbeddingModelProvider embeddingModelProvider;
     @Mock QaPairRepository qaPairRepository;
     @Mock CrawlSiteRepository crawlSiteRepository;
 
@@ -65,7 +64,7 @@ class KnowledgeBaseUpdateSemanticsTest {
 
     private KnowledgeServiceImpl service() {
         return new KnowledgeServiceImpl(knowledgeBaseRepository, documentRepository,
-                vectorStore, fileService, vectorStoreRepository, embeddingModelProvider,
+                vectorWriter, fileService, vectorStoreRepository,
                 qaPairRepository, crawlSiteRepository);
     }
 

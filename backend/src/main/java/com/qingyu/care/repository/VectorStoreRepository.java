@@ -57,4 +57,51 @@ public interface VectorStoreRepository extends JpaRepository<VectorStoreEntity, 
     @Query(value = "UPDATE vector_store SET metadata = jsonb_set(metadata::jsonb, '{docEnabled}', to_jsonb(:enabled)) "
             + "WHERE metadata->>'qaPairId' = :qaPairId", nativeQuery = true)
     int updateDocEnabledByQaPairId(@Param("qaPairId") String qaPairId, @Param("enabled") String enabled);
+
+    // ===== 按向量模型标签操作（切换向量模型的影子重建用，见 EmbeddingMigrationService）=====
+
+    /** 删除某文档在指定模型标签下的向量（只动目标模型那份，当前模型的向量原样保留、检索不受影响）。 */
+    @Modifying
+    @Query(value = "DELETE FROM vector_store WHERE metadata->>'documentId' = :documentId "
+            + "AND metadata->>'embeddingModel' = :tag", nativeQuery = true)
+    int deleteByDocumentIdAndTag(@Param("documentId") String documentId, @Param("tag") String tag);
+
+    /** 删除某 QA 在指定模型标签下的向量。 */
+    @Modifying
+    @Query(value = "DELETE FROM vector_store WHERE metadata->>'qaPairId' = :qaPairId "
+            + "AND metadata->>'embeddingModel' = :tag", nativeQuery = true)
+    int deleteByQaPairIdAndTag(@Param("qaPairId") String qaPairId, @Param("tag") String tag);
+
+    /** 删除某应用在指定标签下的全部向量（取消切换时清掉做了一半的目标模型向量）。 */
+    @Modifying
+    @Query(value = "DELETE FROM vector_store WHERE metadata->>'appId' = :appId "
+            + "AND metadata->>'embeddingModel' = :tag", nativeQuery = true)
+    int deleteByAppIdAndTag(@Param("appId") String appId, @Param("tag") String tag);
+
+    /**
+     * 删除某应用<b>不属于</b>指定标签的全部向量（切换完成后清旧模型的向量）。
+     * 判据是「不等于当前标签」而不是「等于旧标签」：也顺带清掉历次中断、取消留下的残余，可重复执行。
+     * 标签缺失的老向量（metadata 无 embeddingModel）同样清掉——护栏本就检索不到它们。
+     */
+    @Modifying
+    @Query(value = "DELETE FROM vector_store WHERE metadata->>'appId' = :appId "
+            + "AND (metadata->>'embeddingModel' IS NULL OR metadata->>'embeddingModel' <> :tag)", nativeQuery = true)
+    int deleteByAppIdExceptTag(@Param("appId") String appId, @Param("tag") String tag);
+
+    /**
+     * 补漏扫描：某应用下「已完成、有切块」却在指定标签下一条向量都没有的文档 id。
+     * 迁移任务收尾前用它找出漏网的（迁移开始后才完成首次处理、又恰好没赶上双写的文档）。
+     */
+    @Query(value = "SELECT d.id FROM document d WHERE d.app_id = :appId AND d.status = 'COMPLETED' "
+            + "AND COALESCE(d.chunk_count, 0) > 0 AND NOT EXISTS (SELECT 1 FROM vector_store v "
+            + "WHERE v.metadata->>'documentId' = CAST(d.id AS text) AND v.metadata->>'embeddingModel' = :tag)",
+            nativeQuery = true)
+    java.util.List<Long> findDocumentIdsMissingTag(@Param("appId") Long appId, @Param("tag") String tag);
+
+    /** 补漏扫描：某应用下非草稿、却在指定标签下没有向量的 QA id。 */
+    @Query(value = "SELECT q.id FROM qa_pair q WHERE q.app_id = :appId AND q.status IN ('ACTIVE', 'DISABLED') "
+            + "AND NOT EXISTS (SELECT 1 FROM vector_store v "
+            + "WHERE v.metadata->>'qaPairId' = CAST(q.id AS text) AND v.metadata->>'embeddingModel' = :tag)",
+            nativeQuery = true)
+    java.util.List<Long> findQaPairIdsMissingTag(@Param("appId") Long appId, @Param("tag") String tag);
 }

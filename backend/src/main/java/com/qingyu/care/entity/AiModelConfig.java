@@ -2,6 +2,7 @@ package com.qingyu.care.entity;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.qingyu.care.enums.ModelType;
 import com.qingyu.care.enums.OwnerScope;
 import jakarta.persistence.*;
 import lombok.*;
@@ -101,6 +102,25 @@ public class AiModelConfig extends BaseTenantEntity {
     @Column(nullable = false, length = 20)
     @Builder.Default
     private OwnerScope scope = OwnerScope.TENANT;
+
+    /**
+     * 模型类型：对话 / 向量。创建后不可改（不在 {@code AiModelConfigUpdateRequest} 里）。
+     *
+     * <p>列可空：列是后加的，{@code ddl-auto: update} 给已有数据的表加 NOT NULL 列会直接失败。
+     * NULL 按 {@link ModelType#CHAT} 理解，见 {@link ModelType#orDefault}。
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    @Builder.Default
+    private ModelType modelType = ModelType.CHAT;
+
+    /**
+     * 向量模型的推荐相似度阈值（仅 EMBEDDING 有意义）。
+     *
+     * <p>相似度的刻度随 embedding 模型整体平移（qwen3.7-text-embedding 下真实命中 0.57~0.73、
+     * 噪声 0.25~0.30），所以阈值跟着模型走：问答策略默认「跟随向量模型」，换模型后不必再去改策略。
+     */
+    private Double similarityThreshold;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

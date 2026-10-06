@@ -18,4 +18,9 @@ public interface QaPairRepository extends JpaRepository<QaPair, Long> {
 
     /** 某知识库下按状态过滤（如复核 DRAFT 列表） */
     List<QaPair> findByKnowledgeBaseIdAndStatus(Long knowledgeBaseId, QaPairStatus status);
+
+    /** 某应用下有向量的 QA id（ACTIVE + DISABLED；草稿没有向量）。理由同 DocumentRepository.findCompletedIdsByAppId。 */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT id FROM qa_pair WHERE app_id = :appId "
+            + "AND status IN ('ACTIVE', 'DISABLED') ORDER BY id", nativeQuery = true)
+    List<Long> findEmbeddedIdsByAppId(@org.springframework.data.repository.query.Param("appId") Long appId);
 }

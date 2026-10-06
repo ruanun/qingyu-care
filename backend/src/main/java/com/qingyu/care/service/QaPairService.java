@@ -11,8 +11,10 @@ import com.qingyu.care.repository.QaPairRepository;
 import com.qingyu.care.repository.VectorStoreRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.qingyu.care.entity.AiModelConfig;
+import com.qingyu.care.service.embedding.EmbeddingTag;
+import com.qingyu.care.service.embedding.KnowledgeVectorWriter;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,9 +35,8 @@ public class QaPairService {
 
     private final QaPairRepository qaPairRepository;
     private final KnowledgeService knowledgeService;
-    private final VectorStore vectorStore;
+    private final KnowledgeVectorWriter vectorWriter;
     private final VectorStoreRepository vectorStoreRepository;
-    private final EmbeddingModelProvider embeddingModelProvider;
 
     public List<QaPair> list(Long knowledgeBaseId) {
         knowledgeService.getKnowledgeBase(knowledgeBaseId); // 归属校验（越权抛）
@@ -73,10 +74,7 @@ public class QaPairService {
         // DRAFT 无向量，仅改行；ACTIVE/DISABLED 已有向量，内容变则重嵌
         if (changed && qa.getStatus() != QaPairStatus.DRAFT) {
             vectorStoreRepository.deleteByQaPairId(id.toString());
-            embed(qa);
-            if (qa.getStatus() == QaPairStatus.DISABLED) {
-                vectorStoreRepository.updateDocEnabledByQaPairId(id.toString(), "false");
-            }
+            embed(qa);   // docEnabled 按状态写，停用的 QA 重嵌后仍是停用
         }
         return qa;
     }
@@ -114,18 +112,33 @@ public class QaPairService {
         qaPairRepository.delete(qa);
     }
 
-    /** 重嵌一条 QA（删旧向量 + 用当前模型重嵌），供批量重建复用。 */
-    public void reembed(QaPair qa) {
-        vectorStoreRepository.deleteByQaPairId(qa.getId().toString());
-        embed(qa);
+    /**
+     * 只给一个目标向量模型补一份这条 QA 的向量（切换向量模型的影子重建用），当前模型那份不动。
+     *
+     * <p>{@code @Transactional} 是承重的：按标签删除是 {@code @Modifying} 原生语句，迁移任务跑在没有事务的
+     * {@code @Async} 线程里，没有它就是 TransactionRequiredException——旧的批量重嵌正是这样让 QA 那一段每条都失败。
+     */
+    @Transactional
+    public void reembedFor(Long qaPairId, AiModelConfig target) {
+        QaPair qa = qaPairRepository.findById(qaPairId).orElse(null);
+        if (qa == null || qa.getStatus() == QaPairStatus.DRAFT) {
+            return;
+        }
+        vectorStoreRepository.deleteByQaPairIdAndTag(qaPairId.toString(), EmbeddingTag.of(target));
+        vectorWriter.writeFor(target, List.of(toDocument(qa)));
     }
 
     /**
-     * 组「问：{q}\n答：{a}」为一条不切分向量入库。metadata 带齐 RetrievalScope 过滤 5 必需键
-     * （tenantId/appId/knowledgeBaseId/docEnabled/visibility）+ qaPairId/source/contentType。
+     * 组「问：{q}\n答：{a}」为一条不切分向量入库（按应用的写入目标，切换向量模型期间双写）。metadata 带齐
+     * RetrievalScope 过滤 5 必需键（tenantId/appId/knowledgeBaseId/docEnabled/visibility）+ qaPairId/source/contentType。
      * tenantId/appId 取自 qaPair 行（非 TenantContext），防上下文缺失写空串。package-private 便于同包单测。
      */
     void embed(QaPair qa) {
+        vectorWriter.write(qa.getAppId(), List.of(toDocument(qa)));
+    }
+
+    /** 组一条待写入的向量文档（模型标签由 KnowledgeVectorWriter 打）。 */
+    Document toDocument(QaPair qa) {
         String text = "问：" + qa.getQuestion() + "\n答：" + qa.getAnswer();
         Map<String, Object> md = new HashMap<>();
         md.put("qaPairId", qa.getId().toString());
@@ -134,10 +147,10 @@ public class QaPairService {
         md.put("appId", qa.getAppId() != null ? qa.getAppId().toString() : "");
         md.put("source", truncate(qa.getQuestion(), 100));
         md.put("visibility", "PUBLIC");
-        md.put("docEnabled", "true");
+        // 按状态写：停用的 QA 重嵌（改内容 / 切换向量模型）后仍须是停用，硬编码 true 会把它静默重新启用
+        md.put("docEnabled", String.valueOf(qa.getStatus() != QaPairStatus.DISABLED));
         md.put("contentType", "qa");
-        md.put("embeddingModel", embeddingModelProvider.getModel());
-        vectorStore.add(List.of(Document.builder().text(text).metadata(md).build()));
+        return Document.builder().text(text).metadata(md).build();
     }
 
     private String truncate(String s, int max) {
