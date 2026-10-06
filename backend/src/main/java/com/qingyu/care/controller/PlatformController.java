@@ -43,6 +43,7 @@ public class PlatformController {
     private final HealthEndpoint healthEndpoint;
     private final ChatToolService chatToolService;
     private final com.qingyu.care.service.embedding.EmbeddingModelAdminService embeddingModelAdminService;
+    private final com.qingyu.care.service.provider.ModelProviderService modelProviderService;
 
     @GetMapping("/models")
     public ApiResponse<List<AiModelConfig>> listSharedModels() {
@@ -54,10 +55,12 @@ public class PlatformController {
     @PostMapping("/models")
     public ApiResponse<AiModelConfig> createSharedModel(@RequestBody AiModelConfig config) {
         SecurityUtil.requirePlatformAdmin();
-        config.setId(null);
-        modelRouterService.requireValidEndpoint(config.getEndpoint());   // 出站地址落库前过 SSRF 守卫（安全审查 M4）
-        embeddingModelAdminService.prepareCreate(config);   // 向量模型：保存前真实探测维度
-        return ApiResponse.success("共享模型已创建", modelRouterService.saveSharedModel(config));
+        // 共享模型挂在平台供应商连接下，端点与 Key 从连接复制（连接建立时已过 SSRF 守卫，安全审查 M4）
+        if (config.getProviderId() == null) {
+            throw new com.qingyu.care.exception.InvalidOperationException("请先选择供应商连接");
+        }
+        var provider = modelProviderService.requireOwned(config.getProviderId(), OwnerScope.PLATFORM);
+        return ApiResponse.success("共享模型已创建", modelProviderService.createModel(config, provider, OwnerScope.PLATFORM));
     }
 
     @AuditLog(action = "SHARED_MODEL_UPDATE", targetType = "AiModelConfig")
@@ -69,20 +72,10 @@ public class PlatformController {
         if (existing.getScope() != OwnerScope.PLATFORM) {
             throw new BusinessException(404, "共享模型不存在");
         }
-        if (config.getEndpoint() != null) {
-            modelRouterService.requireValidEndpoint(config.getEndpoint());   // 先过守卫，再拿它去探测
-        }
         embeddingModelAdminService.beforeUpdate(existing, config);
+        // 端点 / Key / 厂商属于供应商连接，在 /v1/platform/model-providers 上改
         if (config.getName() != null) existing.setName(config.getName());
-        if (config.getProvider() != null) existing.setProvider(config.getProvider());
         if (config.getModelId() != null) existing.setModelId(config.getModelId());
-        if (config.getEndpoint() != null) {
-            modelRouterService.requireValidEndpoint(config.getEndpoint());
-            existing.setEndpoint(config.getEndpoint());
-        }
-        // isBlank 而非 isEmpty：全空格凭据同样无意义，不该被当成「有意修改」写入
-        // （与 AiModelController.updateModel 的同款判断口径一致）
-        if (config.getApiKey() != null && !config.getApiKey().isBlank()) existing.setApiKey(config.getApiKey());
         if (config.getScenario() != null) existing.setScenario(config.getScenario());
         if (config.getPriority() != null) existing.setPriority(config.getPriority());
         if (config.getEnabled() != null) existing.setEnabled(config.getEnabled());

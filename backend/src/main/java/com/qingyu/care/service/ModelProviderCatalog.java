@@ -113,6 +113,19 @@ public final class ModelProviderCatalog {
         return PRESETS;
     }
 
+    /**
+     * 按端点识别厂商：端点与某家的默认端点逐字一致（忽略首尾空白与尾斜杠）时返回它的 key。
+     * 播种与存量回填用它纠正「厂商字段与端点对不上」的行——此前平台默认对话模型的厂商写死成 openai，
+     * 端点却是 DashScope，界面徽章一直显示 OpenAI。
+     */
+    public static java.util.Optional<String> keyForEndpoint(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        String e = endpoint.trim().replaceAll("/+$", "");
+        return PRESETS.stream().filter(p -> p.defaultEndpoint().equals(e)).map(ProviderPreset::key).findFirst();
+    }
+
     /** 某向量模型的推荐阈值起点（目前只有一个实测值，见 {@link #DEFAULT_EMBEDDING_THRESHOLD}）。 */
     public static double recommendedEmbeddingThreshold(String modelId) {
         return DEFAULT_EMBEDDING_THRESHOLD;

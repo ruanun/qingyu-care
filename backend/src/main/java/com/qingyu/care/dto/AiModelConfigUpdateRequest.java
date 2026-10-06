@@ -41,13 +41,11 @@ import lombok.Data;
  * @author ruan
  */
 @Data
+// ⚠️ 不含 provider / endpoint / apiKey：它们是供应商连接的同步副本，在 ModelProviderUpdateRequest 上改，
+// 改一次同步到连接下全部模型。模型单独改的话，下次改连接就会被覆盖回去，两边各说各话。
 public class AiModelConfigUpdateRequest {
     private String name;
-    private String provider;
     private String modelId;
-    private String endpoint;
-    /** 留空表示不修改（前端不回显凭据） */
-    private String apiKey;
     private String scenario;
     private Integer priority;
     private Boolean enabled;

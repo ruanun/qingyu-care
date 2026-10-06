@@ -114,7 +114,8 @@ class UpdateRequestFieldCoverageTest {
             Map.entry(KnowledgeBaseUpdateRequest.class, KnowledgeBase.class),
             Map.entry(McpServerUpdateRequest.class, McpServer.class),
             // Map.of 最多 10 对（只有 0..10 的重载），第 11 条起必须用 Map.ofEntries
-            Map.entry(ToolPackageUpdateRequest.class, ToolPackage.class));
+            Map.entry(ToolPackageUpdateRequest.class, ToolPackage.class),
+            Map.entry(com.qingyu.care.dto.ModelProviderUpdateRequest.class, com.qingyu.care.entity.ModelProvider.class));
 
     /**
      * 刻意排除的类别。白名单每条都必须挑一个。
@@ -211,10 +212,27 @@ class UpdateRequestFieldCoverageTest {
         aiModelConfig.put("scope", ex(ExclusionCategory.PRIVILEGE_SCOPE,
                 "客户端可控字段，租户曾可在请求体里自封 PLATFORM 让自己的模型（连同"
                         + "自己的 apiKey）出现在所有租户列表里；平台共享模型只能走 /v1/platform/models"));
+        aiModelConfig.put("providerId", ex(ExclusionCategory.IDENTITY_KEY,
+                "所属供应商连接，创建时由 ModelProviderService.createModel 写入，之后不可改（换连接等于换凭据来源，"
+                        + "应当删了重建）"));
+        aiModelConfig.put("provider", ex(ExclusionCategory.SYSTEM_MANAGED,
+                "供应商连接的同步副本：ModelProviderService.createModel 复制、AiModelConfigRepository.syncFromProvider "
+                        + "在改连接时刷新；模型自己改的话下次改连接就被覆盖回去"));
+        aiModelConfig.put("endpoint", ex(ExclusionCategory.SYSTEM_MANAGED,
+                "供应商连接的同步副本，写入点同 provider；改端点在 PUT /v1/model-providers/{id}"));
+        aiModelConfig.put("apiKey", ex(ExclusionCategory.SYSTEM_MANAGED,
+                "供应商连接的同步副本，写入点同 provider；改 Key 在 PUT /v1/model-providers/{id}"));
         aiModelConfig.put("modelType", ex(ExclusionCategory.IDENTITY_KEY,
                 "对话 / 向量类型创建后不可改：向量改成对话会进对话路由、请求打到 embeddings 端点；"
                         + "应用钉着的向量模型改成对话则摄取与检索全部失败（EmbeddingModelResolver.load 会拒）"));
         whitelist.put("AiModelConfigUpdateRequest", aiModelConfig);
+
+        Map<String, Exclusion> modelProvider = new HashMap<>();
+        modelProvider.put("tenantId", ex(ExclusionCategory.OWNERSHIP,
+                "归属租户，由 ModelProviderService.create 按有效租户写入，客户端可设=把连接建进别人租户"));
+        modelProvider.put("scope", ex(ExclusionCategory.PRIVILEGE_SCOPE,
+                "客户端自封 PLATFORM 会让自己的 Key 出现在平台连接里；由调用的控制器（租户 / 平台）决定"));
+        whitelist.put("ModelProviderUpdateRequest", modelProvider);
 
         Map<String, Exclusion> aiTool = new HashMap<>();
         aiTool.put("scope", ex(ExclusionCategory.PRIVILEGE_SCOPE,

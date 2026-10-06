@@ -99,29 +99,19 @@ class EmbeddingModelAdminServiceTest {
     }
 
     @Test
-    void 换Key_用合并后的配置重新探测_新Key参与探测() {
-        when(applicationRepository.countEmbeddingModelReferences(7L)).thenReturn(1L);
-        AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setApiKey("new-key");
-
-        service.beforeUpdate(existing(), req);
-
-        ArgumentCaptor<AiModelConfig> cap = ArgumentCaptor.forClass(AiModelConfig.class);
-        verify(probe).requireCompatible(cap.capture());
-        assertThat(cap.getValue().getApiKey()).isEqualTo("new-key");
-        assertThat(cap.getValue().getModelId()).isEqualTo("qwen3.7-text-embedding");
-        assertThat(cap.getValue().getEndpoint()).isEqualTo("https://dashscope.aliyuncs.com/compatible-mode/v1");
-    }
-
-    @Test
-    void 空白Key视为不修改_不探测() {
+    void 未被引用时改modelId_用模型现有凭据探测新modelId() {
         when(applicationRepository.countEmbeddingModelReferences(7L)).thenReturn(0L);
         AiModelConfigUpdateRequest req = new AiModelConfigUpdateRequest();
-        req.setApiKey("   ");
+        req.setModelId("text-embedding-v4");
 
         service.beforeUpdate(existing(), req);
 
-        verifyNoInteractions(probe);
+        // 端点与 Key 属于供应商连接（改它们的探测在 ModelProviderService）；这里只换 modelId
+        ArgumentCaptor<AiModelConfig> cap = ArgumentCaptor.forClass(AiModelConfig.class);
+        verify(probe).requireCompatible(cap.capture());
+        assertThat(cap.getValue().getModelId()).isEqualTo("text-embedding-v4");
+        assertThat(cap.getValue().getApiKey()).isEqualTo("old-key");
+        assertThat(cap.getValue().getEndpoint()).isEqualTo("https://dashscope.aliyuncs.com/compatible-mode/v1");
     }
 
     @Test

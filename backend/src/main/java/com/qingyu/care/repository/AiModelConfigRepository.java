@@ -99,4 +99,36 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
     @Query(value = "SELECT COUNT(*) FROM ai_model_config WHERE model_type = 'EMBEDDING' AND tenant_id IS NULL",
             nativeQuery = true)
     long countPlatformEmbeddingModels();
+
+    // ===== 供应商连接 =====
+    // 连接是租户级、模型是应用级：下面这些都按连接 id 跨应用操作，原生 SQL 绕开 appFilter。
+    // 调用方（ModelProviderService）已先校验过连接归属，连接 id 来源可信。
+
+    /**
+     * 把连接的端点 / Key / 厂商同步到其下全部模型行，并<b>刷新 updated_at</b>——
+     * EmbeddingModelRegistry 按 (id, updatedAt) 缓存客户端，时间戳不动的话改了 Key 也继续用旧客户端。
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "UPDATE ai_model_config SET provider = :providerKey, endpoint = :endpoint, api_key = :apiKey, "
+            + "updated_at = now() WHERE provider_id = :providerId", nativeQuery = true)
+    int syncFromProvider(@Param("providerId") Long providerId, @Param("providerKey") String providerKey,
+                         @Param("endpoint") String endpoint, @Param("apiKey") String apiKey);
+
+    /** 连接下的全部模型（跨应用）。 */
+    @Query(value = "SELECT * FROM ai_model_config WHERE provider_id = :providerId ORDER BY id", nativeQuery = true)
+    List<AiModelConfig> findByProviderIdAcrossApps(@Param("providerId") Long providerId);
+
+    /** 连接下某个应用的模型（租户侧界面只展示当前应用的）。 */
+    @Query(value = "SELECT * FROM ai_model_config WHERE provider_id = :providerId AND app_id = :appId "
+            + "ORDER BY model_type, scenario, priority, id", nativeQuery = true)
+    List<AiModelConfig> findByProviderIdAndAppId(@Param("providerId") Long providerId, @Param("appId") Long appId);
+
+    /** 还没挂到连接上的模型（存量行 / 启动播种），供启动回填归组。 */
+    @Query(value = "SELECT * FROM ai_model_config WHERE provider_id IS NULL ORDER BY id", nativeQuery = true)
+    List<AiModelConfig> findWithoutProvider();
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "UPDATE ai_model_config SET provider_id = :providerId WHERE id IN (:ids) AND provider_id IS NULL",
+            nativeQuery = true)
+    int attachToProvider(@Param("ids") java.util.Collection<Long> ids, @Param("providerId") Long providerId);
 }

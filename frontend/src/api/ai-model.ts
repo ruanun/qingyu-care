@@ -16,6 +16,10 @@ export interface AiModelConfig {
     enabled: boolean;
     remark: string | null;
     scope?: 'PLATFORM' | 'TENANT';
+    /** 所属供应商连接；endpoint / apiKey / provider 是连接的同步副本，在连接上改 */
+    providerId?: number | null;
+    /** 平台共享模型为 null */
+    tenantId?: number | null;
     /** 创建后不可改；缺省视为 CHAT */
     modelType?: ModelType | null;
     /** 向量模型的推荐相似度阈值（问答策略默认跟随它） */
@@ -53,10 +57,6 @@ export const aiModelService = {
     // 获取指定模型配置
     getById: (id: number): Promise<ApiResponse<AiModelConfig>> =>
         api.get(`/ai-models/${id}`),
-
-    // 创建模型配置
-    createModel: (data: Partial<AiModelConfig>): Promise<ApiResponse<AiModelConfig>> =>
-        api.post('/ai-models', data),
 
     // 更新模型配置
     updateModel: (id: number, data: Partial<AiModelConfig>): Promise<ApiResponse<AiModelConfig>> =>
