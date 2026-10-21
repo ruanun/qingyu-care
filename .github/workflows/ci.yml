@@ -1,0 +1,134 @@
+# 持续集成：push 到 master / PR 时全量跑四个子项目的测试与构建。
+# 与本地约定对齐（见 CLAUDE.md）：
+#   · 后端 mvn verify = Surefire 单测（免 Docker）+ Failsafe 集成测试（Testcontainers，
+#     用 runner 自带的 Docker，无需 service 容器——各 Redis IT 都自起 Testcontainers 容器）
+#   · 前端 pnpm lint / test / build
+#   · widget pnpm test / build 后必须 git diff 校验 widget.js 产物与源码同步
+#     （该约定由仓库里的 buildFreshness.test.ts 与 .gitattributes 共同守护）
+#   · Node 24 + pnpm 11.13.0，与三个子项目的 Dockerfile / 本地工具链一致
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端（单测 + 集成测试）
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # 任何意外拉起 Spring 上下文也不会因缺 key 而失败；测试全部走 mock / 本地假端点
+      DASHSCOPE_API_KEY: ci-dummy-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      # 本项目要求 Maven 3.9+（文档环境要求，JDK 25 也需要）
+      - uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.9
+      - name: mvn verify（单测 + Testcontainers 集成测试）
+        run: mvn -B verify
+        working-directory: backend
+
+  frontend:
+    name: 前端（lint + test + build）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: lint
+        run: pnpm lint
+        working-directory: frontend
+      - name: 单元测试
+        run: pnpm test
+        working-directory: frontend
+      - name: 构建
+        run: pnpm build
+        working-directory: frontend
+
+  widget:
+    name: Widget（test + build + 产物新鲜度）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: widget/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: widget
+      # buildFreshness.test.ts 守「已提交的 widget.js 与当前 src 同步」
+      - name: 单元测试（含产物新鲜度守卫）
+        run: pnpm test
+        working-directory: widget
+      - name: 构建并校验产物与源码同步
+        working-directory: widget
+        run: |
+          pnpm build
+          # widget.js 是提交进仓库的产物（后端静态资源），CI 重构建后不应有任何 diff
+          git diff --exit-code -- ../backend/src/main/resources/static/widget.js
+
+  cli:
+    name: CLI（test + build）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: cli/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: cli
+      - name: 单元测试
+        run: pnpm test
+        working-directory: cli
+      - name: 构建
+        run: pnpm build
+        working-directory: cli
+
+  gitleaks:
+    name: 密钥扫描（gitleaks，全历史）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 必须全量历史：密钥泄露常发生在已删除的旧提交里
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
