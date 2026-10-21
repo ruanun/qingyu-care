@@ -1,0 +1,21 @@
+# gitleaks 配置：默认规则 + 仓库内已人工核实的良性命中的白名单。
+#
+# ⚠️ 白名单里每一条都必须能在 docs/开源合规评估.md 的「gitleaks 扫描结果」表中找到
+# 对应的人工核实结论（是测试夹具 / 过期本地会话 / 演示种子数据），且该结论仍然成立。
+# 新增白名单条目前先重做核实，别把「不想看」当成「不是密钥」。
+
+[extend]
+useDefault = true
+
+[allowlist]
+regexes = [
+  # ProductionSecretsGuardTest 单测里的假强密码：夹具字符串，用于验证「已是真实值则放行」分支
+  '''k8Jq2mX9vLp4''',
+  # DemoDataSeeder 播种的演示应用 apiSecret：demo profile 专属，使用手册中作为示例公开
+  '''demo-secret-cloudboat-shop-0001''',
+]
+paths = [
+  # 已从 HEAD 删除的历史评审文档，引用了 2026-09 一条本地开发会话的 Sa-Token 凭证
+  # （早已过期、仅本机有效；文件已删，白名单只为历史扫描不再报它）
+  '''docs/superpowers/reviews/2026-09-03-security-review\.md''',
+]
