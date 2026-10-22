@@ -53,7 +53,7 @@ interface NavSection {
     scope?: 'platform';
 }
 
-// 菜单深度分组（SaaS平台规划.md 3.4）：平台管理 → 组织管理 → 应用配置 → 客服中心 → 数据统计
+// 菜单深度分组（docs/SaaS平台规划.md 3.4）：平台管理 → 组织管理 → 应用配置 → 客服中心 → 数据统计
 const sections: NavSection[] = [
     {
         title: '平台管理',

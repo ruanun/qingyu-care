@@ -251,5 +251,5 @@ node dist/cli/src/index.js --api-base ... --app-key <appKey> --as-visitor --orig
 - `docs/使用手册.md`：面向租户管理员的功能操作指南（配截图）。改了界面行为要同步。
 - `docs/部署文档.md`：部署、容器化、备份恢复、监控与**故障手册**——本文件里那些「不报错只静默异常」的坑，运维视角的版本在那儿。
 - `docs/开发流程文档.md`：环境搭建、分支与提交规范、测试体系、各子项目的开发约定。
-- `SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）/ Phase 5（智能客服能力补齐）的详细任务与接口设计。
+- `docs/SaaS平台规划.md`：Phase 1（多租户基础）/ Phase 2（对外接入：开放 API + Widget + Webhook）/ Phase 3（管理后台）/ Phase 4（计费、多渠道、高级 RAG）/ Phase 5（智能客服能力补齐）的详细任务与接口设计。
 - `brand/README.md`：logo 与品牌色。⚠️ 图形的路径数据在仓库里存了**五份**（favicon / 管理端组件 / widget 常量 / 字标 / 基准），三个独立构建目标之间没有共享模块的通道。`frontend/scripts/brandAssetSync.test.ts` 守着五处同源，改一处漏其它即红；**改了 `widget/src/logo.ts` 还必须重新 build 并提交 `widget.js`**。
