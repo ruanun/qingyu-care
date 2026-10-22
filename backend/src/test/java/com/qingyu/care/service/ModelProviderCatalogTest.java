@@ -138,4 +138,17 @@ class ModelProviderCatalogTest {
             // 预期
         }
     }
+
+    @Test
+    @DisplayName("只有 OpenAI 官方用 max_completion_tokens，其余厂商走 max_tokens")
+    void max_completion_tokens_is_openai_only() {
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens("openai")).isTrue();
+        // 大小写与首尾空白容忍：库里存量行的 provider 列不一定干净
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens(" OpenAI ")).isTrue();
+        // 国内兼容模式普遍只认 max_tokens，给错字段是 400
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens("dashscope")).isFalse();
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens("zhipu")).isFalse();
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens(null)).isFalse();
+        assertThat(ModelProviderCatalog.usesMaxCompletionTokens("  ")).isFalse();
+    }
 }

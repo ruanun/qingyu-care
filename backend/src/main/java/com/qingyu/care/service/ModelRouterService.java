@@ -22,8 +22,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -84,6 +87,32 @@ public class ModelRouterService {
                     .build());
         });
         seedPlatformEmbeddingModel();
+        sharedChatModelWarning().ifPresent(log::warn);
+    }
+
+    /**
+     * 共享模型池里一条可用的对话模型都没有时的警告文案；正常情况返回 empty。
+     *
+     * <p>为什么不直接补播：播种语义是「只播一次，之后以库为准」，否则管理员删掉不想用的模型会被重启后逐回来。
+     * 但「删光后就永久没有兜底」是个静默故障：表里还有租户模型、{@code count != 0}，
+     * 所以 {@link PlatformSeeder#seedIfEmpty} 永远不会再播；症状只是对话报「没有可用的 AI 模型配置」，
+     * 日志里没有任何线索。启动时喊一声，把静默变成可见。
+     *
+     * <p>拆成返回 Optional 而不是内部直接 log，是为了让单测能断言这件事情发生了——
+     * 否则那条测试无论在不在报警都是绿的。
+     *
+     * <p>查的是 {@code scenario='default'}：模型回退的最后一档就是 default 场景，
+     * 别的场景里的共享模型摇不到底。
+     */
+    java.util.Optional<String> sharedChatModelWarning() {
+        if (repository.count() == 0) {
+            return java.util.Optional.empty();   // 空库刚被上面播种，不可能走到
+        }
+        if (!repository.findSharedModelsByScenario("default").isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of("共享模型池里没有启用的对话模型（scenario=default）：没有自建模型的租户将无模型可用。"
+                + "播种只在整表为空时跑一次，所以不会自动重建；请到「共享模型池」添加或启用一个对话模型");
     }
 
     /**
@@ -111,7 +140,7 @@ public class ModelRouterService {
                 .enabled(true)
                 .scope(OwnerScope.PLATFORM)
                 .modelType(com.qingyu.care.enums.ModelType.EMBEDDING)
-                .similarityThreshold(ModelProviderCatalog.recommendedEmbeddingThreshold(seedEmbeddingModel))
+                .similarityThreshold(ModelProviderCatalog.DEFAULT_EMBEDDING_THRESHOLD)
                 .remark("从 application.yml 初始化的平台默认向量模型")
                 .build());
         log.info("已播种平台默认向量模型 {}（{}）", seedEmbeddingModel, baseUrl);
@@ -121,6 +150,11 @@ public class ModelRouterService {
      * 获取所有模型配置（管理面）：当前应用自有 ∪ 平台共享(scope=PLATFORM)，按 id 去重。
      * TenantDataAspect 对 PLATFORM_ADMIN 整体不启用 @Filter，禁止裸 findAll；无 appId
      * （平台管理员未选定应用）时自有部分为空，但平台共享模型仍须可见——保住多级回退可管理性。
+     *
+     * <p>⚠️ 这里的去重键是 <b>id</b>，与运行面 {@link #getModelsForScenario}（去重键是
+     * {@code provider|modelId|endpoint}）<b>刻意不同</b>：管理面只要求「同一个行不重复出现」，
+     * 两条 id 不同但凭据相同的行在界面上本就该各自可见、各自可删；
+     * 而运行面要保证同一模型不被当成两个候选重复尝试降级。两者不要合并成一个方法。
      */
     public List<AiModelConfig> getAllModels() {
         Long appId = TenantContext.getAppId();
@@ -181,7 +215,8 @@ public class ModelRouterService {
         if (maxOutputTokens <= 0) {
             return;
         }
-        if ("openai".equalsIgnoreCase(provider)) {
+        // 哪家只认 max_completion_tokens 由 ModelProviderCatalog 统一持有，别在这里写厂商名
+        if (ModelProviderCatalog.usesMaxCompletionTokens(provider)) {
             builder.maxCompletionTokens(maxOutputTokens);
         } else {
             builder.maxTokens(maxOutputTokens);
@@ -261,16 +296,19 @@ public class ModelRouterService {
     /**
      * 获取指定场景的可用模型：租户自有 ∪ 平台共享，租户自有优先，
      * 按 (provider, modelId, endpoint) 去重；为空则降级到 default 场景。
+     *
+     * <p>去重键与 {@link #getAllModels} 不同，理由写在那边。
      */
     public List<AiModelConfig> getModelsForScenario(String scenario) {
-        List<AiModelConfig> merged = mergeTenantAndShared(scenario);
+        List<AiModelConfig> merged = mergeOwnAndSharedForRouting(scenario);
         if (merged.isEmpty() && !"default".equals(scenario)) {
-            merged = mergeTenantAndShared("default");
+            merged = mergeOwnAndSharedForRouting("default");
         }
         return merged;
     }
 
-    private List<AiModelConfig> mergeTenantAndShared(String scenario) {
+    /** 运行面合并：同一模型（厂商 + 模型 ID + 端点）在自有与共享里各存一份时只留自有那条。 */
+    private List<AiModelConfig> mergeOwnAndSharedForRouting(String scenario) {
         // 「租户自有」那半靠 Hibernate 过滤器隔离，而 TenantDataAspect 对「无上下文 + 未登录」一律不加过滤：
         // 在没有租户上下文的后台线程里查，拿到的是全平台所有租户的模型（2026-09-30 安全审查 H1，QA 生成曾如此）。
         // 这里直接拒绝，别让下一个 @Async / @Scheduled 调用方再把它带回来。请求线程（含平台管理员）与
@@ -297,7 +335,11 @@ public class ModelRouterService {
     }
 
     /**
-     * 根据模型配置创建 ChatClient
+     * 按模型配置创建 ChatClient（<b>不进缓存</b>）。
+     *
+     * <p>热路径不要直接调它，走 {@link #chatClientFor}：每次 build 都会新建一个 SDK 客户端及其连接池，
+     * 对话是逐条消息调用的，不复用的话每条消息都要重新 TLS 握手到模型端点。
+     * 这里保留无缓存的版本给「测试连接」用——那个场景本意就是验证当下的配置能不能打通。
      */
     public ChatClient createChatClient(AiModelConfig config) {
         // 刻意没有 provider 分派：本项目目前只接 OpenAI 兼容协议，所有 provider 走同一条路径，
@@ -354,6 +396,42 @@ public class ModelRouterService {
     }
 
     /**
+     * 对话客户端缓存：键 = 模型行 id，失效判据 = {@code updatedAt}。
+     *
+     * <p>与 {@code EmbeddingModelRegistry} 完全同一套语义（那边缓存向量模型与 VectorStore）。
+     * 两边都按 {@code updatedAt} 失效，是因为后台改端点 / Key 走的是供应商连接，
+     * {@code AiModelConfigRepository.syncFromProvider} 会一并刷新模型的 {@code updated_at}——
+     * 时间戳不动就会继续用旧客户端，改了 Key 也不生效。
+     */
+    private final ConcurrentHashMap<Long, CachedChatClient> chatClients = new ConcurrentHashMap<>();
+
+    private record CachedChatClient(LocalDateTime version, ChatClient client) {
+    }
+
+    /**
+     * 取该模型行的 ChatClient（带缓存）。<b>热路径一律走它</b>，不要直接调 {@link #createChatClient}。
+     *
+     * <p>不缓存会怎样：{@link #streamWithFallback} 会把降级列表里每个候选都建一遍、
+     * {@link #callWithModels} 每次尝试再建一次——每条消息 N 个 SDK 客户端、N 个连接池，
+     * 全部不复用，且旧的不 close 只能等 GC。
+     *
+     * <p>未落库的行（id 为 null）不进缓存：那是保存前探测 / 单测里的临时对象，没有稳定的失效版本。
+     */
+    ChatClient chatClientFor(AiModelConfig config) {
+        Long id = config.getId();
+        if (id == null) {
+            return createChatClient(config);
+        }
+        CachedChatClient cached = chatClients.get(id);
+        if (cached != null && Objects.equals(cached.version(), config.getUpdatedAt())) {
+            return cached.client();
+        }
+        ChatClient fresh = createChatClient(config);
+        chatClients.put(id, new CachedChatClient(config.getUpdatedAt(), fresh));
+        return fresh;
+    }
+
+    /**
      * 获取提供商的默认端点。清单与「为什么每一项都不能想当然地补 /v1」的完整说明
      * 都在 {@link ModelProviderCatalog}——那里是唯一一份，前端经
      * {@code GET /v1/ai-models/providers} 拉同一份数据渲染下拉与徽章。
@@ -399,7 +477,7 @@ public class ModelRouterService {
         for (AiModelConfig model : models) {
             try {
                 log.debug("Calling model: {} ({})", model.getName(), model.getModelId());
-                ChatClient client = createChatClient(model);
+                ChatClient client = chatClientFor(model);
                 T result = promptRunner.apply(client);
                 log.debug("Model {} returned successfully", model.getName());
                 return result;
@@ -415,25 +493,6 @@ public class ModelRouterService {
     }
 
     /**
-     * 获取指定场景的 ChatClient（取该场景优先级最高的模型；
-     * 场景无模型时 getModelsForScenario 已内置回退 default 场景）
-     */
-    public ChatClient getChatClientForScenario(String scenario) {
-        List<AiModelConfig> models = getModelsForScenario(scenario);
-        if (models.isEmpty()) {
-            throw new RuntimeException("没有配置默认 AI 模型");
-        }
-        return createChatClient(models.get(0));
-    }
-
-    /**
-     * 获取默认场景的 ChatClient（简单场景使用）
-     */
-    public ChatClient getDefaultChatClient() {
-        return getChatClientForScenario("default");
-    }
-
-    /**
      * 流式调用 + 模型故障回退：按场景取模型列表依次尝试，
      * <b>只在首个 chunk 尚未发出时</b>才切换下一个模型（已经开吐的流无法重放）。
      * 与非流式 {@link #callWithFallback} 对应，让流式路径不再是单模型裸奔。
@@ -445,11 +504,12 @@ public class ModelRouterService {
         if (models.isEmpty()) {
             throw new RuntimeException("没有可用的 AI 模型配置");
         }
-        // 模型列表与 ChatClient 的创建都在调用线程完成（依赖 TenantContext），
-        // 只把「发起请求」延后到订阅时——订阅发生在 Reactor 线程，那时上下文已可能被清理。
+        // 模型列表在调用线程解析（依赖 TenantContext）；客户端改走 chatClientFor 缓存，
+        // 不再为降级列表里每个候选各建一个（每条消息 N 个连接池且都不复用）。
+        // 「发起请求」仍延后到订阅时——订阅发生在 Reactor 线程，那时上下文已可能被清理。
         List<Supplier<Flux<org.springframework.ai.chat.model.ChatResponse>>> attempts = new ArrayList<>();
         for (AiModelConfig model : models) {
-            ChatClient client = createChatClient(model);
+            ChatClient client = chatClientFor(model);
             attempts.add(() -> {
                 log.debug("Streaming with model: {} ({})", model.getName(), model.getModelId());
                 return streamRunner.apply(client);

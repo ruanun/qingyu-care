@@ -48,7 +48,10 @@ public class ModelProviderBackfillRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        tx.executeWithoutResult(s -> backfill());
+        tx.executeWithoutResult(s -> {
+            backfill();
+            auditScopeDrift();
+        });
     }
 
     void backfill() {
@@ -84,6 +87,22 @@ public class ModelProviderBackfillRunner implements ApplicationRunner {
             modelRepository.syncFromProvider(provider.getId(), provider.getProviderKey(), provider.getEndpoint(), provider.getApiKey());
             log.info("模型归组到供应商连接「{}」（id={}）：{} 个", provider.getName(), provider.getId(), n);
         });
+    }
+
+    /**
+     * 模型归属与所属连接对不上时报一条启动 WARN。
+     *
+     * <p>只在写路径之外的改动（直接改库、早期版本的行）才能造成不一致，所以<b>不自动修</b>：
+     * 猜错归属会把数据发往错租户的端点，比报出来让人手动核对危险得多。
+     */
+    void auditScopeDrift() {
+        List<AiModelConfig> drift = modelRepository.findProviderScopeDrift();
+        if (drift.isEmpty()) {
+            return;
+        }
+        log.warn("发现 {} 个模型的归属与所属供应商连接不一致（scope / tenant_id 对不上）：{}"
+                        + "。运行期会按模型行自己的 scope 参与「租户自有优先」判定，请人工核对后修正",
+                drift.size(), drift.stream().map(m -> m.getId() + ":" + m.getName()).toList());
     }
 
     private Optional<ModelProvider> findSame(GroupKey key) {

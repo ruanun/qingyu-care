@@ -8,6 +8,7 @@ import com.qingyu.care.entity.User;
 import com.qingyu.care.enums.TenantPlan;
 import com.qingyu.care.enums.TenantStatus;
 import com.qingyu.care.enums.UserRole;
+import com.qingyu.care.repository.AiModelConfigRepository;
 import com.qingyu.care.repository.UserRepository;
 import com.qingyu.care.support.AbstractPostgresIT;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,7 @@ class ModelProviderIT extends AbstractPostgresIT {
     @Autowired private UserRepository userRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ModelProviderBackfillRunner backfillRunner;
+    @Autowired private AiModelConfigRepository modelRepository;
 
     private static final String SUF = Long.toString(System.nanoTime(), 36);
     private static final String ADMIN_A = "prov_a_" + SUF;
@@ -209,6 +211,40 @@ class ModelProviderIT extends AbstractPostgresIT {
         Integer providers = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM model_provider WHERE tenant_id = ? AND remark = '由已有模型自动归组生成'", Integer.class, tenantA);
         assertThat(providers).isEqualTo(2);
+    }
+
+    /**
+     * 模型归属与所属连接对不上时（只能由绕过应用的直接改库造成），启动审计要把它报出来。
+     * 不自动修：猜错归属会把流量发往错租户的端点。
+     */
+    @Test
+    void 启动审计能认出归属与连接不一致的模型() {
+        String modelId = "drift-" + SUF;
+        jdbcTemplate.update("INSERT INTO ai_model_config(name, provider, model_id, endpoint, api_key, scenario, priority, "
+                        + "enabled, scope, model_type, tenant_id, app_id, created_at, updated_at) "
+                        + "VALUES (?, 'openai', ?, 'https://api.openai.com/v1', 'sk-D', 'default', 100, true, "
+                        + "'PLATFORM', 'CHAT', NULL, NULL, now(), now())",
+                modelId, modelId);
+        Long driftId = jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_model_config WHERE model_id = ?", Long.class, modelId);
+        // 挂到一个租户连接上：模型自称 PLATFORM，连接却是租户的。
+        // 连接直接建而不是复用别的用例建的——用例执行顺序不保证
+        String providerName = "drift-provider-" + SUF;
+        jdbcTemplate.update("INSERT INTO model_provider(tenant_id, scope, name, provider_key, endpoint, api_key, "
+                        + "created_at, updated_at) VALUES (?, 'TENANT', ?, 'openai', 'https://api.openai.com/v1', "
+                        + "'sk-P', now(), now())", tenantA, providerName);
+        Long tenantProvider = jdbcTemplate.queryForObject(
+                "SELECT id FROM model_provider WHERE name = ?", Long.class, providerName);
+        jdbcTemplate.update("UPDATE ai_model_config SET provider_id = ? WHERE id = ?", tenantProvider, driftId);
+
+        assertThat(modelRepository.findProviderScopeDrift())
+                .extracting(m -> m.getId())
+                .contains(driftId);
+
+        // 写路径建出来的行一律一致，报完上面那条后库里不该再有剩下的
+        jdbcTemplate.update("DELETE FROM ai_model_config WHERE id = ?", driftId);
+        jdbcTemplate.update("DELETE FROM model_provider WHERE id = ?", tenantProvider);
+        assertThat(modelRepository.findProviderScopeDrift()).isEmpty();
     }
 
     private void insertLegacy(Long appId, String provider, String endpoint, String apiKey, String modelId) {

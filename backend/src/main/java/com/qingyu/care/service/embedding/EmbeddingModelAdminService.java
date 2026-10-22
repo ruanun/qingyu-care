@@ -36,7 +36,7 @@ public class EmbeddingModelAdminService {
             config.setPriority(100);
         }
         if (config.getSimilarityThreshold() == null) {
-            config.setSimilarityThreshold(ModelProviderCatalog.recommendedEmbeddingThreshold(config.getModelId()));
+            config.setSimilarityThreshold(ModelProviderCatalog.DEFAULT_EMBEDDING_THRESHOLD);
         }
         requireValidThreshold(config.getSimilarityThreshold());
         probe.requireCompatible(config);
