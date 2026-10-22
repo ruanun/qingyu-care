@@ -68,6 +68,9 @@ jobs:
           name: backend-jar
           path: backend/target/qingyu-care-${{ env.VERSION }}.jar
           if-no-files-found: error
+          # upload-artifact v4 的 artifact 内部路径 = 去掉「所有匹配路径的共同父目录」后的相对路径。
+          # 单个文件时那个共同父目录就是 backend/target，所以内部名只有 qingyu-care-<ver>.jar；
+          # 下载时必须自己给 path，否则它落在工作区根目录（上一次发布就死在这一步）。
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -119,7 +122,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend-jar
-          # 不指定 path：v4 保留上传时的相对路径，会还原到 backend/target/qingyu-care-<ver>.jar
+          # 显式给落点：v4 不会把 backend/target 这层还原回来，不给 path 就到了工作区根目录
+          path: backend/target
       - name: 组装可执行包
         run: |
           set -eux
