@@ -342,22 +342,6 @@
         </plugins>
     </build>
     
-    <repositories>
-        <repository>
-            <id>aliyun</id>
-            <name>Aliyun Maven</name>
-            <url>https://maven.aliyun.com/repository/public</url>
-        </repository>
-        <!-- Bucket4j jdk17 系列在阿里云镜像中缺失，直连 Maven Central 补充 -->
-        <repository>
-            <id>maven-central-direct</id>
-            <name>Maven Central Direct</name>
-            <url>https://repo1.maven.org/maven2</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
     <profiles>
         <!-- 依赖漏洞扫描（安全审查 L13）：mvn -Pdepcheck -Dnvd.api.key=xxx org.owasp:dependency-check-maven:check
              刻意不绑进 verify：首次要下载整个 NVD 库，国内网络可能十几分钟。入口是 scripts/dep-audit.sh -->
