@@ -26,6 +26,18 @@ jobs:
     name: 测试、打包与镜像推送
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    services:
+      # 同 ci.yml：集成测试启动上下文时 realtimeListenerContainer 直连 localhost:6379。
+      # 发布流程也要跑一遍 mvn verify，少了它整个发布卡在第一步（tag 已经推出去了，只能重打）。
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     env:
       DASHSCOPE_API_KEY: ci-dummy-key
       VERSION: ${{ github.ref_name }}
