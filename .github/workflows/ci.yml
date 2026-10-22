@@ -25,6 +25,20 @@ jobs:
     name: 后端（单测 + 集成测试）
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      # ⚠️ 必须有 Redis：集成测试启动 Spring 上下文时 realtimeListenerContainer（Redis pub/sub）
+      # 会直接连 localhost:6379，连不上就是「Failed to start bean 'realtimeListenerContainer'」
+      # → 上下文加载失败 → 后续所有 IT 连锁报「failure threshold exceeded」。
+      # 本地跑 verify 同样要求先 `docker compose up -d`（AbstractPostgresIT 只起 PG 容器）。
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     env:
       # 任何意外拉起 Spring 上下文也不会因缺 key 而失败；测试全部走 mock / 本地假端点
       DASHSCOPE_API_KEY: ci-dummy-key
