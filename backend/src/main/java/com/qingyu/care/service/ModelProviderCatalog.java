@@ -2,6 +2,7 @@ package com.qingyu.care.service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * OpenAI 兼容厂商的预设清单。纯数据 + 查找，无状态、不进 Spring 容器。
@@ -63,11 +64,23 @@ public final class ModelProviderCatalog {
      *
      * <p>0.45 只在 qwen3.7-text-embedding 上实测标定过（2026-08-11：真实命中 0.57~0.73、噪声 0.25~0.30）。
      * 其它模型的刻度未必相同——这里给的是「起点」而非结论，添加别家向量模型后应当用真实问题测一遍再调。
+     *
+     * <p>⚠️ 刻意是<b>常量而不是按 modelId 查表</b>：此前有一个
+     * {@code recommendedEmbeddingThreshold(String modelId)} 收着 modelId 却恒返回本值，
+     * 三处调用方都以为拿到了模型专属阈值。签名骗人比没有这个方法更糟。
+     * 将来真标定出第二个模型时，把它改成按 modelId 查的 Map（缺省仍回落本值），
+     * 别再把那个空参数签名恢复回来。
      */
     public static final double DEFAULT_EMBEDDING_THRESHOLD = 0.45;
 
     /** 兜底端点：未知 provider 一律回落这里，与改造前 switch 的 default 分支同义。 */
     private static final String OPENAI_ENDPOINT = "https://api.openai.com/v1";
+
+    /**
+     * 只认 {@code max_completion_tokens} 的厂商。与上面的 PRESETS 用同一套 provider key，
+     * 但不进 {@link ProviderPreset} 那个 record——它会被原样下发前端，而界面不需要知道这条协议差异。
+     */
+    private static final Set<String> MAX_COMPLETION_TOKENS_PROVIDERS = Set.of("openai");
 
     /**
      * ⚠️ 前四项的 defaultEndpoint 值被 {@code ModelProviderCatalogTest} 逐字钉死，别顺手改。
@@ -126,9 +139,17 @@ public final class ModelProviderCatalog {
         return PRESETS.stream().filter(p -> p.defaultEndpoint().equals(e)).map(ProviderPreset::key).findFirst();
     }
 
-    /** 某向量模型的推荐阈值起点（目前只有一个实测值，见 {@link #DEFAULT_EMBEDDING_THRESHOLD}）。 */
-    public static double recommendedEmbeddingThreshold(String modelId) {
-        return DEFAULT_EMBEDDING_THRESHOLD;
+    /**
+     * 该厂商是否只认 {@code max_completion_tokens}（而非 {@code max_tokens}）。
+     *
+     * <p>OpenAI 官方的推理模型（o 系列、gpt-5）<b>拒绝</b> {@code max_tokens}；国内各家 OpenAI 兼容模式
+     * 普遍只认 {@code max_tokens}。给错字段的结果是 400，或上限静默不生效（2026-09-30 安全审查）。
+     *
+     * <p>判断放在本表而不是 {@code ModelRouterService} 里的 {@code "openai".equals(provider)}：
+     * 厂商差异应当全部落在这一份清单里，否则下次多一家就得再去业务代码里补一次特例。
+     */
+    public static boolean usesMaxCompletionTokens(String provider) {
+        return provider != null && MAX_COMPLETION_TOKENS_PROVIDERS.contains(provider.trim().toLowerCase(Locale.ROOT));
     }
 
     /**

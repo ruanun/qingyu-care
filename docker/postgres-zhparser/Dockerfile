@@ -4,10 +4,11 @@ FROM pgvector/pgvector:pg17
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# deb.debian.org 在国内网络下频繁 502（apt.postgresql.org 反而稳定），换阿里云镜像规避。
-RUN set -eux; \
-    sed -i 's#http://deb.debian.org/debian-security#http://mirrors.aliyun.com/debian-security#; s#http://deb.debian.org/debian#http://mirrors.aliyun.com/debian#' \
-        /etc/apt/sources.list.d/debian.sources
+# 不换 apt 源，用基础镜像自带的 deb.debian.org：曾有一层 sed 换成 mirrors.aliyun.com
+# （理由是「国内 deb.debian.org 频繁 502」），实测反而更差——阿里云源的 Packages 索引频繁超时，
+# apt-get update 重试到 exit 100 直接构建失败；deb.debian.org 是亚秒级。
+# 国内拉取慢是 Docker registry / 代理该管的事，别在 Dockerfile 里搬镜像源：
+# 它把网络问题从一个镜像挪到另一个，且换到的那家未必更稳。
 
 # 拆成独立层：apt 源偶发 502 时只需重试对应层，不必重新下载已成功的包。
 # Acquire::Retries 让 apt 对单个包的瞬时网络错误自动重试，减少整层失败概率。

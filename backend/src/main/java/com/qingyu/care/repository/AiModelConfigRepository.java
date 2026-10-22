@@ -131,4 +131,17 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
     @Query(value = "UPDATE ai_model_config SET provider_id = :providerId WHERE id IN (:ids) AND provider_id IS NULL",
             nativeQuery = true)
     int attachToProvider(@Param("ids") java.util.Collection<Long> ids, @Param("providerId") Long providerId);
+
+    /**
+     * 模型归属与所属连接的归属对不上的行：启动时审计用。
+     *
+     * <p>模型行与连接行各存一份归属（{@code scope} + {@code tenant_id}），写路径上由
+     * {@code ModelProviderService.requireOwned} 保证一致；本查询只为了把「绕过应用直接改库」造成的漂移
+     * 变成一条启动 WARN。不一致时运行期会用模型行自己的 scope 参与「租户自有优先」判定——
+     * 一个被改成 TENANT 的平台模型会被当成当前租户的模型优先尝试，而它指向的是平台端点。
+     */
+    @Query(value = "SELECT m.* FROM ai_model_config m JOIN model_provider p ON p.id = m.provider_id "
+            + "WHERE (m.tenant_id IS NULL) <> (p.tenant_id IS NULL) OR m.scope <> p.scope ORDER BY m.id",
+            nativeQuery = true)
+    List<AiModelConfig> findProviderScopeDrift();
 }
