@@ -10,9 +10,11 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    # master：私有仓库（Gitea）的默认分支；main：公开仓库（GitHub）的默认分支。
+    # 两边都要列——只写 master 的话，公开仓库推 main 一条 workflow 都不会触发（静默无事发生）。
+    branches: [master, main]
   pull_request:
-    branches: [master]
+    branches: [master, main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
