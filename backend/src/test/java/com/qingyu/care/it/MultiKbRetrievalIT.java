@@ -37,6 +37,29 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
     void ensureApps() {
         ensureAppRow(TID, APP_A);
         ensureAppRow(TID, APP_B);
+        // ⚠️ 自己准备向量模型并显式钉到这两个应用上，不依赖「平台默认模型」由谁播种。
+        // 全套 IT 共用一个 PG，多个 Spring 上下文各自 create-drop 重建 schema 并跑 @PostConstruct
+        // 播种，那行是否存在取决于上下文创建顺序（failsafe runOrder=filesystem，Linux 与 Windows
+        // 顺序不同）。不自己准备时，CI 上曾整个类 5 条全红：解析不到模型 → 检索 fail-soft 返回空。
+        Long modelId = ensureEmbeddingModel();
+        jdbcTemplate.update("UPDATE sys_application SET embedding_model_id = ? WHERE id IN (?, ?)",
+                modelId, APP_A, APP_B);
+    }
+
+    /** 取一条可用的平台向量模型；没有就自己插一条（与本类其余数据一样在测试事务里，随回滚消失）。 */
+    private Long ensureEmbeddingModel() {
+        java.util.List<Long> ids = jdbcTemplate.queryForList(
+                "SELECT id FROM ai_model_config WHERE scope = 'PLATFORM' AND tenant_id IS NULL AND enabled = true "
+                        + "AND model_type = 'EMBEDDING' ORDER BY priority ASC, id ASC", Long.class);
+        if (!ids.isEmpty()) {
+            return ids.get(0);
+        }
+        jdbcTemplate.update("INSERT INTO ai_model_config(name, provider, model_id, endpoint, api_key, scenario, "
+                        + "priority, enabled, scope, model_type, similarity_threshold, created_at, updated_at) "
+                        + "VALUES ('IT平台向量', 'openai', 'it-platform-embedding', NULL, 'test-key', 'default', "
+                        + "1, true, 'PLATFORM', 'EMBEDDING', 0.45, now(), now())");
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM ai_model_config WHERE model_id = 'it-platform-embedding'", Long.class);
     }
 
     @Autowired ChatService chatService;
@@ -100,6 +123,8 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
     void cleanup() {
         jdbcTemplate.update("DELETE FROM vector_store WHERE metadata->>'tenantId' = ?", String.valueOf(TID));
         jdbcTemplate.update("DELETE FROM knowledge_base WHERE tenant_id = ?", TID);
+        jdbcTemplate.update("DELETE FROM ai_model_config WHERE model_id = 'it-platform-embedding'");
+        jdbcTemplate.update("UPDATE sys_application SET embedding_model_id = NULL WHERE id IN (?, ?)", APP_A, APP_B);
     }
 
     @Test
