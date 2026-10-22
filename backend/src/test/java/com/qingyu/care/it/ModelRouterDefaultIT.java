@@ -38,6 +38,9 @@ class ModelRouterDefaultIT extends AbstractPostgresIT {
     @Autowired
     private AiModelConfigRepository aiModelConfigRepository;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     /**
      * 确保平台默认模型种子存在。
      * 多 Spring 上下文共用同一 DB（create-drop）时，@PostConstruct 的种子可能已被另一上下文的
@@ -66,6 +69,8 @@ class ModelRouterDefaultIT extends AbstractPostgresIT {
     @AfterEach
     void 清理上下文() {
         TenantContext.clear();
+        // 自己播的平台模型自己删：它没有 provider_id，会污染 ModelProviderIT 的「平台模型都已挂到连接」断言
+        jdbcTemplate.update("DELETE FROM ai_model_config WHERE remark = 'ModelRouterDefaultIT 自播种的平台共享模型'");
     }
 
     @Test

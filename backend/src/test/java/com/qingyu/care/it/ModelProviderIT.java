@@ -93,8 +93,13 @@ class ModelProviderIT extends AbstractPostgresIT {
 
     @Test
     void 启动播种的平台模型都已挂到平台连接() {
+        // ⚠️ 只看「启动时按 yml 播种」的那两行（remark 前缀），不能对全表数孤儿：
+        // 多个 IT 会往 ai_model_config 插平台级测试模型（TenantOwnershipGuardIT、
+        // ModelRouterDefaultIT 各一行，provider_id 为 NULL），而 failsafe 的 runOrder=filesystem
+        // 在 Linux 与 Windows 上的顺序不一样——对全表断言会让本用例在 CI 上偶发红。
         Integer orphans = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM ai_model_config WHERE tenant_id IS NULL AND provider_id IS NULL", Integer.class);
+                "SELECT COUNT(*) FROM ai_model_config WHERE tenant_id IS NULL AND provider_id IS NULL "
+                        + "AND remark LIKE '从 application.yml 初始化%'", Integer.class);
         assertThat(orphans).isZero();
         // 播种的对话模型与向量模型同一套端点与 Key：归到同一个平台连接
         Integer providers = jdbcTemplate.queryForObject("SELECT COUNT(DISTINCT provider_id) FROM ai_model_config "

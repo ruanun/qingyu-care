@@ -149,6 +149,8 @@ class TenantOwnershipGuardIT extends AbstractPostgresIT {
         assertThatThrownBy(() -> withTenantContext(appA, () -> modelRouterService.getById(id)))
                 .isInstanceOf(ResourceNotFoundException.class);
         assertThat(modelRouterService.getById(id).getApiKey()).isEqualTo("sk-platform-secret");
+        // 自己播的平台行自己删：它没有 provider_id，会污染 ModelProviderIT 的「平台模型都已挂到连接」断言
+        modelConfigRepository.deleteById(id);
     }
 
     @Test

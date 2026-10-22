@@ -31,9 +31,6 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
     private static final Long TID = 61001L;
     private static final Long APP_A = 61002L;
     private static final Long APP_B = 61003L;
-    /** 与平台默认向量模型的 modelId 一致（启动时按 qingyu.care.embedding.seed.model 播种），
-     * 护栏加 embeddingModel 等值过滤后，播种 chunk 须补齐该键，否则被护栏静默排除、断言失败。 */
-    private static final String EMBEDDING_MODEL = "qwen3.7-text-embedding";
 
     /** 检索要按应用读它钉住的向量模型：写死的应用 id 必须对应真实的应用行，否则检索 fail-soft 为空、反向断言永真 */
     @org.junit.jupiter.api.BeforeEach
@@ -45,6 +42,28 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
     @Autowired ChatService chatService;
     @Autowired KnowledgeBaseRepository knowledgeBaseRepository;
     @Autowired JdbcTemplate jdbcTemplate;
+
+    /**
+     * 当前应用实际生效的向量模型标签——与检索护栏同源，但<b>不触发钉模型</b>（只读两列）。
+     *
+     * <p>⚠️ 以前这里写死 "qwen3.7-text-embedding"（启动播种的值）。但整个 IT 套件共用一个 PG，
+     * 多个 Spring 上下文各自 create-drop 重建 schema、重跑 @PostConstruct 播种，哪个平台默认模型生效
+     * 取决于上下文创建顺序；failsafe 的 runOrder=filesystem 在 Linux 与 Windows 上顺序不同，
+     * 写死的标签就会在 CI 上变成「向量被护栏静默过滤 → 检索返回空」。改为现场读。
+     */
+    private String embeddingTag(Long appId) {
+        String pinned = jdbcTemplate.query(
+                "SELECT m.model_id FROM sys_application a JOIN ai_model_config m ON m.id = a.embedding_model_id "
+                        + "WHERE a.id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, appId);
+        if (pinned != null) {
+            return pinned;
+        }
+        return jdbcTemplate.queryForObject(
+                "SELECT model_id FROM ai_model_config WHERE scope = 'PLATFORM' AND tenant_id IS NULL "
+                        + "AND enabled = true AND model_type = 'EMBEDDING' ORDER BY priority ASC, id ASC LIMIT 1",
+                String.class);
+    }
 
     private Long seedKb(Long appId, boolean enabled) {
         TenantContext.setTenantId(TID);
@@ -64,7 +83,7 @@ class MultiKbRetrievalIT extends AbstractPostgresIT {
                 content, "{\"tenantId\":\"" + TID + "\",\"appId\":\"" + appId
                         + "\",\"knowledgeBaseId\":\"" + kbId
                         + "\",\"visibility\":\"PUBLIC\",\"docEnabled\":\"true\""
-                        + ",\"embeddingModel\":\"" + EMBEDDING_MODEL + "\"}");
+                        + ",\"embeddingModel\":\"" + embeddingTag(appId) + "\"}");
     }
 
     private List<Document> search(String q, Long appId) {
