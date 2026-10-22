@@ -5,7 +5,7 @@ import {
     History, FileText, Layers, Settings, Bot,
     LogOut, User as UserIcon, KeyRound, Users, Smartphone, Building,
     Activity, Boxes, SlidersHorizontal, ScrollText, Building2, Plug, BarChart3,
-    FlaskConical, Wrench, Sparkles, Server, Package, Store
+    FlaskConical, Wrench, Sparkles, Server, Package, Store, ShieldCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -43,26 +43,47 @@ interface NavSection {
     groups: NavGroup[];
     requireApp?: boolean;
     roles?: string[];
+    /**
+     * 平台区：整块渲染成带底色的卡片，标题换成「平台」徽标。
+     *
+     * <p>平台管理员要在同一个侧栏里同时看两种东西——「运营平台本身」（租户/概览/配置）与
+     * 「管当前租户的应用」。此前两者只有一条同样的灰字小标题在区分，选中态也是同一个 chip，
+     * 在两个视角之间切换时界面上没有任何提示。
+     */
+    scope?: 'platform';
 }
 
 // 菜单深度分组（SaaS平台规划.md 3.4）：平台管理 → 应用管理 → 应用配置 → 客服中心 → 数据统计
 const sections: NavSection[] = [
     {
         title: '平台管理',
+        scope: 'platform',
         roles: ['PLATFORM_ADMIN'],
-        groups: [{
-            items: [
-                { label: '租户列表', path: '/tenants', icon: Building },
-                { label: '系统概览', path: '/platform/overview', icon: Activity },
-                { label: '共享模型池', path: '/platform/models', icon: Boxes },
-                { label: '共享工具', path: '/platform/tools', icon: Wrench },
-                { label: '能力包', path: '/platform/packages', icon: Package },
-                { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal },
-            ],
-        }],
+        // 两组是两种心智模型：「运营平台」是管理员自己用的，「共享能力」是平台供给租户的。
+        // 合成一组时界面没有任何东西告诉人哪一条会影响到所有租户。
+        groups: [
+            {
+                title: '平台运营',
+                items: [
+                    { label: '租户列表', path: '/tenants', icon: Building },
+                    { label: '系统概览', path: '/platform/overview', icon: Activity },
+                    { label: '平台配置', path: '/platform/config', icon: SlidersHorizontal },
+                ],
+            },
+            {
+                title: '共享能力',
+                items: [
+                    { label: '共享模型池', path: '/platform/models', icon: Boxes },
+                    { label: '共享工具', path: '/platform/tools', icon: Wrench },
+                    { label: '能力包', path: '/platform/packages', icon: Package },
+                ],
+            },
+        ],
     },
     {
-        title: '应用管理',
+        // 叫「组织管理」而不是「应用管理」：下面四条里有三条是租户级（成员 / 租户配置 /审计日志），
+        // 真正的应用列表叫「我的应用」，用「应用管理」会让人以为这里是应用列表页
+        title: '组织管理',
         groups: [{
             items: [
                 { label: '我的应用', path: '/applications', icon: Smartphone, roles: ['TENANT_ADMIN', 'PLATFORM_ADMIN'] },
@@ -182,12 +203,32 @@ const MainLayout: React.FC = () => {
                             .filter((group) => group.items.length > 0);
                         if (visibleGroups.length === 0) return null;
                         const disabled = !!section.requireApp && !currentApp;
+                        const isPlatform = section.scope === 'platform';
                         return (
-                            <div key={section.title} className="space-y-1">
-                                <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                                    {section.title}
-                                    {section.requireApp && currentApp ? ` · ${currentApp.name}` : ''}
-                                </p>
+                            <div
+                                key={section.title}
+                                className={cn(
+                                    "space-y-1",
+                                    // dark: 两个变体是为将来接入主题切换备的（目前全仓没有任何地方给 <html> 挂 .dark，
+                                    // 所以它们今天不会命中）。深色下 primary 反转为近白（210 40% 98%），
+                                    // 淡底和描边需要各自调一个量级：浅色的 4% / 25% 到深色下要么看不见要么太亮。
+                                    isPlatform && "rounded-xl border border-dashed border-primary/25 bg-primary/[0.04] p-2 "
+                                        + "dark:border-primary/20 dark:bg-primary/[0.07]"
+                                )}
+                            >
+                                {isPlatform ? (
+                                    // 平台区标题换成徽标：滚动到下方应用菜单时，这个色块是唯一能告诉人
+                                    // 「上面那几条是全局的，会影响到所有租户」的东西
+                                    <span className="mx-1 inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-semibold tracking-wider text-primary dark:bg-primary/15">
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        平台
+                                    </span>
+                                ) : (
+                                    <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                                        {section.title}
+                                        {section.requireApp && currentApp ? ` · ${currentApp.name}` : ''}
+                                    </p>
+                                )}
                                 {visibleGroups.map((group, groupIndex) => (
                                     <div key={group.title ?? groupIndex} className="space-y-1">
                                         {group.title && (
