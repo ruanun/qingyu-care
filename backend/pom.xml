@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" 
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+    
+    <groupId>com.qingyu</groupId>
+    <artifactId>qingyu-care</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>qingyu-care</name>
+    <description>轻语 - AI智能客服系统</description>
+    
+    <properties>
+        <java.version>25</java.version>
+        <!--
+          Mockito 的 inline mock-maker（mockStatic 等）需要一个 Java agent。JDK 21 起
+          （JEP 451）self-attach 会打一串告警，且「未来版本默认禁止动态加载 agent」——
+          届时不是告警而是直接失效。故显式把 mockito-core 挂成 -javaagent，见下方
+          surefire/failsafe 的 argLine。
+          ⚠️ 不要改用 -XX:+EnableDynamicAgentLoading：它只是把告警静音，self-attach 本身
+          没变，JDK 真禁掉那天照样断，而那时的现象是一堆 mockStatic 测试同时红。
+          ⚠️ argLine 里刻意不写 @{argLine} 前缀：本仓库没有 JaCoCo 之类会预置 argLine
+          的插件，写了反而会因属性未定义而启动失败。将来若引入 JaCoCo，必须补回前缀，
+          否则会把它的 agent 覆盖掉。
+          ⚠️ **路径必须用引号包起来**：Surefire/Failsafe 按空白切分 argLine，而本地仓库
+          默认在 `%USERPROFILE%\.m2\repository`——Windows 账户名带空格（微软账户「名 姓」
+          很常见）就会把 -javaagent 的路径劈成两段。实测症状是
+          `Error opening zip file or JAR manifest missing : D:/fake` +
+          `The forked VM terminated without properly saying goodbye`，**整个 mvn test /
+          mvn verify 全军覆没且报错完全看不出跟 agent 有关**。
+          ⚠️ argLine 声明成属性而非写进两个插件的 configuration：Surefire 与 Failsafe 的
+          argLine 参数都默认取 ${argLine}，一处声明两边生效。抄成两份必然各自漂移
+          （本仓库在 AiTool/AiModelConfig 双注册上已经吃过这个亏）。
+        -->
+        <mockito.agent>${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</mockito.agent>
+        <argLine>"-javaagent:${mockito.agent}"</argLine>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <bucket4j.version>8.19.0</bucket4j.version>
+        <!--
+          覆盖 Spring Boot BOM 的 5.4.2：该版本的 HTTP 头解析可被打到内存耗尽
+          （GHSA-hf6x-8p5f-cgmf，HIGH）。本项目满足触发条件——工具调用、网页抓取、Webhook
+          三条出站路径都走 httpclient5，而目标地址由租户自由填写，恶意服务器返回超大响应头即可触发；
+          现有的超时与 5MB 上限都作用在 body 上，头部大小由 HttpCore 自己管，挡不住。
+          2026-09-03 依赖扫描（OSV）发现。同批扫出的 Tomcat/Netty/Jackson 等条目经逐条核对
+          不满足本项目的触发条件（Tomcat 认证器未启用、Netty 只作客户端、日志实现是 logback），
+          故只单独升这一个，不整体抬 BOM 版本。
+        -->
+        <httpcore5.version>5.4.3</httpcore5.version>
+    </properties>
+    
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>2.0.5</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
+    <dependencies>
+        <!-- Spring Boot Starters -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        
+        <!-- Spring AI（1.0 GA 起 starter 坐标改名为 spring-ai-starter-*） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-tika-document-reader</artifactId>
+        </dependency>
+
+        <!-- MCP 客户端。刻意不用 spring-ai-starter-mcp-client*：starter 会带
+             McpClientAutoConfiguration，它按静态 yaml 建连接，与「运行时按租户配置建、
+             用完即弃」的设计冲突。
+             ⚠️ 只能用 webflux 这条线：httpclient 版基于 JDK HttpClient，不支持自定义
+             DNS 解析，SSRF 的钉 IP 防护会静默失效（详见 MCP 设计文档 §9）。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>mcp-spring-webflux</artifactId>
+        </dependency>
+
+        <!-- Sa-Token 权限认证。Boot 4 需用 spring-boot4 系列 starter：
+             与 boot3 版同为 1.45.0、jar 内只有占位类，差异纯在 POM
+             （依赖 sa-token-jackson3 而非 sa-token-jackson），业务 API 不变。 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+            <version>1.45.0</version>
+        </dependency>
+        
+        <!-- X File Storage - S3 兼容存储 -->
+        <dependency>
+            <groupId>org.dromara.x-file-storage</groupId>
+            <artifactId>x-file-storage-spring</artifactId>
+            <version>2.3.0</version>
+        </dependency>
+        <!-- AWS S3 SDK v2 (x-file-storage 的 amazon-s3-v2 平台)。
+             SDK v1 已于 2025-12-31 终止支持，改用 v2。x-file-storage-core 以 provided 声明，需显式引入。 -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.46.7</version>
+        </dependency>
+
+        <!-- Apache HttpClient 5：供对话内工具调用出站时「钉住」已校验 IP，杜绝 SSRF 的
+             DNS rebinding/TOCTOU（自定义 DnsResolver 把校验期解析结果复用到连接期）。
+             版本随 Spring Boot BOM 托管，勿写 version。 -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
+        <!-- Jsoup：网页正文提取（剔除导航/页脚等噪声）。轻量、无传递依赖。 -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.23.1</version>
+        </dependency>
+
+        <!-- Database -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        
+        <!-- Apache Tika：不再显式声明，随 spring-ai-tika-document-reader 传递引入
+             （1.1.8 → Tika 3.3.1）。显式 pin 2.9.1 反而会与针对 3.x 编译的 reader 运行时错配。
+             ⚠️ 有一处编译期直接依赖了这个传递依赖：AttachmentValidator 用 org.apache.tika.Tika
+             做上传文件的真实类型探测（不能只信客户端声明的 Content-Type）。代价是将来 spring-ai
+             若把该 reader 模块挪走/换掉，编译会在升级那一刻才炸。**仍然不要**为此加显式依赖：
+             一旦写死版本号就回到了当年 pin 2.9.1 的老坑（版本被压回、与 reader 运行时错配，
+             且错配是运行期才现形，比编译期报错难查得多）；真需要收敛版本时用
+             dependencyManagement 对齐 spring-ai 的版本，而非另立一条 dependency。 -->
+
+        <!-- Utilities -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        
+        <!-- API Documentation。springdoc 3.0.x 是适配 Spring Boot 4 的版本线（2.8.x 只支持 Boot 3） -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
+        <!-- OpenAPI schema 解析。这两个坐标现在是 springdoc 的传递依赖（compile scope），
+             显式声明是为了钉住：哪天 springdoc 换实现或改依赖，编译会在这里明确断掉，
+             而不是在 service/openapi 里报一堆看不出关系的 NoClassDefFound。
+             ⚠️ 显式写了 version：既没有 Boot BOM 也没有 spring-ai-bom 托管这两个坐标
+             （`mvn dependency:resolve` 实测报 "missing version"），故不能按原计划留空。
+             版本取自 `mvn dependency:tree` 实测到的、springdoc 当前实际传递引入的版本
+             （io.swagger.core.v3:swagger-core-jakarta:jar:2.2.47，经
+             jsonschema-module-swagger-2 传递而来），显式声明只是把这个已生效的版本钉住，
+             不改变实际解析结果。
+             ⚠️ 刻意不用 io.swagger.parser.v3:swagger-parser-v3：它的 ParseOptions.setResolve(true)
+             会自己 fetch 远程 $ref，那是一条绕过 SsrfGuard、藏在依赖内部的出站路径。
+             只做反序列化的 swagger-core 在结构上就没有这个能力。见设计文档 §2.1。 -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-core-jakarta</artifactId>
+            <version>2.2.47</version>
+        </dependency>
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-models-jakarta</artifactId>
+            <version>2.2.47</version>
+        </dependency>
+
+        <!-- Development Tools -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+        
+        <!-- Redis (Lettuce) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!-- Bucket4j 分布式限流 (Lettuce) -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-core</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-redis-common</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j_jdk17-lettuce</artifactId>
+            <version>${bucket4j.version}</version>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Boot 4 把测试切片按技术栈拆模块：MockMvc 支持（@AutoConfigureMockMvc）
+             已从 spring-boot-test-autoconfigure 移出到 spring-boot-webmvc-test，
+             starter-test 不再传递引入，需显式声明。版本由 Boot BOM 托管。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Testcontainers 2.0 起模块坐标统一加 testcontainers- 前缀 -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- RealtimeHub（响应式 Sinks 多播）单测用 StepVerifier -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <!-- Surefire：单元测试，排除集成测试（*IT.java 及 Tag=integration-test） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>**/*IT.java</exclude>
+                    </excludes>
+                    <excludedGroups>integration-test</excludedGroups>
+                </configuration>
+            </plugin>
+            <!-- Failsafe：集成测试，仅运行 *IT.java，需要 Docker -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    
+    <profiles>
+        <!-- 依赖漏洞扫描（安全审查 L13）：mvn -Pdepcheck -Dnvd.api.key=xxx org.owasp:dependency-check-maven:check
+             刻意不绑进 verify：首次要下载整个 NVD 库，国内网络可能十几分钟。入口是 scripts/dep-audit.sh -->
+        <profile>
+            <id>depcheck</id>
+            <properties>
+                <nvd.api.key></nvd.api.key>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>11.1.1</version>
+                        <configuration>
+                            <nvdApiKey>${nvd.api.key}</nvdApiKey>
+                            <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <skipTestScope>true</skipTestScope>
+                            <formats>
+                                <format>HTML</format>
+                                <format>JSON</format>
+                            </formats>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

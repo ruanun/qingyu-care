@@ -1,0 +1,18 @@
+# Maven 构建产物：镜像内会重新 package，宿主机的 target 进上下文只是拖慢构建
+target
+
+# 日志与本地配置
+logs
+*.log
+.env
+
+# 版本控制与编辑器
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+
+# 容器化文件自身不必进上下文
+Dockerfile
+.dockerignore

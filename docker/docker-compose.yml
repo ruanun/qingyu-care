@@ -1,0 +1,92 @@
+services:
+  # PostgreSQL with pgvector + zhparser（中文全文检索）
+  postgres:
+    build:
+      context: ./postgres-zhparser
+    image: qingyu/pgvector-zhparser:pg17
+    container_name: qingyu-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: qingyu_care
+    ports:
+      - "127.0.0.1:5432:5432"   # 只绑本机：默认口令的开发库不该对局域网开放
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qingyu-network
+
+  # RustFS - S3 兼容对象存储（单节点单盘 SNSD 模式，官方推荐用于本地/小规模）
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.10
+    container_name: qingyu-rustfs
+    security_opt:
+      - "no-new-privileges:true"
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API（只绑本机）
+      - "127.0.0.1:9001:9001"   # Web 控制台（只绑本机）
+    environment:
+      - RUSTFS_VOLUMES=/data          # 单盘模式；镜像已把 /data 归属 UID 10001，命名卷自动继承权限
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_CORS_ALLOWED_ORIGINS=* # 本地开发放开跨域
+      - RUSTFS_ACCESS_KEY=rustfsadmin
+      - RUSTFS_SECRET_KEY=rustfsadmin123
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - qingyu-network
+    restart: unless-stopped
+
+  # 初始化 RustFS Bucket（x-file-storage 不会自动建桶，需预创建）
+  createbuckets:
+    image: minio/mc
+    container_name: qingyu-createbuckets
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myrustfs http://rustfs:9000 rustfsadmin rustfsadmin123;
+      /usr/bin/mc mb myrustfs/qingyu-care --ignore-existing;
+      echo 'Bucket qingyu-care 已就绪';
+      exit 0;
+      "
+    networks:
+      - qingyu-network
+
+  # Redis (用于缓存和消息队列)
+  redis:
+    image: redis:7-alpine
+    container_name: qingyu-redis
+    ports:
+      - "127.0.0.1:6379:6379"   # 无密码的 Redis 只绑本机
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - qingyu-network
+
+volumes:
+  postgres_data:
+  rustfs_data:
+  redis_data:
+
+networks:
+  qingyu-network:
+    driver: bridge

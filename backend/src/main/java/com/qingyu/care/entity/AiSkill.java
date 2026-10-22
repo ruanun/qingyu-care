@@ -1,0 +1,70 @@
+package com.qingyu.care.entity;
+
+import com.fasterxml.jackson.annotation.JsonCreator;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
+/**
+ * AI Skill：Markdown 能力包。content 命中时注入系统提示，并激活其绑定的工具。
+ */
+@Entity
+@Table(name = "ai_skill")
+@Data
+@EqualsAndHashCode(callSuper = false)
+@Builder
+// 无参构造显式标 @JsonCreator：Jackson 3 会把 @AllArgsConstructor 当隐式创建器，
+// 请求体缺省的属性会以 null 传入并覆盖 @Builder.Default 初值（详见 ChatRequest 注释）。
+@NoArgsConstructor(onConstructor_ = @JsonCreator)
+@AllArgsConstructor
+public class AiSkill extends BaseTenantEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    /** 用途描述（本期文档用途，为未来命中触发预留） */
+    @Column(length = 500)
+    private String description;
+
+    /** Markdown 正文：注入系统提示的 SOP/指令 */
+    @Column(columnDefinition = "text")
+    private String content;
+
+    /** 绑定的 AiTool id 集合（元素集合，避开 join 表与租户过滤器纠缠） */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "ai_skill_tool", joinColumns = @JoinColumn(name = "skill_id"))
+    @Column(name = "tool_id")
+    @Builder.Default
+    private Set<Long> toolIds = new LinkedHashSet<>();
+
+    /**
+     * 绑定的 MCP 工具 id 集合（{@code mcp_tool.id}），与 toolIds 并列。
+     *
+     * <p>独立字段而非混进 toolIds：两者指向不同的表，混用会让「这个 id 该去哪张表查」
+     * 变成猜测。
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "ai_skill_mcp_tool", joinColumns = @JoinColumn(name = "skill_id"))
+    @Column(name = "mcp_tool_id")
+    @Builder.Default
+    private Set<Long> mcpToolIds = new LinkedHashSet<>();
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean enabled = true;
+
+    @CreationTimestamp
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    private LocalDateTime updatedAt;
+}

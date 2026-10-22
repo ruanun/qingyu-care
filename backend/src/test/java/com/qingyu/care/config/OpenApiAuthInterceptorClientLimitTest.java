@@ -1,0 +1,136 @@
+package com.qingyu.care.config;
+
+import com.qingyu.care.dto.QuotaCheckResult;
+import com.qingyu.care.entity.Application;
+import com.qingyu.care.entity.Tenant;
+import com.qingyu.care.service.AuditLogService;
+import com.qingyu.care.service.OpenApiAuthService;
+import com.qingyu.care.service.QuotaService;
+import com.qingyu.care.service.RateLimitService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.ObjectMapper;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * 开放 API 在应用级限流之外再按「应用 + 客户端 IP」分桶（安全审查 M5，2026-09-03）。
+ *
+ * <p>appKey 明写在宿主页里，Origin 头非浏览器客户端随便填：此前一个滥用者就能用满整个应用的
+ * 桶，让该应用所有真实访客一起吃 429，或以应用级上限持续烧租户的模型额度。子桶把单个来源的
+ * 上限压到更低。IP 一律取 {@code getRemoteAddr()}——转发头已由 {@code ForwardedHeaderFilter} 解析并藏掉，
+ * 自己读 {@code X-Forwarded-For} 在生产上恒为 null（2026-09-30 安全审查 H2）。过滤器那一段的真实行为
+ * 由 {@code ClientIpResolutionTest} 走真实过滤器守着，这里只测分桶逻辑。
+ *
+ * @author ruan
+ */
+class OpenApiAuthInterceptorClientLimitTest {
+
+    private final OpenApiAuthService openApiAuthService = mock(OpenApiAuthService.class);
+    private final ObjectMapper objectMapper = mock(ObjectMapper.class);
+    private final RateLimitService rateLimitService = mock(RateLimitService.class);
+    private final QuotaService quotaService = mock(QuotaService.class);
+    private final AuditLogService auditLogService = mock(AuditLogService.class);
+    private final HttpServletRequest request = mock(HttpServletRequest.class);
+    private final HttpServletResponse response = mock(HttpServletResponse.class);
+
+    private final OpenApiAuthInterceptor interceptor = new OpenApiAuthInterceptor(
+            openApiAuthService, objectMapper, rateLimitService, quotaService, auditLogService);
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
+    /** 访客路径：不带 X-Api-Key，凭 Origin 白名单进来——按 IP 分桶只作用于这条路径。 */
+    private void stubAuthenticated() throws Exception {
+        Application app = stubCommon();
+        when(request.getHeader("Origin")).thenReturn("https://shop.example.com");
+        when(openApiAuthService.authenticateByOrigin("app-key-1", "https://shop.example.com")).thenReturn(app);
+    }
+
+    private Application stubCommon() throws Exception {
+        Application app = Application.builder().id(10L).tenant(Tenant.builder().id(1L).build())
+                .appKey("app-key-1").appSecret("s").enabled(true).build();
+        when(request.getHeader("X-App-Id")).thenReturn("app-key-1");
+        when(quotaService.check(anyLong())).thenReturn(new QuotaCheckResult(false, false, 0, 0, 0, 0));
+        when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        ReflectionTestUtils.setField(interceptor, "perClientRateLimit", 20);
+        return app;
+    }
+
+    @Test
+    void 客户端子桶用满时429_且键含客户端IP() throws Exception {
+        stubAuthenticated();
+        when(request.getRemoteAddr()).thenReturn("203.0.113.9");
+        when(rateLimitService.tryConsume(eq("app-key-1"), anyInt())).thenReturn(true);
+        when(rateLimitService.tryConsume(eq("client:app-key-1:203.0.113.9"), eq(20))).thenReturn(false);
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+
+        assertThat(result).isFalse();
+        verify(response).setStatus(429);
+        assertThat(TenantContext.getAppId()).isNull();
+    }
+
+    @Test
+    void 不读转发头_只按过滤器解析后的地址分桶() throws Exception {
+        stubAuthenticated();
+        // 即便请求头里还看得到 XFF（真实环境下它已被过滤器藏掉），也不得采信
+        org.mockito.Mockito.lenient().when(request.getHeader("X-Forwarded-For")).thenReturn("6.6.6.6");
+        when(request.getRemoteAddr()).thenReturn("198.51.100.7");
+        when(rateLimitService.tryConsume(anyString(), anyInt())).thenReturn(true);
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+
+        assertThat(result).isTrue();
+        verify(rateLimitService).tryConsume("client:app-key-1:198.51.100.7", 20);
+    }
+
+    /**
+     * 服务端路径持密钥才进得来，不在「appKey 公开 + Origin 可伪造」的威胁模型里；
+     * 而接入方后端通常只有一个出口 IP，按 IP 分桶会把整个集成压到 20 次/分钟（2026-09-25 修正）。
+     */
+    @Test
+    void 服务端路径不按客户端IP分桶() throws Exception {
+        Application app = stubCommon();
+        when(request.getHeader("X-Api-Key")).thenReturn("s");
+        when(openApiAuthService.authenticate("app-key-1", "s")).thenReturn(app);
+        // 必须给出客户端 IP：否则代码会因「IP 为空」而非「服务端路径」跳过分桶，本条变异验证过是永真的
+        when(request.getRemoteAddr()).thenReturn("203.0.113.9");
+        when(rateLimitService.tryConsume(anyString(), anyInt())).thenReturn(true);
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+
+        assertThat(result).isTrue();
+        verify(rateLimitService, org.mockito.Mockito.never()).tryConsume(org.mockito.ArgumentMatchers.startsWith("client:"), anyInt());
+    }
+
+    @Test
+    void 子桶上限为0时不做客户端限流() throws Exception {
+        stubAuthenticated();
+        ReflectionTestUtils.setField(interceptor, "perClientRateLimit", 0);
+        when(rateLimitService.tryConsume(eq("app-key-1"), anyInt())).thenReturn(true);
+
+        boolean result = interceptor.preHandle(request, response, new Object());
+
+        assertThat(result).isTrue();
+        verify(rateLimitService).tryConsume(eq("app-key-1"), anyInt());
+        verify(rateLimitService, org.mockito.Mockito.never()).tryConsume(org.mockito.ArgumentMatchers.startsWith("client:"), anyInt());
+    }
+}

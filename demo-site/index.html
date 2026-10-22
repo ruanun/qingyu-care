@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>云舟商城 · 轻语 Widget 演示站点</title>
+  <!-- 内联 data URI，不额外占一个资源文件；顺带消掉控制台那条 favicon 404，
+       排查 widget 接入问题时少一条无关噪声 -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%236c5ce7'/><text x='16' y='23' font-size='18' text-anchor='middle' fill='white' font-family='sans-serif'>舟</text></svg>">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="logo" href="#">云舟商城</a>
+      <nav class="nav-links">
+        <a href="#">首页</a>
+        <a href="#">数码家电</a>
+        <a href="#">会员中心</a>
+        <a href="#">我的订单</a>
+        <a href="#">帮助中心</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="hero">
+      <h1>云舟商城 · 全场满 99 包邮</h1>
+      <p>PLUS 会员全场包邮不限金额，退换货免运费</p>
+    </section>
+
+    <!--
+      商品卡片是纯 CSS 灰块占位，不引任何图片资源——演示站点只需要撑起「widget 嵌在
+      真实电商页里」的观感，配图会带来体积与版权两笔没必要的开销。
+    -->
+    <section class="goods" aria-label="商品列表">
+      <article class="card">
+        <div class="thumb" aria-hidden="true"></div>
+        <h2 class="title">降噪蓝牙耳机 Pro <span class="tag">分期免息</span></h2>
+        <p class="price">￥899</p>
+      </article>
+
+      <article class="card">
+        <div class="thumb" aria-hidden="true"></div>
+        <h2 class="title">双开门变频冰箱 480L</h2>
+        <p class="price">￥4,299</p>
+      </article>
+
+      <article class="card">
+        <div class="thumb" aria-hidden="true"></div>
+        <h2 class="title">轻薄笔记本 14 英寸</h2>
+        <p class="price">￥5,699</p>
+      </article>
+
+      <article class="card">
+        <div class="thumb" aria-hidden="true"></div>
+        <h2 class="title">智能扫地机器人 T7 <span class="tag">以旧换新</span></h2>
+        <p class="price">￥2,199</p>
+      </article>
+    </section>
+
+    <section class="tips">
+      <h2>试试问客服这些问题</h2>
+      <ul>
+        <li>多少钱包邮？偏远地区呢？</li>
+        <li>七天无理由退货怎么申请？</li>
+        <li>积分怎么抵扣，有效期多久？</li>
+        <li>下单后多久发货，支持指定时间送达吗？</li>
+      </ul>
+      <p class="tips-note">答案来自演示数据里的「云舟商城帮助中心」知识库，可随时点右上角「转人工」转坐席。</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    本页面是<strong>轻语（QingYu Care）</strong>的演示示例站点，用于展示 Widget 嵌入第三方网站后的样子，
+    商品与价格均为虚构，不提供任何真实交易。
+  </footer>
+
+  <!--
+    真实接入方式就是这一行：appKey 明写在 src 上，浏览器侧靠 Origin 白名单鉴权。
+    ⚠️ 后端地址按部署方式二选一：
+      - 本地 dev（mvn spring-boot:run，后端直连）：http://localhost:8080/api/widget.js
+      - 容器化部署（前端 nginx 反代 /api）：      http://localhost/api/widget.js
+    ⚠️ 本页必须起在 3000 端口，否则 widget 会被开放 API 以 403 拒绝，详见同目录 README.md。
+  -->
+  <script src="http://localhost:8080/api/widget.js?appKey=demo-cloudboat-shop" defer></script>
+</body>
+</html>

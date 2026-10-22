@@ -1,0 +1,41 @@
+# 开发环境配置
+qingyu:
+  care:
+    platform:
+      admin-initial-password: admin123   # 开发环境固定口令；生产由 QINGYU_ADMIN_INITIAL_PASSWORD 指定或随机生成
+    auth:
+      self-register-enabled: true        # 本地调试方便注册新租户；生产基线关闭
+    cors:
+      # 只有「浏览器直连 :8080」时才需要（如 Swagger UI 里的 Try it out）。走 Vite 代理时
+      # 代理已把 Origin 头摘掉（见 vite.config.ts），后端按同源处理，端口漂移到 5174/5175 也不受影响。
+      allowed-origins: http://localhost:5173,http://localhost:5174,http://localhost:5175
+    mcp:
+      allow-private-servers: true     # 本地自建 MCP server
+    model:
+      allow-private-endpoints: true   # 本地 Ollama 等自托管模型
+
+spring:
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+
+logging:
+  level:
+    root: INFO
+    com.qingyu.care: DEBUG
+    org.springframework.ai: DEBUG
+    org.hibernate.SQL: DEBUG
+    jdk.internal.httpclient: WARN
+
+# 开发环境放开 Swagger 与 metrics（基线关闭，见 application.yml）
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

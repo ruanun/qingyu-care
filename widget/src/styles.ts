@@ -1,0 +1,132 @@
+const DEFAULT_THEME_COLOR = '#0d9488';
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+
+/**
+ * themeColor 原样拼进下面十几处 CSS：不是十六进制颜色就回退默认色（2026-09-30 安全审查）。
+ * 后端落库时已校验，这里是危险点本身的防线——拦住存量数据与今后任何没走校验的写入路径，
+ * 否则 `red} .qy-panel{...}` 这种值能在宿主页上铺一层覆盖或用 url() 追踪访客。
+ */
+export function buildStyles(rawThemeColor: string): string {
+  const themeColor = HEX_COLOR.test(rawThemeColor) ? rawThemeColor : DEFAULT_THEME_COLOR;
+  return `
+    :host { all: initial; }
+    * { box-sizing: border-box; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    /* ⚠️ color 不是装饰：球内 logo 用 fill="currentColor"，靠这行取到白色，
+       而 logo 挖空的笔画处透出的正是 background 的 themeColor。改这两行前先看 logo.ts。 */
+    .qy-bubble {
+      position: fixed; right: 20px; bottom: 20px; width: 56px; height: 56px;
+      border-radius: 50%; background: ${themeColor}; color: #fff; border: none;
+      cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 2147483000;
+      display: flex; align-items: center; justify-content: center; padding: 0;
+    }
+    .qy-panel {
+      position: fixed; right: 20px; bottom: 88px; width: 360px; height: 520px;
+      background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.18);
+      display: none; flex-direction: column; overflow: hidden; z-index: 2147483000;
+    }
+    .qy-panel.open { display: flex; }
+    .qy-header {
+      background: ${themeColor}; color: #fff; padding: 12px 16px;
+      display: flex; align-items: center; justify-content: space-between; font-weight: 600;
+    }
+    .qy-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .qy-title .qy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .qy-avatar {
+      width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+      background: rgba(255,255,255,.2);
+    }
+    .qy-header .qy-handover {
+      background: rgba(255,255,255,.2); color: #fff; border: none; border-radius: 6px;
+      padding: 4px 10px; cursor: pointer; font-size: 12px;
+    }
+    .qy-msgs { flex: 1; overflow-y: auto; padding: 12px; background: #f7f7f8; }
+    .qy-msg { margin-bottom: 10px; display: flex; }
+    .qy-msg.user { justify-content: flex-end; }
+    .qy-msg .qy-text {
+      max-width: 78%; padding: 8px 12px; border-radius: 10px; font-size: 14px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .qy-msg.bot .qy-text { background: #fff; border: 1px solid #eee; }
+    .qy-msg.user .qy-text { background: ${themeColor}; color: #fff; }
+    .qy-read-mark { font-size: 11px; color: #999; text-align: right; margin-top: 2px; }
+    .qy-input { display: flex; border-top: 1px solid #eee; }
+    .qy-input textarea {
+      flex: 1; border: none; resize: none; padding: 12px; font-size: 14px; outline: none; height: 48px;
+    }
+    .qy-input button {
+      border: none; background: ${themeColor}; color: #fff; padding: 0 16px; cursor: pointer;
+    }
+    .qy-input button:disabled { opacity: .5; cursor: not-allowed; }
+    .qy-msg.has-feedback { flex-direction: column; align-items: flex-start; }
+    .qy-msg .qy-feedback { display: flex; gap: 4px; margin-top: 4px; }
+    .qy-msg.bot .qy-feedback { justify-content: flex-start; }
+    .qy-feedback button { background: none; border: 1px solid #e5e7eb; border-radius: 10px;
+      cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 8px; opacity: .7; }
+    .qy-feedback button:hover { opacity: 1; }
+    .qy-feedback button:disabled { cursor: default; opacity: .4; }
+    .qy-feedback button.active { opacity: 1; border-color: currentColor; }
+    @media (max-width: 480px) {
+      .qy-panel { right: 0; bottom: 0; width: 100vw; height: 100vh; border-radius: 0; }
+    }
+    .qy-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin:6px 0; background:#fff; }
+    .qy-card-title { font-weight:600; margin-bottom:6px; }
+    .qy-card-body { display:flex; flex-direction:column; gap:4px; }
+    .qy-node-text { font-size:14px; }
+    /* AI 回复的 Markdown（markdown.ts）：气泡很窄，标题不放大字号，只加粗；代码块与表格横向滚动而不是撑破气泡 */
+    .qy-md { white-space: normal; }
+    .qy-md p { margin: 0 0 6px; }
+    .qy-md > :last-child, .qy-md li > :last-child { margin-bottom: 0; }
+    .qy-md .qy-md-h { font-weight: 600; margin: 8px 0 4px; }
+    .qy-md > .qy-md-h:first-child { margin-top: 0; }
+    .qy-md ul, .qy-md ol { margin: 4px 0 6px; padding-left: 20px; }
+    .qy-md li { margin: 2px 0; }
+    .qy-md li > ul, .qy-md li > ol { margin: 2px 0; }
+    .qy-md code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+    .qy-md pre { background: #f6f8fa; padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; white-space: pre; }
+    .qy-md pre code { background: none; padding: 0; }
+    .qy-md blockquote { border-left: 3px solid #e5e7eb; margin: 6px 0; padding: 2px 10px; color: #666; }
+    .qy-md hr { border: none; border-top: 1px solid #eee; margin: 8px 0; }
+    .qy-md a { color: ${themeColor}; text-decoration: underline; word-break: break-all; }
+    .qy-md .qy-md-table { overflow-x: auto; margin: 6px 0; }
+    .qy-md table { border-collapse: collapse; font-size: 13px; }
+    .qy-md th, .qy-md td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; white-space: nowrap; }
+    .qy-md th { background: #f9fafb; font-weight: 600; }
+    .qy-emph { font-weight:600; }
+    .qy-kv { display:flex; justify-content:space-between; font-size:13px; gap:8px; }
+    .qy-kv-label { color:#6b7280; }
+    .qy-kv-value { color:#111827; font-weight:500; }
+    .qy-badge { display:inline-block; padding:1px 8px; border-radius:9999px; background:#f3f4f6; color:#374151; font-size:12px; }
+    .qy-divider { height:1px; background:#e5e7eb; margin:6px 0; }
+    .qy-node-img { max-width:100%; border-radius:6px; }
+    .qy-node-img-link { color:${themeColor}; font-size:13px; text-decoration:underline; }
+    .qy-card-btn { margin:4px 6px 0 0; padding:4px 10px; border:1px solid ${themeColor}; color:${themeColor}; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
+    .qy-card-btn:hover { background:${themeColor}; color:#fff; }
+    .qy-card-btn-primary { background:${themeColor}; color:#fff; }
+    .qy-card-btn-danger { border-color:#dc2626; color:#dc2626; }
+    .qy-card-btn-danger:hover { background:#dc2626; color:#fff; }
+    .qy-actions { display:flex; flex-wrap:wrap; }
+    .qy-list { margin:4px 0; padding-left:18px; }
+    .qy-row { display:flex; gap:8px; }
+    .qy-col { display:flex; flex-direction:column; gap:4px; }
+    .qy-form { display:flex; flex-direction:column; gap:8px; padding:8px 0; }
+    .qy-field-row { display:flex; flex-direction:column; gap:2px; }
+    .qy-field-label { font-size:12px; color:#6b7280; }
+    .qy-form-input, .qy-select { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; }
+    .qy-checkbox { display:flex; align-items:center; gap:6px; font-size:13px; }
+    .qy-form-submit { align-self:flex-start; padding:6px 14px; border:none; border-radius:6px; background:${themeColor}; color:#fff; cursor:pointer; font-size:13px; }
+    .qy-field-invalid { border-color:#ef4444; }
+    .qy-attach-btn { border:none; background:transparent; padding:0 8px; cursor:pointer; font-size:18px; line-height:48px; }
+    .qy-attach-btn:disabled { opacity:.35; cursor:not-allowed; }
+    .qy-attach-preview { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px; }
+    .qy-attach-preview:not(:empty) { padding-top:8px; }
+    .qy-attach-chip { display:flex; align-items:center; gap:4px; max-width:160px; padding:3px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#f7f7f8; font-size:12px; }
+    .qy-attach-chip-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qy-attach-chip-remove { border:none; background:none; cursor:pointer; color:#999; font-size:14px; line-height:1; padding:0; }
+    .qy-attach-chip-remove:hover { color:#111827; }
+    .qy-attachments { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .qy-attach-img { display:block; max-width:200px; max-height:200px; border-radius:8px; object-fit:cover; background:#f3f4f6; }
+    .qy-attach-file { display:flex; align-items:center; gap:6px; max-width:220px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; text-decoration:none; color:inherit; font-size:13px; }
+    .qy-attach-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qy-attach-size { color:#9ca3af; font-size:11px; white-space:nowrap; }
+  `;
+}

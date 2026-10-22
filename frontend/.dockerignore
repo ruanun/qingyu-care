@@ -1,0 +1,22 @@
+# 依赖与构建产物一律不进构建上下文：
+# node_modules 若被 COPY . . 盖进容器，会让 pnpm 的依赖状态检查判定不一致而
+# 触发重装，在无 TTY 的构建环境里直接 ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY。
+node_modules
+dist
+
+# 本地开发产物与配置
+.env
+.env.local
+*.log
+coverage
+.vite
+
+# 版本控制与编辑器
+.git
+.gitignore
+.idea
+.vscode
+
+# 容器化文件自身不必进上下文
+Dockerfile
+.dockerignore

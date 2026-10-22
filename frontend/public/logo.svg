@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="轻语 QingYu Care">
+  <!--
+    轻语品牌图标：两个对话气泡，尾巴方向相反——大泡尾朝左下（用户提问）、小泡尾朝
+    右上（客服回应）。说的是「一来一回的对话」，也对应本产品 AI + 人工的双轨。
+
+    刻意不放任何汉字。符号该表达「这东西是干什么的」，拼写品牌名是字标的活，而字标
+    已经在 logo-lockup.svg 里写着了；符号再拼一遍等于两处说同一句话，还说得更含糊。
+
+    实心气泡 + mask：两泡先并成一个白色区域，再用小泡轮廓的黑色描边把它们切开。
+    好处是深浅背景通吃——换个 fill 就能用，切缝处透出的是背景本身，不必知道背景是
+    什么颜色。widget 悬浮球正是靠这点让切缝透出租户自配的 themeColor。
+
+    ⚠️ 切缝宽度 1.6（即那条 stroke-width），换算到 16px favicon 约 1.07px。
+    再窄两泡就会糊成一块，改之前务必缩到 16px 亲眼看一遍。
+
+    ⚠️ 本文件存在两份，必须逐字节相同（含本段注释）：
+         brand/logo-mark.svg        品牌基准
+         frontend/public/logo.svg   favicon（Vite 要求物理落在 publicDir 内）
+    另有三处内联副本共用同一套路径数据：Logo.tsx / widget 的 logo.ts / logo-lockup.svg。
+    五处全部由 frontend/scripts/brandAssetSync.test.ts 守护，改一处漏其它即红。
+
+    改动步骤见 brand/README.md。
+  -->
+  <defs>
+    <linearGradient id="qyLogoGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d9488"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <mask id="qyLogoMask">
+      <path d="M4.5 7h8a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H7.5L3.5 20.8V17a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3z" fill="#fff"/>
+      <path d="M12.5 3h4.5L20.5 0.6L19.5 3a2.5 2.5 0 0 1 2.5 2.5v3.5a2.5 2.5 0 0 1-2.5 2.5H12.5a2.5 2.5 0 0 1-2.5-2.5V5.5a2.5 2.5 0 0 1 2.5-2.5z" fill="#fff"/>
+      <path d="M12.5 3h4.5L20.5 0.6L19.5 3a2.5 2.5 0 0 1 2.5 2.5v3.5a2.5 2.5 0 0 1-2.5 2.5H12.5a2.5 2.5 0 0 1-2.5-2.5V5.5a2.5 2.5 0 0 1 2.5-2.5z" fill="none" stroke="#000" stroke-width="1.6"/>
+    </mask>
+  </defs>
+  <rect width="24" height="24" fill="url(#qyLogoGradient)" mask="url(#qyLogoMask)"/>
+</svg>

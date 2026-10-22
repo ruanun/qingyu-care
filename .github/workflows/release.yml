@@ -1,0 +1,184 @@
+# 打包发布：push v* 标签时
+#   1. 后端以标签版本（去掉 v 前缀）跑全量测试并打包 fat jar
+#   2. 构建并推送三个镜像到 GHCR：backend / frontend / pgvector-zhparser
+#   3. 打包两个「免装 JDK 的可执行包」（自包含 JRE + app.jar + 启动脚本）：
+#      Linux tar.gz 与 Windows zip
+#   4. 创建 GitHub Release，附 jar 与两个可执行包
+#
+# 说明：
+#   · 镜像只推到 GHCR（ghcr.io/<owner>/...），不推 Docker Hub；如需改，替换 login/build 步骤的 registry
+#   · 版本取自标签：v1.0.0 → 1.0.0（pom.xml 的 0.0.1-SNAPSHOT 只在 CI 工作区内改写，不回写仓库）
+#   · 后端 Dockerfile 内部会重跑 mvn package -DskipTests，测试已在本 workflow 前置完成
+#   · 可执行包用完整 JRE 而非 jlink 精简运行时：Spring Boot fat jar 依赖面广，jlink 模块清单
+#     在 CI 里无法可靠验证，宁可体积大一点（约 50MB 压缩后）也不冒「部署时报 NoClassDefFoundError」的险
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: 测试、打包与镜像推送
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      # 同 ci.yml：集成测试启动上下文时 realtimeListenerContainer 直连 localhost:6379。
+      # 发布流程也要跑一遍 mvn verify，少了它整个发布卡在第一步（tag 已经推出去了，只能重打）。
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      DASHSCOPE_API_KEY: ci-dummy-key
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 去掉版本号前缀 v
+        run: echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - uses: stCarolas/setup-maven@v5
+        with:
+          maven-version: 3.9.9
+      # 只改 CI 工作区内的 pom（-DgenerateBackupPoms=false 不落 .versionsBackup），
+      # 不写回仓库：仓库继续以 0.0.1-SNAPSHOT 迭代，发布版本只在制品上体现
+      - name: 设置发布版本
+        run: mvn -B versions:set -DnewVersion="${VERSION}" -DgenerateBackupPoms=false
+        working-directory: backend
+      - name: 全量测试并打包 fat jar
+        run: mvn -B verify
+        working-directory: backend
+      - name: 上传 jar 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/target/qingyu-care-${{ env.VERSION }}.jar
+          if-no-files-found: error
+          # upload-artifact v4 的 artifact 内部路径 = 去掉「所有匹配路径的共同父目录」后的相对路径。
+          # 单个文件时那个共同父目录就是 backend/target，所以内部名只有 qingyu-care-<ver>.jar；
+          # 下载时必须自己给 path，否则它落在工作区根目录（上一次发布就死在这一步）。
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 构建并推送 backend 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qingyu-care-backend:latest
+            ghcr.io/${{ github.repository_owner }}/qingyu-care-backend:${{ env.VERSION }}
+      - name: 构建并推送 frontend 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qingyu-care-frontend:latest
+            ghcr.io/${{ github.repository_owner }}/qingyu-care-frontend:${{ env.VERSION }}
+      - name: 构建并推送 pgvector-zhparser 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/postgres-zhparser
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qingyu-pgvector-zhparser:pg17
+            ghcr.io/${{ github.repository_owner }}/qingyu-pgvector-zhparser:${{ env.VERSION }}
+
+  executables:
+    name: 可执行包与 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 去掉版本号前缀 v
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: 下载 jar 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-jar
+          # 显式给落点：v4 不会把 backend/target 这层还原回来，不给 path 就到了工作区根目录
+          path: backend/target
+      - name: 组装可执行包
+        run: |
+          set -eux
+          JAR="backend/target/qingyu-care-${VERSION}.jar"
+          test -f "$JAR" || { echo "找不到 $JAR"; exit 1; }
+
+          # ---- Linux：自包含 JRE + 启动脚本，tar.gz ----
+          curl -fSL -o /tmp/jre-linux.tar.gz \
+            https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jre/hotspot/normal/eclipse
+          mkdir -p "qingyu-care-${VERSION}-linux"
+          tar -xzf /tmp/jre-linux.tar.gz -C "qingyu-care-${VERSION}-linux"
+          mv "qingyu-care-${VERSION}-linux"/jdk-*jre "qingyu-care-${VERSION}-linux/jre"
+          cp "$JAR" "qingyu-care-${VERSION}-linux/app.jar"
+          printf '#!/bin/sh\n# 轻语后端启动脚本（自包含 JRE，无需安装 JDK）\nDIR="$(cd "$(dirname "$0")" && pwd)"\nexec "$DIR/jre/bin/java" -XX:MaxRAMPercentage=75.0 -jar "$DIR/app.jar" "$@"\n' \
+            > "qingyu-care-${VERSION}-linux/start.sh"
+          chmod +x "qingyu-care-${VERSION}-linux/start.sh"
+          tar -czf "qingyu-care-${VERSION}-linux.tar.gz" "qingyu-care-${VERSION}-linux"
+
+          # ---- Windows：自包含 JRE + 启动脚本，zip ----
+          curl -fSL -o /tmp/jre-windows.zip \
+            https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse
+          command -v unzip >/dev/null || sudo apt-get install -y unzip
+          command -v zip >/dev/null || sudo apt-get install -y zip
+          mkdir -p "qingyu-care-${VERSION}-windows"
+          unzip -q /tmp/jre-windows.zip -d "qingyu-care-${VERSION}-windows"
+          mv "qingyu-care-${VERSION}-windows"/jdk-*jre "qingyu-care-${VERSION}-windows/jre"
+          cp "$JAR" "qingyu-care-${VERSION}-windows/app.jar"
+          printf '@echo off\r\n"%%~dp0jre\\bin\\java.exe" -XX:MaxRAMPercentage=75.0 -jar "%%~dp0app.jar" %%*\r\n' \
+            > "qingyu-care-${VERSION}-windows/start.bat"
+          zip -qr "qingyu-care-${VERSION}-windows.zip" "qingyu-care-${VERSION}-windows"
+
+          cp "$JAR" "qingyu-care-${VERSION}.jar"
+          ls -lh qingyu-care-${VERSION}*
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            qingyu-care-${{ env.VERSION }}.jar
+            qingyu-care-${{ env.VERSION }}-linux.tar.gz
+            qingyu-care-${{ env.VERSION }}-windows.zip
+          generate_release_notes: true
+          body: |
+            ## 制品
+
+            | 制品 | 说明 |
+            |---|---|
+            | `qingyu-care-${{ env.VERSION }}.jar` | 后端 fat jar，需 JDK 25 运行：`java -jar ...` |
+            | `qingyu-care-${{ env.VERSION }}-linux.tar.gz` | 免装 JDK 的可执行包：解压后 `./start.sh`（需环境变量，见 `.env.example`） |
+            | `qingyu-care-${{ env.VERSION }}-windows.zip` | 同上，Windows 版：解压后双击 `start.bat` |
+
+            ## 镜像（GHCR）
+
+            - `ghcr.io/${{ github.repository_owner }}/qingyu-care-backend:${{ env.VERSION }}`
+            - `ghcr.io/${{ github.repository_owner }}/qingyu-care-frontend:${{ env.VERSION }}`
+            - `ghcr.io/${{ github.repository_owner }}/qingyu-pgvector-zhparser:${{ env.VERSION }}`
+
+            部署方式见 `docker/docker-compose.prod.yml` 与 `docs/部署文档.md`。
+            注意：compose 里的镜像名默认是 `qingyu-care-backend:latest` 等，用 GHCR 时需替换成上面的地址。

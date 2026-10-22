@@ -1,0 +1,35 @@
+# 测试环境配置
+spring:
+  datasource:
+    # 集成测试(*IT)运行时，url/username/password 由 AbstractPostgresIT.datasourceProps
+    # 用 Testcontainers 容器地址动态覆盖；此处的 localhost 仅为占位、不要求本机 PG。
+    url: jdbc:postgresql://localhost:5432/qingyu_care_test
+    username: postgres
+    password: postgres
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  
+  ai:
+    openai:
+      api-key: test-key
+
+qingyu:
+  care:
+    embedding:
+      # IT 种子数据直接 INSERT 1536 维零向量（array_fill(0::real, ARRAY[1536])）。vector_store 的向量列由
+      # VectorStoreSchemaInitializer 在 JPA create-drop 建出无 embedding 列的表之后补上
+      dimensions: 1536
+    platform:
+      admin-initial-password: admin123   # 多条 IT 以 admin/admin123 登录平台管理员
+    auth:
+      self-register-enabled: true        # LoginIT / MemberPrivilegeIT 等走注册接口
+      # MockMvc 的请求全部来自 127.0.0.1，整套 IT 登录上百次，按 IP 限流会让不相干的 IT 随机 429；
+      # 按用户名锁定保持开启（各 IT 用户名互不相同），IP 限流由 LoginThrottleServiceTest 单测覆盖
+      login-ip-limit-per-minute: 0
+      register-ip-limit-per-minute: 0
+      captcha-ip-limit-per-minute: 0
+    webhook:
+      # IT 的 Webhook 接收端起在 127.0.0.1，放开私网目标（钉 IP 与禁重定向不受影响）
+      allow-private-targets: true
