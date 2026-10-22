@@ -100,6 +100,12 @@ class AnalyticsUsageIT extends AbstractPostgresIT {
                 .username("usage_it_admin_a").password(BCrypt.hashpw("pw123456"))
                 .nickname("A管理员").role(UserRole.TENANT_ADMIN).tenant(tenantA).enabled(true).build());
 
+        // ⚠️ 本用例断言的是「全平台」总数（16 = 5+3+8），必须独占 sys_api_usage。
+        // AbTestFlowIT（字母序在本类之前）会真实调 /open/v1/chat，其计量经 @Async 落库——
+        // 那行晚到一会儿就把 16 变成 17，而且只在 CI 上偶发（本地跑单类不会碰）。
+        // 先清空再 seed，断言才是本用例自己的数据。
+        usageRepository.deleteAll();
+
         seedUsage(TA, A1, 5, 50);
         seedUsage(TA, A2, 3, 30);
         seedUsage(TB, 999001L, 8, 80);
