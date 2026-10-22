@@ -272,6 +272,9 @@ public class DemoDataSeeder implements ApplicationRunner {
             int daysAgo = 29 - index * 29 / Math.max(1, total - 1);
             LocalDateTime start = LocalDate.now().minusDays(daysAgo)
                     .atTime(9 + random.nextInt(12), random.nextInt(60));
+            // 营业时段是随机 9~20 点，而播种时刻任意：上午播种时当天那条会落到未来
+            // （实测 15:50 播种，仪表盘显示「今天 18:29」）。会话不可能发生在未来，收到现在之前。
+            start = clampToPast(start, LocalDateTime.now());
 
             // 投诉类演示转人工，且必须满足两个条件人工工作台才截得到东西：
             //   · 状态是 WAITING_AGENT 而非 AGENT_PROCESSING——「待接管队列」查的是前者，
@@ -322,6 +325,20 @@ public class DemoDataSeeder implements ApplicationRunner {
             index++;
         }
         log.info("演示会话已播种 count={}", total);
+    }
+
+    /**
+     * 会话时间不得晚于「现在」。
+     *
+     * <p>播种时刻是任意的（可能在上午），而演示会话的营业时段是随机 9~20 点，两者一撞就会产出
+     * 未来时间的会话——仪表盘上写着「今天 18:29」而此刻才 15:50，看着像数据坏了。
+     * 收到「现在 −5 分钟」，留一点余量给紧接着写入的消息（它们在此基础上往后排）。
+     *
+     * <p>static 包级可见，便于免容器单测（同 {@code ModelRouterService#streamWithFallbackChain} 惯例）。
+     */
+    static LocalDateTime clampToPast(LocalDateTime start, LocalDateTime now) {
+        LocalDateTime cap = now.minusMinutes(5);
+        return start.isAfter(cap) ? cap : start;
     }
 
     /** 用原生 SQL 覆盖 @CreationTimestamp 写入的时间（见 {@link #seedSessions} 的说明）。 */
